@@ -39,15 +39,10 @@ struct MainAppView: View {
                     AnyView(RecordingView(
                         serviceType: serviceType ?? "Sermon",
                         noteService: NoteService(),
-                        onNext: { title, audioFileURL, transcript, notes in
-                            // Save the new Sermon
-                            let date = Date()
-                            let summaryModel = Summary(text: "", type: serviceType ?? "Sermon", status: "complete")
-                            guard let audioFileURL = audioFileURL else { return }
-                            let newSermon = Sermon(title: title, audioFileURL: audioFileURL, date: date, serviceType: serviceType ?? "Sermon", transcript: transcript, notes: notes, summary: summaryModel)
-                            modelContext.insert(newSermon)
-                            lastCreatedSermon = newSermon
-                            currentScreen = .sermonDetail(sermon: newSermon)
+                        onNext: { sermon in
+                            modelContext.insert(sermon)
+                            lastCreatedSermon = sermon
+                            currentScreen = .sermonDetail(sermon: sermon)
                         }
                     ))
                 case .sermonDetail(let sermon):

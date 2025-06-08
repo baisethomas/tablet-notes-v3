@@ -16,7 +16,7 @@ struct TimestampedNote: Identifiable {
 struct RecordingView: View {
     let serviceType: String
     @ObservedObject var noteService: NoteService
-    var onNext: ((String, URL?, Transcript, [Note]) -> Void)?
+    var onNext: ((Sermon) -> Void)?
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
     #if canImport(AVFoundation) && os(iOS)
@@ -37,6 +37,7 @@ struct RecordingView: View {
     @State private var audioFileURL: URL? = nil
     @State private var isProcessingTranscript = false
     @State private var transcriptProcessingError: String? = nil
+    @StateObject private var summaryService = SummaryService()
     #endif
 
     var body: some View {
@@ -290,17 +291,25 @@ struct RecordingView: View {
         transcriptionService.stopTranscription()
         timer?.invalidate()
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-        // Immediately show processing state
-        let processingTranscript = Transcript(text: "Processing...", segments: [])
-        onNext?(title, audioFileURL, processingTranscript, notes)
+        let date = Date()
         if let url = audioFileURL {
             transcriptionService.transcribeAudioFile(url: url) { text, segments in
                 DispatchQueue.main.async {
                     if let text = text {
                         let transcriptModel = Transcript(text: text, segments: segments ?? [])
-                        onNext?(title, audioFileURL, transcriptModel, notes)
+                        summaryService.generateSummary(for: text, type: serviceType)
+                        var summaryCancellable: AnyCancellable? = nil
+                        summaryCancellable = summaryService.summaryPublisher
+                            .receive(on: RunLoop.main)
+                            .sink { summaryText in
+                                if let summaryText = summaryText, !summaryText.isEmpty, summaryService.statusSubject.value == "complete" {
+                                    let summaryModel = Summary(text: summaryText, type: serviceType, status: "complete")
+                                    let newSermon = Sermon(title: title, audioFileURL: url, date: date, serviceType: serviceType, transcript: transcriptModel, notes: notes, summary: summaryModel)
+                                    onNext?(newSermon)
+                                    summaryCancellable?.cancel()
+                                }
+                            }
                     }
-                    // Optionally handle error case here
                 }
             }
         }

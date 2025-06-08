@@ -41,10 +41,8 @@ class AppCoordinator: ObservableObject {
                 .padding(.top, 24)
             }
         case .recording(let serviceType):
-            RecordingView(serviceType: serviceType, noteService: noteService, onNext: { serviceType, audioFileURL, transcript, notes in
-                self.lastTranscript = transcript
-                self.lastAudioFileURL = audioFileURL
-                self.screen = .notes
+            RecordingView(serviceType: serviceType, noteService: noteService, onNext: { sermon in
+                self.screen = .sermonDetail(sermon: sermon)
             })
         case .notes:
             NotesView(noteService: noteService, onNext: {

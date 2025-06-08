@@ -70,7 +70,10 @@ struct SermonDetailView: View {
             Group {
                 switch selectedTab {
                 case .summary:
-                    ScrollView { Text(sermon.summary?.text ?? "No summary available.").padding() }
+                    ScrollView {
+                        let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
+                        Text(cleanSummary).padding()
+                    }
                 case .transcript:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
