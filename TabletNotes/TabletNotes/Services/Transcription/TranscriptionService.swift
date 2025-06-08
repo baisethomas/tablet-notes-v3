@@ -1,0 +1,152 @@
+import Foundation
+import Speech
+import Combine
+import SwiftData
+
+
+class TranscriptionService: NSObject, ObservableObject {
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private let audioEngine = AVAudioEngine()
+    private var fullTranscript: String = ""
+    private let transcriptSubject = CurrentValueSubject<String, Never>("")
+    var transcriptPublisher: AnyPublisher<String, Never> { transcriptSubject.eraseToAnyPublisher() }
+    private var timer: Timer?
+    private let sessionLimit: TimeInterval = 59 // seconds
+    private var sessionStartTime: Date?
+    private var lastPartial: String = ""
+
+    func startTranscription() throws {
+        guard !audioEngine.isRunning else { return }
+        fullTranscript = ""
+        lastPartial = ""
+        try startSession()
+    }
+
+    private func startSession() throws {
+        print("[TranscriptionService] Starting new session...")
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else { throw NSError(domain: "Transcription", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create request"]) }
+        let inputNode = audioEngine.inputNode
+        recognitionRequest.shouldReportPartialResults = true
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+            guard let self = self else { return }
+            if let result = result {
+                self.lastPartial = result.bestTranscription.formattedString
+                self.transcriptSubject.send(self.fullTranscript + (self.lastPartial.isEmpty ? "" : (self.fullTranscript.isEmpty ? "" : " ") + self.lastPartial))
+            }
+            if let error = error {
+                print("[TranscriptionService] Transcription error: \(error)")
+                self.stopTranscription()
+            }
+        }
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { (buffer, _) in
+            self.recognitionRequest?.append(buffer)
+        }
+        audioEngine.prepare()
+        try audioEngine.start()
+        sessionStartTime = Date()
+        timer = Timer.scheduledTimer(withTimeInterval: sessionLimit, repeats: false) { [weak self] _ in
+            self?.restartSession()
+        }
+    }
+
+    private func restartSession() {
+        print("[TranscriptionService] Restarting session...")
+        guard audioEngine.isRunning else {
+            print("[TranscriptionService] Audio engine not running, aborting restart.")
+            return
+        }
+        // Append the last partial to the full transcript
+        if !lastPartial.isEmpty {
+            if fullTranscript.isEmpty {
+                fullTranscript = lastPartial
+            } else {
+                fullTranscript += " " + lastPartial
+            }
+        }
+        lastPartial = ""
+        stopSession(clean: true)
+        // Wait a short delay before starting a new session
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            do {
+                print("[TranscriptionService] Attempting to start new session after restart...")
+                try self?.startSession()
+            } catch {
+                print("[TranscriptionService] Failed to restart transcription session: \(error)")
+            }
+        }
+    }
+
+    func stopTranscription() {
+        print("[TranscriptionService] Stopping transcription...")
+        stopSession(clean: false)
+        // Append the last partial to the full transcript
+        if !lastPartial.isEmpty {
+            if fullTranscript.isEmpty {
+                fullTranscript = lastPartial
+            } else {
+                fullTranscript += " " + lastPartial
+            }
+        }
+        transcriptSubject.send(fullTranscript)
+    }
+
+    private func stopSession(clean: Bool = false) {
+        print("[TranscriptionService] Stopping session...")
+        timer?.invalidate()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+        if clean {
+            // Give the system a moment to release resources
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
+
+    // Post-recording transcription from file
+    func transcribeAudioFile(url: URL, completion: @escaping (_ text: String?, _ segments: [TranscriptSegment]) -> Void) {
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        recognizer?.recognitionTask(with: request) { result, error in
+            if let result = result, result.isFinal {
+                let text = result.bestTranscription.formattedString
+                let rawSegments = result.bestTranscription.segments
+                var groupedSegments: [TranscriptSegment] = []
+                var currentWords: [String] = []
+                var segmentStart: TimeInterval? = nil
+                var segmentEnd: TimeInterval? = nil
+                let maxDuration: TimeInterval = 5.0
+                for (i, s) in rawSegments.enumerated() {
+                    if segmentStart == nil { segmentStart = s.timestamp }
+                    segmentEnd = s.timestamp + s.duration
+                    currentWords.append(s.substring)
+                    let isSentenceEnd = s.substring.last.map { ".?!".contains($0) } ?? false
+                    let nextTimestamp = (i + 1 < rawSegments.count) ? rawSegments[i + 1].timestamp : segmentEnd ?? s.timestamp
+                    let duration = (segmentStart != nil && segmentEnd != nil) ? (segmentEnd! - segmentStart!) : 0
+                    if duration >= maxDuration || isSentenceEnd {
+                        let segmentText = currentWords.joined(separator: " ")
+                        groupedSegments.append(TranscriptSegment(text: segmentText, startTime: segmentStart ?? s.timestamp, endTime: segmentEnd ?? s.timestamp))
+                        currentWords = []
+                        segmentStart = (i + 1 < rawSegments.count) ? rawSegments[i + 1].timestamp : nil
+                        segmentEnd = nil
+                    }
+                }
+                // Add any remaining words as a segment
+                if !currentWords.isEmpty, let start = segmentStart, let end = segmentEnd {
+                    let segmentText = currentWords.joined(separator: " ")
+                    groupedSegments.append(TranscriptSegment(text: segmentText, startTime: start, endTime: end))
+                }
+                completion(text, groupedSegments)
+            } else if let error = error {
+                print("[TranscriptionService] File transcription error: \(error)")
+                completion(nil, [])
+            }
+        }
+    }
+}

@@ -1,0 +1,167 @@
+[
+  {
+    "id": 1,
+    "title": "Project setup & Xcode configuration",
+    "description": "Ensure all folders/files are added to the Xcode project and build target. Clean up old references. Confirm Info.plist and entitlements paths.",
+    "subtasks": [
+      {"id": 1.1, "title": "Add all folders/files to Xcode project", "description": "Drag all new folders and files into Xcode and check target membership."},
+      {"id": 1.2, "title": "Remove old model references", "description": "Delete or archive Item.swift and any unused code."},
+      {"id": 1.3, "title": "Update Info.plist and entitlements paths", "description": "Ensure build settings point to Resources/Info.plist and Resources/TabletNotes.entitlements."}
+    ]
+  },
+  {
+    "id": 2,
+    "title": "Data model implementation (Sermon, Note, Transcript, Summary)",
+    "description": "Implement SwiftData models and relationships.",
+    "subtasks": [
+      {"id": 2.1, "title": "Implement Sermon model", "description": "Add properties and relationships for audio, notes, transcript, summary."},
+      {"id": 2.2, "title": "Implement Note model", "description": "Add timestamp, text, and relationship to Sermon."},
+      {"id": 2.3, "title": "Implement Transcript and TranscriptSegment models", "description": "Add transcript text and segments."},
+      {"id": 2.4, "title": "Implement Summary model", "description": "Add summary text, type, and status."},
+      {"id": 2.5, "title": "Test model relationships in SwiftData", "description": "Verify relationships and persistence work as expected."}
+    ]
+  },
+  {
+    "id": 3,
+    "title": "RecordingService implementation",
+    "description": "Implement AVFoundation-based audio recording service.",
+    "subtasks": [
+      {"id": 3.1, "title": "Setup AVFoundation session", "description": "Configure audio session for recording."},
+      {"id": 3.2, "title": "Implement start/stop/pause/resume", "description": "Add methods to control recording lifecycle."},
+      {"id": 3.3, "title": "Save audio file locally", "description": "Store .m4a or .caf files in app sandbox."},
+      {"id": 3.4, "title": "Handle interruptions", "description": "Ensure recording persists through interruptions."}
+    ]
+  },
+  {
+    "id": 4,
+    "title": "TranscriptionService implementation",
+    "description": "Implement SFSpeechRecognizer-based real-time transcription.",
+    "subtasks": [
+      {"id": 4.1, "title": "Setup SFSpeechRecognizer", "description": "Request permissions and configure recognizer."},
+      {"id": 4.2, "title": "Implement real-time transcription", "description": "Transcribe audio as it is recorded."},
+      {"id": 4.3, "title": "Handle 1-minute session limit", "description": "Auto-restart sessions and merge results."},
+      {"id": 4.4, "title": "Error handling and fallback", "description": "Fallback to audio if transcription fails."}
+    ]
+  },
+  {
+    "id": 5,
+    "title": "NoteService implementation",
+    "description": "Implement service for adding, updating, and deleting timestamped notes.",
+    "subtasks": [
+      {"id": 5.1, "title": "Add note", "description": "Create new note with timestamp and text."},
+      {"id": 5.2, "title": "Update note", "description": "Edit note text."},
+      {"id": 5.3, "title": "Delete note", "description": "Remove note from sermon."},
+      {"id": 5.4, "title": "Link notes to transcript timeline", "description": "Sync notes with transcript segments."}
+    ]
+  },
+  {
+    "id": 6,
+    "title": "SummaryService implementation",
+    "description": "Implement service to call OpenAI API, handle retries, and store summary.",
+    "subtasks": [
+      {"id": 6.1, "title": "Trigger summary after transcription", "description": "Automatically start summary job when transcription completes."},
+      {"id": 6.2, "title": "Call OpenAI API", "description": "Send transcript to OpenAI and receive summary."},
+      {"id": 6.3, "title": "Handle summary status and errors", "description": "Track pending, complete, failed states and allow retry."}
+    ]
+  },
+  {
+    "id": 7,
+    "title": "SyncService implementation",
+    "description": "Implement automatic sync to Supabase, handle offline/online, and cloud data deletion.",
+    "subtasks": [
+      {"id": 7.1, "title": "Automatic sync to Supabase", "description": "Sync notes, transcripts, and summaries for paid users."},
+      {"id": 7.2, "title": "Handle sync retries and offline", "description": "Retry sync when connection is restored."},
+      {"id": 7.3, "title": "Delete all cloud data", "description": "Implement user-initiated cloud data deletion."}
+    ]
+  },
+  {
+    "id": 8,
+    "title": "AuthService implementation",
+    "description": "Implement Supabase authentication (sign in, sign out).",
+    "subtasks": [
+      {"id": 8.1, "title": "Sign in", "description": "Authenticate user with Supabase."},
+      {"id": 8.2, "title": "Sign out", "description": "Log user out and clear local data if needed."}
+    ]
+  },
+  {
+    "id": 9,
+    "title": "NotificationService implementation",
+    "description": "Implement in-app banners for summary readiness.",
+    "subtasks": [
+      {"id": 9.1, "title": "Show in-app banner", "description": "Display banner when summary is ready."}
+    ]
+  },
+  {
+    "id": 10,
+    "title": "AnalyticsService implementation",
+    "description": "Implement Firebase Analytics event logging.",
+    "subtasks": [
+      {"id": 10.1, "title": "Log key events", "description": "Track user actions and flows in Firebase."}
+    ]
+  },
+  {
+    "id": 11,
+    "title": "Home screen UI",
+    "description": "Implement ContentView with start recording button.",
+    "subtasks": [
+      {"id": 11.1, "title": "Add start recording button", "description": "Button triggers navigation to RecordingView."}
+    ]
+  },
+  {
+    "id": 12,
+    "title": "Recording screen UI",
+    "description": "Implement RecordingView with recording status, waveform, live transcript, and note-taking area.",
+    "subtasks": [
+      {"id": 12.1, "title": "Show recording status and waveform", "description": "Display current recording state and audio waveform."},
+      {"id": 12.2, "title": "Show live transcript", "description": "Display real-time transcription as user records."},
+      {"id": 12.3, "title": "Note-taking area", "description": "Allow user to take timestamped notes during recording."}
+    ]
+  },
+  {
+    "id": 13,
+    "title": "Notes screen UI",
+    "description": "Implement NotesView to display/edit timestamped notes and link to transcript.",
+    "subtasks": [
+      {"id": 13.1, "title": "Display notes list", "description": "Show all notes for the current sermon."},
+      {"id": 13.2, "title": "Edit note", "description": "Allow user to edit note text."},
+      {"id": 13.3, "title": "Link notes to transcript", "description": "Highlight transcript segment when note is selected."}
+    ]
+  },
+  {
+    "id": 14,
+    "title": "Summary screen UI",
+    "description": "Implement SummaryView to show generated summary and retry button if failed.",
+    "subtasks": [
+      {"id": 14.1, "title": "Display summary text", "description": "Show summary after generation completes."},
+      {"id": 14.2, "title": "Retry button", "description": "Allow user to retry summary if failed."}
+    ]
+  },
+  {
+    "id": 15,
+    "title": "Settings screen UI",
+    "description": "Implement SettingsView to manage account, delete cloud data, and sign out.",
+    "subtasks": [
+      {"id": 15.1, "title": "Show user info and subscription status", "description": "Display current user and plan."},
+      {"id": 15.2, "title": "Delete cloud data button", "description": "Allow user to delete all cloud data."},
+      {"id": 15.3, "title": "Sign out button", "description": "Allow user to sign out."}
+    ]
+  },
+  {
+    "id": 16,
+    "title": "Coordinator/navigation logic",
+    "description": "Finalize AppCoordinator logic for screen transitions and wire up navigation closures.",
+    "subtasks": [
+      {"id": 16.1, "title": "Implement navigation enum and state", "description": "Manage current screen in AppCoordinator."},
+      {"id": 16.2, "title": "Wire up navigation closures", "description": "Connect view buttons to coordinator navigation."}
+    ]
+  },
+  {
+    "id": 17,
+    "title": "Testing & QA",
+    "description": "Manual QA of all flows and SwiftUI snapshot testing for main screens.",
+    "subtasks": [
+      {"id": 17.1, "title": "Manual QA", "description": "Test all user flows manually."},
+      {"id": 17.2, "title": "Snapshot testing", "description": "Add SwiftUI snapshot tests for main screens."}
+    ]
+  }
+] 
