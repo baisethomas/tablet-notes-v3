@@ -8,6 +8,18 @@
 import Foundation
 import SwiftUI
 import SwiftData
+// import TabletNotes // Uncomment if models are in a separate module
+
+@MainActor
+func sermonStatusText(transcriptionStatus: String, summaryStatus: String) -> (String, Color) {
+    if transcriptionStatus == "failed" || summaryStatus == "failed" {
+        return ("Failed", .red)
+    } else if transcriptionStatus == "processing" || summaryStatus == "processing" {
+        return ("Processing...", .orange)
+    } else {
+        return ("Ready", .green)
+    }
+}
 
 struct ContentView: View {
     @State private var showServiceTypeModal = false
@@ -15,6 +27,8 @@ struct ContentView: View {
     var onStartRecording: ((String) -> Void)?
     var onViewPastSermons: (() -> Void)?
     let serviceTypes = ["Sermon", "Bible Study", "Youth Group", "Conference"]
+
+    @Query(sort: [SortDescriptor(\Sermon.date, order: .reverse)]) var sermons: [Sermon]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +47,38 @@ struct ContentView: View {
                 }
                 .foregroundColor(.blue)
                 .padding(.top, 16)
+            }
+            if sermons.isEmpty {
+                Spacer()
+                Text("No sermons yet. Start recording to add your first sermon!")
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else {
+                List {
+                    ForEach(sermons) { sermon in
+                        let (statusText, statusColor) = sermonStatusText(transcriptionStatus: sermon.transcriptionStatus, summaryStatus: sermon.summaryStatus)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(sermon.title)
+                                    .font(.headline)
+                                Text(sermon.serviceType)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Text(sermon.date, style: .date)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text(statusText)
+                                .font(.caption)
+                                .foregroundColor(statusColor)
+                                .padding(6)
+                                .background(statusColor.opacity(0.1))
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+                .listStyle(.plain)
             }
             Spacer(minLength: 0)
         }

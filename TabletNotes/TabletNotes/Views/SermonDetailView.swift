@@ -1,6 +1,8 @@
 import SwiftUI
 import AVFoundation
 import SwiftData
+// Ensure TabletNotes/TabletNotes/Models/Sermon.swift is included in the build target for this file to resolve 'Sermon' in scope.
+// import TabletNotes.Models // Removed because the module does not exist and causes a build error.
 
 struct SermonDetailView: View {
     let sermon: Sermon
@@ -70,108 +72,120 @@ struct SermonDetailView: View {
             Group {
                 switch selectedTab {
                 case .summary:
-                    ScrollView {
-                        let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
-                        Text(cleanSummary).padding()
+                    if sermon.summaryStatus == "processing" {
+                        VStack { ProgressView("Generating summary...") }.padding()
+                    } else if sermon.summaryStatus == "failed" {
+                        VStack { Text("Summary generation failed.").foregroundColor(.red) }.padding()
+                    } else {
+                        ScrollView {
+                            let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
+                            Text(cleanSummary).padding()
+                        }
                     }
                 case .transcript:
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            if let segments = sermon.transcript?.segments, !segments.isEmpty {
-                                ForEach(segments, id: \.id) { segment in
-                                    HStack(alignment: .top, spacing: 8) {
+                    if sermon.transcriptionStatus == "processing" {
+                        VStack { ProgressView("Transcribing audio...") }.padding()
+                    } else if sermon.transcriptionStatus == "failed" {
+                        VStack { Text("Transcription failed.").foregroundColor(.red) }.padding()
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if let segments = sermon.transcript?.segments, !segments.isEmpty {
+                                    ForEach(segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Button(action: {
+                                                if audioPlayer == nil {
+                                                    let url = sermon.audioFileURL
+                                                    do {
+                                                        audioPlayer = try AVAudioPlayer(contentsOf: url)
+                                                        duration = audioPlayer?.duration ?? 0
+                                                        audioPlayer?.prepareToPlay()
+                                                    } catch {
+                                                        print("Failed to load audio: \(error)")
+                                                    }
+                                                }
+                                                audioPlayer?.currentTime = segment.startTime
+                                                audioPlayer?.play()
+                                                isPlaying = true
+                                                timer?.invalidate()
+                                                timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+                                                    currentTime = audioPlayer?.currentTime ?? 0
+                                                    if let player = audioPlayer, !player.isPlaying {
+                                                        isPlaying = false
+                                                        timer?.invalidate()
+                                                    }
+                                                }
+                                            }) {
+                                                Text("[\(timeString(from: segment.startTime))]")
+                                                    .font(.caption)
+                                                    .foregroundColor(.blue)
+                                                    .underline()
+                                                    .frame(width: 60, alignment: .leading)
+                                            }
+                                            Text(segment.text)
+                                                .font(.body)
+                                                .background(
+                                                    (audioPlayer?.isPlaying == true && abs((audioPlayer?.currentTime ?? 0) - segment.startTime) < 0.5) ? Color.yellow.opacity(0.2) : Color.clear
+                                                )
+                                        }
+                                    }
+                                } else {
+                                    Text(sermon.transcript?.text ?? "No transcript available.")
+                                        .padding(.top, 8)
+                                }
+                                Spacer(minLength: 24)
+                                // Audio Player UI at the bottom
+                                let url = sermon.audioFileURL
+                                VStack(spacing: 8) {
+                                    // Progress bar with scrubbing
+                                    Slider(value: Binding(
+                                        get: { currentTime },
+                                        set: { newValue in
+                                            currentTime = newValue
+                                            audioPlayer?.currentTime = newValue
+                                        }
+                                    ), in: 0...(duration > 0 ? duration : 1))
+                                    .accentColor(.blue)
+                                    HStack(spacing: 16) {
                                         Button(action: {
-                                            if audioPlayer == nil {
-                                                let url = sermon.audioFileURL
-                                                do {
-                                                    audioPlayer = try AVAudioPlayer(contentsOf: url)
-                                                    duration = audioPlayer?.duration ?? 0
-                                                    audioPlayer?.prepareToPlay()
-                                                } catch {
-                                                    print("Failed to load audio: \(error)")
+                                            if isPlaying {
+                                                audioPlayer?.pause()
+                                                isPlaying = false
+                                                timer?.invalidate()
+                                            } else {
+                                                if audioPlayer == nil {
+                                                    let url = sermon.audioFileURL
+                                                    do {
+                                                        audioPlayer = try AVAudioPlayer(contentsOf: url)
+                                                        duration = audioPlayer?.duration ?? 0
+                                                        audioPlayer?.prepareToPlay()
+                                                    } catch {
+                                                        print("Failed to load audio: \(error)")
+                                                    }
                                                 }
-                                            }
-                                            audioPlayer?.currentTime = segment.startTime
-                                            audioPlayer?.play()
-                                            isPlaying = true
-                                            timer?.invalidate()
-                                            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                                                currentTime = audioPlayer?.currentTime ?? 0
-                                                if let player = audioPlayer, !player.isPlaying {
-                                                    isPlaying = false
-                                                    timer?.invalidate()
+                                                audioPlayer?.play()
+                                                isPlaying = true
+                                                timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true, block: { _ in
+                                                    currentTime = audioPlayer?.currentTime ?? 0
+                                                    if let player = audioPlayer, !player.isPlaying {
+                                                        isPlaying = false
+                                                        timer?.invalidate()
+                                                    }
                                                 }
-                                            }
+                                            )}
                                         }) {
-                                            Text("[\(timeString(from: segment.startTime))]")
-                                                .font(.caption)
+                                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                                .resizable()
+                                                .frame(width: 40, height: 40)
                                                 .foregroundColor(.blue)
-                                                .underline()
-                                                .frame(width: 60, alignment: .leading)
                                         }
-                                        Text(segment.text)
-                                            .font(.body)
-                                            .background(
-                                                (audioPlayer?.isPlaying == true && abs((audioPlayer?.currentTime ?? 0) - segment.startTime) < 0.5) ? Color.yellow.opacity(0.2) : Color.clear
-                                            )
+                                        Text("\(timeString(from: currentTime)) / \(timeString(from: duration))")
+                                            .font(.caption)
                                     }
                                 }
-                            } else {
-                                Text(sermon.transcript?.text ?? "No transcript available.")
-                                    .padding(.top, 8)
-                            }
-                            Spacer(minLength: 24)
-                            // Audio Player UI at the bottom
-                            let url = sermon.audioFileURL
-                            VStack(spacing: 8) {
-                                // Progress bar with scrubbing
-                                Slider(value: Binding(
-                                    get: { currentTime },
-                                    set: { newValue in
-                                        currentTime = newValue
-                                        audioPlayer?.currentTime = newValue
-                                    }
-                                ), in: 0...(duration > 0 ? duration : 1))
-                                .accentColor(.blue)
-                                HStack(spacing: 16) {
-                                    Button(action: {
-                                        if isPlaying {
-                                            audioPlayer?.pause()
-                                            isPlaying = false
-                                            timer?.invalidate()
-                                        } else {
-                                            if audioPlayer == nil {
-                                                let url = sermon.audioFileURL
-                                                do {
-                                                    audioPlayer = try AVAudioPlayer(contentsOf: url)
-                                                    duration = audioPlayer?.duration ?? 0
-                                                    audioPlayer?.prepareToPlay()
-                                                } catch {
-                                                    print("Failed to load audio: \(error)")
-                                                }
-                                            }
-                                            audioPlayer?.play()
-                                            isPlaying = true
-                                            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                                                currentTime = audioPlayer?.currentTime ?? 0
-                                                if let player = audioPlayer, !player.isPlaying {
-                                                    isPlaying = false
-                                                    timer?.invalidate()
-                                                }
-                                            }
-                                        }
-                                    }) {
-                                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                            .resizable()
-                                            .frame(width: 40, height: 40)
-                                            .foregroundColor(.blue)
-                                    }
-                                    Text("\(timeString(from: currentTime)) / \(timeString(from: duration))")
-                                        .font(.caption)
-                                }
-                            }
-                            .padding(.top, 16)
-                        }.padding()
+                                .padding(.top, 16)
+                            }.padding()
+                        }
                     }
                 case .notes:
                     ScrollView {

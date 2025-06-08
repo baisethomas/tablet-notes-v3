@@ -9,7 +9,7 @@ struct SermonListView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                HeaderView(title: "Past Sermons", showLogo: true, showSearch: false, showSettings: true, onSettings: onBack)
+                HeaderView(title: "Past Sermons", showLogo: true, showSearch: true, showSettings: true, onSettings: onBack)
                 Spacer(minLength: 0)
                 List(sermonService.sermons) { sermon in
                     Button(action: { onSermonTap?(sermon) }) {

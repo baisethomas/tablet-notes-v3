@@ -38,6 +38,7 @@ struct RecordingView: View {
     @State private var isProcessingTranscript = false
     @State private var transcriptProcessingError: String? = nil
     @StateObject private var summaryService = SummaryService()
+    @State private var latestSummaryText: String? = nil
     #endif
 
     var body: some View {
@@ -72,10 +73,6 @@ struct RecordingView: View {
                         Text("Not Recording")
                             .foregroundColor(.gray)
                         Spacer()
-                        Button("Start Recording") {
-                            startRecording()
-                        }
-                        .buttonStyle(.borderedProminent)
                     }
                     .padding([.horizontal, .top], 16)
                 }
@@ -214,6 +211,12 @@ struct RecordingView: View {
             } else {
                 noteText = ""
             }
+            summaryService.summaryPublisher
+                .receive(on: RunLoop.main)
+                .sink { summaryText in
+                    latestSummaryText = summaryText
+                }
+                .store(in: &cancellables)
 #endif
         }
         .onDisappear {
@@ -275,9 +278,9 @@ struct RecordingView: View {
             try transcriptionService.startTranscription()
             isRecordingStarted = true
             elapsedTime = 0
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
                 elapsedTime += 1
-            }
+            })
             print("[RecordingView] Recording started")
         } catch {
             permissionMessage = "Failed to start recording: \(error.localizedDescription)"
@@ -293,25 +296,46 @@ struct RecordingView: View {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         if let url = audioFileURL {
-            transcriptionService.transcribeAudioFile(url: url) { text, segments in
-                DispatchQueue.main.async {
-                    if let text = text {
-                        let transcriptModel = Transcript(text: text, segments: segments ?? [])
-                        summaryService.generateSummary(for: text, type: serviceType)
-                        var summaryCancellable: AnyCancellable? = nil
-                        summaryCancellable = summaryService.summaryPublisher
-                            .receive(on: RunLoop.main)
-                            .sink { summaryText in
-                                if let summaryText = summaryText, !summaryText.isEmpty, summaryService.statusSubject.value == "complete" {
-                                    let summaryModel = Summary(text: summaryText, type: serviceType, status: "complete")
-                                    let newSermon = Sermon(title: title, audioFileURL: url, date: date, serviceType: serviceType, transcript: transcriptModel, notes: notes, summary: summaryModel)
-                                    onNext?(newSermon)
-                                    summaryCancellable?.cancel()
-                                }
-                            }
+            transcriptionService.transcribeAudioFile(url: url, completion: handleTranscriptionResult(title: title, date: date, url: url))
+        }
+    }
+
+    private func handleTranscriptionResult(title: String, date: Date, url: URL) -> (String?, [TranscriptSegment]?) -> Void {
+        return { text, segments in
+            guard let text = text else { return }
+            let transcriptModel = Transcript(text: text, segments: segments ?? [])
+            let summaryModel = Summary(text: "", type: serviceType, status: "processing")
+            var newSermon = Sermon(
+                title: title,
+                audioFileURL: url,
+                date: date,
+                serviceType: serviceType,
+                transcript: transcriptModel,
+                notes: notes,
+                summary: summaryModel,
+                syncStatus: "localOnly",
+                transcriptionStatus: "complete",
+                summaryStatus: "processing"
+            )
+            onNext?(newSermon)
+            summaryService.generateSummary(for: text, type: serviceType)
+            var summaryCancellable: AnyCancellable? = nil
+            summaryCancellable = summaryService.statusSubject
+                .receive(on: RunLoop.main)
+                .sink { status in
+                    if status == "complete" {
+                        if let summaryText = latestSummaryText, !summaryText.isEmpty {
+                            newSermon.summary?.text = summaryText
+                            newSermon.summary?.status = "complete"
+                            newSermon.summaryStatus = "complete"
+                        }
+                        summaryCancellable?.cancel()
+                    } else if status == "failed" {
+                        newSermon.summary?.status = "failed"
+                        newSermon.summaryStatus = "failed"
+                        summaryCancellable?.cancel()
                     }
                 }
-            }
         }
     }
 
@@ -324,5 +348,5 @@ struct RecordingView: View {
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService())
+    RecordingView(serviceType: "Sermon", noteService: NoteService(), onNext: { _ in })
 }

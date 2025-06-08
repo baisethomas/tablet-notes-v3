@@ -42,7 +42,7 @@ struct MainAppView: View {
                         onNext: { sermon in
                             modelContext.insert(sermon)
                             lastCreatedSermon = sermon
-                            currentScreen = .sermonDetail(sermon: sermon)
+                            currentScreen = .home
                         }
                     ))
                 case .sermonDetail(let sermon):
