@@ -2,6 +2,12 @@ import SwiftUI
 import SwiftData
 import Foundation
 import Combine
+// Import models and services from their relative paths
+
+// Add these imports if the models/services are in subfolders
+// If not, ensure these files are in the same target
+// import TabletNotes.Models
+// import TabletNotes.Services
 
 // Centralized navigation enum
 enum AppScreen {
@@ -12,81 +18,84 @@ enum AppScreen {
 }
 
 struct MainAppView: View {
+    let modelContext: ModelContext
     @State private var currentScreen: AppScreen = .home
     @State private var showServiceTypeModal = false
     @State private var selectedServiceType: String? = nil
     @State private var lastCreatedSermon: Sermon? = nil
-    @State private var modelContext: ModelContext = {
-        do {
-            let container = try ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, TranscriptSegment.self)
-            return ModelContext(container)
-        } catch {
-            print("Failed to load model container: \(error)")
-            fatalError("Failed to load model container: \(error)")
-        }
-    }()
+    @StateObject private var sermonService: SermonService
+
+    init(modelContext: ModelContext) {
+        self.modelContext = modelContext
+        _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
+    }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Group {
+        NavigationStack {
+            ZStack(alignment: .bottom) {
                 switch currentScreen {
                 case .home:
-                    AnyView(ContentView(
-                        onStartRecording: { _ in showServiceTypeModal = true },
-                        onViewPastSermons: { currentScreen = .sermons }
+                    AnyView(SermonListView(
+                        sermonService: sermonService,
+                        onBack: nil,
+                        onSermonTap: { sermon in
+                            currentScreen = .sermonDetail(sermon: sermon)
+                        }
                     ))
                 case .recording(let serviceType):
                     AnyView(RecordingView(
                         serviceType: serviceType ?? "Sermon",
                         noteService: NoteService(),
                         onNext: { sermon in
-                            modelContext.insert(sermon)
+                            sermonService.fetchSermons() // Refresh the list
                             lastCreatedSermon = sermon
-                            currentScreen = .home
-                        }
+                            currentScreen = .sermons // Go to the list after recording
+                        },
+                        sermonService: sermonService
                     ))
                 case .sermonDetail(let sermon):
                     AnyView(SermonDetailView(
-                        sermon: sermon,
-                        onBack: { currentScreen = .home }
+                        sermonService: sermonService,
+                        sermonID: sermon.id,
+                        onBack: { currentScreen = .sermons }
                     ))
                 case .sermons:
                     AnyView(SermonListView(
-                        sermonService: SermonService(modelContext: modelContext),
+                        sermonService: sermonService,
                         onBack: { currentScreen = .home },
                         onSermonTap: { sermon in
                             currentScreen = .sermonDetail(sermon: sermon)
                         }
                     ))
                 }
+                FooterView(
+                    selectedTab: tabForScreen(currentScreen),
+                    onHome: { currentScreen = .home },
+                    onRecord: { showServiceTypeModal = true },
+                    onAccount: { /* handle account */ }
+                )
             }
-            FooterView(
-                selectedTab: tabForScreen(currentScreen),
-                onHome: { currentScreen = .home },
-                onRecord: { showServiceTypeModal = true },
-                onAccount: { /* handle account */ }
-            )
-        }
-        .ignoresSafeArea(edges: .bottom)
-        .sheet(isPresented: $showServiceTypeModal) {
-            VStack(spacing: 0) {
-                Text("Select Service Type")
-                    .font(.headline)
-                    .padding()
-                ForEach(["Sermon", "Bible Study", "Youth Group", "Conference"], id: \.self) { type in
-                    Button(type) {
-                        selectedServiceType = type
-                        showServiceTypeModal = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            currentScreen = .recording(serviceType: type)
+            .ignoresSafeArea(edges: .bottom)
+            .sheet(isPresented: $showServiceTypeModal) {
+                VStack(spacing: 0) {
+                    Text("Select Service Type")
+                        .font(.headline)
+                        .padding()
+                    ForEach(["Sermon", "Bible Study", "Youth Group", "Conference"], id: \.self) { type in
+                        Button(type) {
+                            selectedServiceType = type
+                            showServiceTypeModal = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                currentScreen = .recording(serviceType: type)
+                            }
                         }
+                        .font(.title3)
+                        .frame(maxWidth: .infinity)
+                        .padding()
                     }
-                    .font(.title3)
-                    .frame(maxWidth: .infinity)
-                    .padding()
                 }
+                .presentationDetents([.medium])
             }
-            .presentationDetents([.medium])
         }
     }
 
@@ -100,5 +109,6 @@ struct MainAppView: View {
 }
 
 #Preview {
-    MainAppView()
+    let container = try! ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, TranscriptSegment.self)
+    MainAppView(modelContext: ModelContext(container))
 } 

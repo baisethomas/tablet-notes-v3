@@ -22,13 +22,12 @@ func sermonStatusText(transcriptionStatus: String, summaryStatus: String) -> (St
 }
 
 struct ContentView: View {
+    @ObservedObject var sermonService: SermonService
     @State private var showServiceTypeModal = false
     @State private var selectedServiceType: String? = nil
     var onStartRecording: ((String) -> Void)?
     var onViewPastSermons: (() -> Void)?
     let serviceTypes = ["Sermon", "Bible Study", "Youth Group", "Conference"]
-
-    @Query(sort: [SortDescriptor(\Sermon.date, order: .reverse)]) var sermons: [Sermon]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,14 +47,14 @@ struct ContentView: View {
                 .foregroundColor(.blue)
                 .padding(.top, 16)
             }
-            if sermons.isEmpty {
+            if sermonService.sermons.isEmpty {
                 Spacer()
-                Text("No sermons yet. Start recording to add your first sermon!")
+                Text("No sermons yet. Start recording")
                     .foregroundColor(.secondary)
                 Spacer()
             } else {
                 List {
-                    ForEach(sermons) { sermon in
+                    ForEach(sermonService.sermons) { sermon in
                         let (statusText, statusColor) = sermonStatusText(transcriptionStatus: sermon.transcriptionStatus, summaryStatus: sermon.summaryStatus)
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -86,5 +85,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))))
 }

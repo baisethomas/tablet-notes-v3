@@ -6,13 +6,17 @@ struct SermonListView: View {
     var onBack: (() -> Void)?
     var onSermonTap: ((Sermon) -> Void)?
 
+    @State private var selectedSermonID: UUID? = nil
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 HeaderView(title: "Past Sermons", showLogo: true, showSearch: true, showSettings: true, onSettings: onBack)
                 Spacer(minLength: 0)
                 List(sermonService.sermons) { sermon in
-                    Button(action: { onSermonTap?(sermon) }) {
+                    NavigationLink(
+                        destination: SermonDetailView(sermonService: sermonService, sermonID: sermon.id)
+                    ) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(sermon.title)
                                 .font(.headline)

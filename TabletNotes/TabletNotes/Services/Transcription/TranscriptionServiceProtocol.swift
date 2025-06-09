@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftData
 
 protocol TranscriptionServiceProtocol {
     var transcriptPublisher: AnyPublisher<String, Never> { get }

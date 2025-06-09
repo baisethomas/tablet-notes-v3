@@ -16,6 +16,7 @@ class TranscriptionService: NSObject, ObservableObject {
     private let sessionLimit: TimeInterval = 59 // seconds
     private var sessionStartTime: Date?
     private var lastPartial: String = ""
+    private var isRestarting = false
 
     func startTranscription() throws {
         guard !audioEngine.isRunning else { return }
@@ -38,7 +39,9 @@ class TranscriptionService: NSObject, ObservableObject {
             }
             if let error = error {
                 print("[TranscriptionService] Transcription error: \(error)")
-                self.stopTranscription()
+                if !self.isRestarting {
+                    self.stopTranscription()
+                }
             }
         }
         let recordingFormat = inputNode.outputFormat(forBus: 0)
@@ -59,6 +62,7 @@ class TranscriptionService: NSObject, ObservableObject {
             print("[TranscriptionService] Audio engine not running, aborting restart.")
             return
         }
+        isRestarting = true
         // Append the last partial to the full transcript
         if !lastPartial.isEmpty {
             if fullTranscript.isEmpty {
@@ -71,12 +75,14 @@ class TranscriptionService: NSObject, ObservableObject {
         stopSession(clean: true)
         // Wait a short delay before starting a new session
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self = self else { return }
             do {
                 print("[TranscriptionService] Attempting to start new session after restart...")
-                try self?.startSession()
+                try self.startSession()
             } catch {
                 print("[TranscriptionService] Failed to restart transcription session: \(error)")
             }
+            self.isRestarting = false
         }
     }
 

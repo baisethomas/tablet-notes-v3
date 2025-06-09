@@ -31,7 +31,7 @@ class AppCoordinator: ObservableObject {
         switch screen {
         case .home:
             VStack {
-                ContentView(onStartRecording: { serviceType in
+                ContentView(sermonService: sermonService, onStartRecording: { serviceType in
                     self.selectedServiceType = serviceType
                     self.screen = .recording(serviceType: serviceType)
                 })
@@ -43,7 +43,7 @@ class AppCoordinator: ObservableObject {
         case .recording(let serviceType):
             RecordingView(serviceType: serviceType, noteService: noteService, onNext: { sermon in
                 self.screen = .sermonDetail(sermon: sermon)
-            })
+            }, sermonService: sermonService)
         case .notes:
             NotesView(noteService: noteService, onNext: {
                 let transcript = self.lastTranscript
@@ -57,7 +57,7 @@ class AppCoordinator: ObservableObject {
                 self.screen = .sermonDetail(sermon: sermon)
             }
         case .sermonDetail(let sermon):
-            SermonDetailView(sermon: sermon, onBack: { self.screen = .sermonList })
+            SermonDetailView(sermonService: sermonService, sermonID: sermon.id, onBack: { self.screen = .sermonList })
         case .settings:
             SettingsView(onNext: { self.screen = .home })
         }

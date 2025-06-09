@@ -17,6 +17,7 @@ struct RecordingView: View {
     let serviceType: String
     @ObservedObject var noteService: NoteService
     var onNext: ((Sermon) -> Void)?
+    @ObservedObject var sermonService: SermonService
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
     #if canImport(AVFoundation) && os(iOS)
@@ -39,6 +40,7 @@ struct RecordingView: View {
     @State private var transcriptProcessingError: String? = nil
     @StateObject private var summaryService = SummaryService()
     @State private var latestSummaryText: String? = nil
+    @StateObject private var assemblyAIService = AssemblyAITranscriptionService()
     #endif
 
     var body: some View {
@@ -296,7 +298,22 @@ struct RecordingView: View {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         if let url = audioFileURL {
-            transcriptionService.transcribeAudioFile(url: url, completion: handleTranscriptionResult(title: title, date: date, url: url))
+            isProcessingTranscript = true
+            transcriptProcessingError = nil
+            assemblyAIService.transcribeAudioFile(url: url) { result in
+                DispatchQueue.main.async {
+                    isProcessingTranscript = false
+                    switch result {
+                    case .success(let text):
+                        transcript = text
+                        detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
+                        // Save the sermon after successful transcription!
+                        handleTranscriptionResult(title: title, date: date, url: url)(text, nil)
+                    case .failure(let error):
+                        transcriptProcessingError = error.localizedDescription
+                    }
+                }
+            }
         }
     }
 
@@ -305,7 +322,7 @@ struct RecordingView: View {
             guard let text = text else { return }
             let transcriptModel = Transcript(text: text, segments: segments ?? [])
             let summaryModel = Summary(text: "", type: serviceType, status: "processing")
-            var newSermon = Sermon(
+            let newSermon = Sermon(
                 title: title,
                 audioFileURL: url,
                 date: date,
@@ -317,6 +334,20 @@ struct RecordingView: View {
                 transcriptionStatus: "complete",
                 summaryStatus: "processing"
             )
+            print("[DEBUG] handleTranscriptionResult: newSermon.transcriptionStatus = \(newSermon.transcriptionStatus)")
+            sermonService.saveSermon(
+                title: newSermon.title,
+                audioFileURL: newSermon.audioFileURL,
+                date: newSermon.date,
+                serviceType: newSermon.serviceType,
+                transcript: newSermon.transcript,
+                notes: newSermon.notes,
+                summary: newSermon.summary,
+                transcriptionStatus: "complete",
+                summaryStatus: newSermon.summaryStatus,
+                id: newSermon.id
+            )
+            sermonService.fetchSermons()
             onNext?(newSermon)
             summaryService.generateSummary(for: text, type: serviceType)
             var summaryCancellable: AnyCancellable? = nil
@@ -328,11 +359,37 @@ struct RecordingView: View {
                             newSermon.summary?.text = summaryText
                             newSermon.summary?.status = "complete"
                             newSermon.summaryStatus = "complete"
+                            // Persist the updated summary and status
+                            sermonService.saveSermon(
+                                title: newSermon.title,
+                                audioFileURL: newSermon.audioFileURL,
+                                date: newSermon.date,
+                                serviceType: newSermon.serviceType,
+                                transcript: newSermon.transcript,
+                                notes: newSermon.notes,
+                                summary: newSermon.summary,
+                                transcriptionStatus: newSermon.transcriptionStatus,
+                                summaryStatus: "complete",
+                                id: newSermon.id
+                            )
                         }
                         summaryCancellable?.cancel()
                     } else if status == "failed" {
                         newSermon.summary?.status = "failed"
                         newSermon.summaryStatus = "failed"
+                        // Persist the failed status
+                        sermonService.saveSermon(
+                            title: newSermon.title,
+                            audioFileURL: newSermon.audioFileURL,
+                            date: newSermon.date,
+                            serviceType: newSermon.serviceType,
+                            transcript: newSermon.transcript,
+                            notes: newSermon.notes,
+                            summary: newSermon.summary,
+                            transcriptionStatus: newSermon.transcriptionStatus,
+                            summaryStatus: "failed",
+                            id: newSermon.id
+                        )
                         summaryCancellable?.cancel()
                     }
                 }
@@ -348,5 +405,10 @@ struct RecordingView: View {
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(), onNext: { _ in })
+    RecordingView(
+        serviceType: "Sermon",
+        noteService: NoteService(),
+        onNext: { _ in },
+        sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)))
+    )
 }

@@ -39,3 +39,5 @@ fastlane/test_output
 .DS_Store
 
 TabletNotes.xcodeproj/xcshareddata/xcschemes/TabletNotes.xcscheme
+
+TabletNotes/Resources/AssemblyAIKey.swift
