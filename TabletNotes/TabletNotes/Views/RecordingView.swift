@@ -7,6 +7,12 @@ import Combine
 import SwiftData
 import Foundation
 
+// Add these imports if needed for model and service types
+// import TabletNotes.Models // Uncomment if models are in a separate module
+// import TabletNotes.Services // Uncomment if services are in a separate module
+// Ensure TabletNotes/TabletNotes/Models/Sermon.swift is included in the build target
+// Ensure TabletNotes/TabletNotes/Services/SermonService.swift is included in the build target
+
 struct TimestampedNote: Identifiable {
     let id = UUID()
     let text: String
@@ -47,7 +53,7 @@ struct RecordingView: View {
         #if canImport(AVFoundation) && os(iOS)
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
-                HeaderView(title: "Recording", showLogo: true, showSearch: false, showSettings: true)
+                HeaderView(title: "Recording", showLogo: true, showSearch: false, showSettings: true, showBack: false)
                 // Recorder controls at the top
                 if recordingService.isRecording {
                     HStack(alignment: .center, spacing: 16) {
@@ -86,6 +92,7 @@ struct RecordingView: View {
                         Text(transcript)
                             .font(.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 100)
                     }
                     .frame(maxHeight: .infinity)
                     if !detectedReferences.isEmpty {
@@ -301,16 +308,19 @@ struct RecordingView: View {
             isProcessingTranscript = true
             transcriptProcessingError = nil
             assemblyAIService.transcribeAudioFile(url: url) { result in
+                print("[RecordingView] AssemblyAI transcription callback fired. Result: \(result)")
                 DispatchQueue.main.async {
                     isProcessingTranscript = false
                     switch result {
-                    case .success(let text):
+                    case .success(let (text, segments)):
+                        print("[RecordingView] AssemblyAI transcription succeeded. Text length: \(text.count), Segments count: \(segments.count ?? 0)")
                         transcript = text
                         detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
                         // Save the sermon after successful transcription!
-                        handleTranscriptionResult(title: title, date: date, url: url)(text, nil)
+                        handleTranscriptionResult(title: title, date: date, url: url)(text, segments)
                     case .failure(let error):
-                        transcriptProcessingError = error.localizedDescription
+                        print("[RecordingView] AssemblyAI transcription failed: \(error.localizedDescription)")
+                        // Optionally show an error to the user
                     }
                 }
             }
@@ -347,7 +357,6 @@ struct RecordingView: View {
                 summaryStatus: newSermon.summaryStatus,
                 id: newSermon.id
             )
-            sermonService.fetchSermons()
             onNext?(newSermon)
             summaryService.generateSummary(for: text, type: serviceType)
             var summaryCancellable: AnyCancellable? = nil

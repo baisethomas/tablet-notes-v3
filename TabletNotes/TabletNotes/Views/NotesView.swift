@@ -12,7 +12,7 @@ struct NotesView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                HeaderView(title: "Notes", showLogo: true, showSearch: false, showSettings: true)
+                HeaderView(title: "Notes", showLogo: true, showSearch: false, showSettings: true, showBack: false)
                 Spacer(minLength: 0)
                 VStack(spacing: 24) {
                     List {

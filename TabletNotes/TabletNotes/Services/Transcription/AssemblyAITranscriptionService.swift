@@ -3,6 +3,8 @@ import SwiftData
 import SwiftUI
 import Combine
 
+// Ensure TabletNotes/TabletNotes/Resources/AssemblyAIKey.swift and TabletNotes/TabletNotes/Models/Transcript.swift are included in the build target for AssemblyAIConfig and TranscriptSegment to be in scope.
+
 class AssemblyAITranscriptionService: ObservableObject {
     private let apiKey = AssemblyAIConfig.apiKey
     private let uploadEndpoint = "https://api.assemblyai.com/v2/upload"

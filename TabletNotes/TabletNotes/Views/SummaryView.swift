@@ -24,7 +24,7 @@ struct SummaryView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                HeaderView(title: "Summary", showLogo: true, showSearch: false, showSettings: true)
+                HeaderView(title: "Summary", showLogo: true, showSearch: false, showSettings: true, showBack: false)
                 Spacer(minLength: 0)
                 VStack(spacing: 24) {
                     if status == "pending" {
@@ -34,6 +34,7 @@ struct SummaryView: View {
                             Text(summary ?? "")
                                 .font(.body)
                                 .padding()
+                                .padding(.bottom, 100)
                         }
                     } else if status == "failed" {
                         Text("Failed to generate summary.")

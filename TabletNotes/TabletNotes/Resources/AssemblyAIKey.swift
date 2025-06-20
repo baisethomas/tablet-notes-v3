@@ -2,5 +2,13 @@
 import Foundation
 
 enum AssemblyAIConfig {
-    static let apiKey = "2ad226b450ec490081debdaff7d647e0"
+    static var apiKey: String {
+        guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let result = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let apiKey = result["AssemblyAI_API_Key"] as? String else {
+            fatalError("API Key not found in Config.plist. Please ensure the file is in the project and has the 'AssemblyAI_API_Key' key.")
+        }
+        return apiKey
+    }
 }

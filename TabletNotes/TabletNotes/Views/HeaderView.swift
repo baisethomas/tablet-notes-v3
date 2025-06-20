@@ -5,11 +5,22 @@ struct HeaderView: View {
     let showLogo: Bool
     let showSearch: Bool
     let showSettings: Bool
+    let showBack: Bool
+    var onBack: (() -> Void)? = nil
     var onSearch: (() -> Void)? = nil
     var onSettings: (() -> Void)? = nil
     
     var body: some View {
         HStack {
+            if showBack {
+                Button(action: { onBack?() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title2)
+                        .foregroundColor(.accentColor)
+                        .accessibilityLabel("Back")
+                }
+                .padding(.trailing, 8)
+            }
             if showLogo {
                 Image("AppLogo")
                     .resizable()
@@ -61,7 +72,7 @@ struct HeaderView: View {
 
 #Preview {
     VStack(spacing: 0) {
-        HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSettings: true)
+        HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSettings: true, showBack: true, onBack: {})
         Divider()
     }
 }

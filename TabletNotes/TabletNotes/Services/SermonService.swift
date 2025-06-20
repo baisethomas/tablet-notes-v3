@@ -64,4 +64,17 @@ class SermonService: ObservableObject {
             print("[SermonService] fetch failed.")
         }
     }
+
+    func deleteSermon(_ sermon: Sermon) {
+        if let index = sermons.firstIndex(where: { $0.id == sermon.id }) {
+            let sermonToDelete = sermons[index]
+            sermons.remove(at: index)
+            modelContext.delete(sermonToDelete)
+            try? modelContext.save()
+        } else {
+            modelContext.delete(sermon)
+            try? modelContext.save()
+            fetchSermons()
+        }
+    }
 } 

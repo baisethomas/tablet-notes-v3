@@ -24,16 +24,16 @@ class SummaryService: ObservableObject {
         }
         statusSubject.send("pending")
         summarySubject.send(nil)
-        let prompt = Self.buildPrompt(sermonType: type, transcript: transcript)
+        let prompt = Self.buildPrompt(serviceType: type, transcript: transcript)
         print("[SummaryService] Prompt to OpenAI (first 200 chars): \(prompt.prefix(200))...")
         let messages: [[String: String]] = [
-            ["role": "system", "content": "You are a thoughtful spiritual assistant helping to summarize religious teachings."],
+            ["role": "system", "content": "You are a thoughtful spiritual assistant. Your primary goal is to summarize the sermon in a way that is easy to understand and remember. If the sermon is too short, under 1 minute, return a message that the sermon was too short to summarize accurately."],
             ["role": "user", "content": prompt]
         ]
         let requestBody: [String: Any] = [
             "model": model,
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": 0.4, // Reduced from 0.7 to reduce creativity/hallucination
             "max_tokens": 800
         ]
         guard let url = URL(string: endpoint),
@@ -95,48 +95,55 @@ class SummaryService: ObservableObject {
         generateSummary(for: transcript, type: type)
     }
 
-    private static func buildPrompt(sermonType: String, transcript: String) -> String {
-        // Use the provided prompt template
+    private static func buildPrompt(serviceType: String, transcript: String) -> String {
         return """
-You are a thoughtful spiritual assistant helping to summarize religious teachings. You've been given a transcript of a \(sermonType) to summarize.
-
-CONTEXT:
-- This summary will help people revisit and reflect on spiritual teachings they've heard
-- The summary should preserve the spiritual essence and key teachings
-- Scripture references should be highlighted and properly formatted
-- The tone should be respectful and aligned with faith-based contexts
+You are a thoughtful spiritual assistant with a deep understanding of the Bible and interpreting sermons. Create a comprehensive summary of this \(serviceType) based on the transcript provided. Your goal is to capture the essence and key elements of the message.
 
 TRANSCRIPT:
 \(transcript)
 
-Please create a comprehensive summary that includes:
+Create a well-structured summary that includes:
 
-1. MAIN THEME: In 1-2 sentences, what was the central message or theme?
+**Main Message:**
+What was the central theme or primary message of this \(serviceType)?
 
-2. KEY POINTS: Identify 3-5 main points or teachings, presented as brief paragraphs
+**Key Points:**
+What were the main teachings, lessons, or points discussed? Include the most important insights and concepts covered.
 
-3. SCRIPTURE REFERENCES: List all Bible verses mentioned or referenced (with the full reference, e.g., \"John 3:16\")
+**Scripture References:**
+List any Bible verses, passages, or biblical stories that were mentioned or referenced.
 
-4. PRACTICAL APPLICATIONS: 2-3 ways this teaching could be applied in daily life
+**Practical Applications:**
+What practical advice, applications, or calls to action were given? How can listeners apply these teachings to their daily lives?
 
-5. REFLECTION QUESTION: One thoughtful question for personal reflection based on this message
+**Additional Context:**
+Include any relevant background information, series context, special occasions, or other notable elements that provide important context.
 
-Format the summary in a clean, readable way with appropriate headings. The total summary should be approximately 300-500 words.
+**Reflection Questions:**
+One thoughtful question for personal reflection based on the message.
+GUIDELINES:
+- Draw from the entire transcript to create a thorough summary
+- Focus on representing what was taught and discussed, pay attention to the nuances of the sermon as well
+- Organize the information clearly and logically
+- Make the summary detailed enough to be meaningful while remaining concise
+- Base your summary on the content of the transcript
+
+Create a summary that would help someone understand and remember the key elements of this message.
 
 ADDITIONAL GUIDANCE BASED ON SERMON TYPE:
-{if SERMON_TYPE = \"Sunday Sermon\"}
+{if serviceType = "Sunday Sermon"}
 Focus on the main spiritual lesson and how it connects to everyday faith. Highlight practical applications.
 {endif}
 
-{if SERMON_TYPE = \"Bible Study\"}
+{if serviceType = "Bible Study"}
 Emphasize scriptural analysis and connections between passages. Include any historical or contextual information mentioned.
 {endif}
 
-{if SERMON_TYPE = \"Youth Group\"}
+{if serviceType = "Youth Group"}
 Use slightly more accessible language. Highlight relatable examples and practical applications for younger audiences.
 {endif}
 
-{if SERMON_TYPE = \"Conference\"}
+{if serviceType = "Conference"}
 Identify the broader theme of the conference if mentioned. Connect this message to larger spiritual concepts or movements discussed.
 {endif}
 """
