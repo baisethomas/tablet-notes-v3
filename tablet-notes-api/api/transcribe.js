@@ -48,7 +48,7 @@ export default async function handler(req, res) {
         });
 
         console.log("AssemblyAI client created. Starting transcription...");
-        const transcript = await assembly.transcripts.create({
+        const transcript = await assembly.transcripts.submit({
             audio: blobData,
             speaker_labels: true,
         });
