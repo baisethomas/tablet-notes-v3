@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { AssemblyAI } from 'assemblyai';
 
+export const config = {
+    maxDuration: 60,
+};
+
 export default async function handler(req, res) {
     console.log("Transcribe endpoint hit");
     if (req.method !== 'POST') {

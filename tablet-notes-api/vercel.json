@@ -1,13 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "api/transcribe.js": {
-      "maxDuration": 60
-    },
-    "api/summarize.js": {
-      "maxDuration": 60
-    }
-  },
   "builds": [
     {
       "src": "package.json",

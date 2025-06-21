@@ -1,5 +1,9 @@
 import OpenAI from 'openai';
 
+export const config = {
+    maxDuration: 60,
+};
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
