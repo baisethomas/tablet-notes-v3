@@ -33,14 +33,14 @@ struct AssemblyAIWord: Codable {
 }
 
 class AssemblyAITranscriptionService: ObservableObject {
-    // Vercel API endpoints
-    private let vercelApiBaseUrl = "https://tablet-notes-v3.vercel.app"
-    private lazy var generateUploadUrlEndpoint = "\(vercelApiBaseUrl)/api/generate-upload-url"
-    private lazy var transcribeEndpointVercel = "\(vercelApiBaseUrl)/api/transcribe"
+    // API endpoints
+    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
+    private lazy var generateUploadUrlEndpoint = "\(apiBaseUrl)/api/generate-upload-url"
+    private lazy var transcribeEndpoint = "\(apiBaseUrl)/api/transcribe"
 
-    // 1. Get Upload URL from Vercel backend
+    // 1. Get Upload URL from backend
     private func getUploadURL(fileName: String, completion: @escaping (Result<GenerateUploadURLResponse, Error>) -> Void) {
-        print("[Vercel] Getting upload URL for \(fileName)")
+        print("[API] Getting upload URL for \(fileName)")
         guard let url = URL(string: generateUploadUrlEndpoint) else {
             completion(.failure(NSError(domain: "InvalidURL", code: 0, userInfo: nil)))
             return
@@ -66,7 +66,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                 completion(.success(decodedResponse))
             } catch {
                 if let responseString = String(data: data, encoding: .utf8) {
-                    print("[Vercel] Failed to decode JSON. Raw response: \(responseString)")
+                    print("[API] Failed to decode JSON. Raw response: \(responseString)")
                 }
                 completion(.failure(error))
             }
@@ -75,7 +75,7 @@ class AssemblyAITranscriptionService: ObservableObject {
 
     // 2. Upload file to Supabase using the signed URL
     private func uploadFile(to uploadUrl: String, fileURL: URL, completion: @escaping (Result<Void, Error>) -> Void) {
-        print("[Vercel] Uploading file to Supabase: \(fileURL)")
+        print("[API] Uploading file to Supabase: \(fileURL)")
         guard let url = URL(string: uploadUrl) else {
             completion(.failure(NSError(domain: "InvalidURL", code: 1, userInfo: nil)))
             return
@@ -94,9 +94,9 @@ class AssemblyAITranscriptionService: ObservableObject {
                 }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                     let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    print("[Vercel] Supabase upload failed with status code: \(statusCode)")
+                    print("[API] Supabase upload failed with status code: \(statusCode)")
                     if let responseData = data, let responseString = String(data: responseData, encoding: .utf8) {
-                        print("[Vercel] Supabase error response: \(responseString)")
+                        print("[API] Supabase error response: \(responseString)")
                     }
                     completion(.failure(NSError(domain: "UploadFailed", code: statusCode, userInfo: nil)))
                     return
@@ -108,10 +108,10 @@ class AssemblyAITranscriptionService: ObservableObject {
         }
     }
 
-    // 3. Start Transcription via Vercel backend
-    private func startVercelTranscription(filePath: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        print("[Vercel] Starting transcription for path: \(filePath)")
-        guard let url = URL(string: transcribeEndpointVercel) else {
+    // 3. Start Transcription via backend
+    private func startTranscription(filePath: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        print("[API] Starting transcription for path: \(filePath)")
+        guard let url = URL(string: transcribeEndpoint) else {
             completion(.failure(NSError(domain: "InvalidURL", code: 2, userInfo: nil)))
             return
         }
@@ -135,7 +135,7 @@ class AssemblyAITranscriptionService: ObservableObject {
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 let statusCode = httpResponse.statusCode
                 let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
-                print("[Vercel] Transcription failed with status: \(statusCode), body: \(responseBody)")
+                print("[API] Transcription failed with status: \(statusCode), body: \(responseBody)")
                 completion(.failure(NSError(domain: "TranscriptionError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(responseBody)"])))
                 return
             }
@@ -151,13 +151,13 @@ class AssemblyAITranscriptionService: ObservableObject {
                 }
             } catch {
                 let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
-                print("[Vercel] JSON Decoding Error: \(error.localizedDescription). Response: \(responseBody)")
+                print("[API] JSON Decoding Error: \(error.localizedDescription). Response: \(responseBody)")
                 completion(.failure(error))
             }
         }.resume()
     }
 
-    // High-level function to transcribe a file using Vercel Backend
+    // High-level function to transcribe a file using the backend
     func transcribeAudioFile(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         let fileName = url.lastPathComponent
         
@@ -167,16 +167,16 @@ class AssemblyAITranscriptionService: ObservableObject {
                 self.uploadFile(to: uploadInfo.uploadUrl, fileURL: url) { uploadResult in
                     switch uploadResult {
                     case .success:
-                        self.startVercelTranscription(filePath: uploadInfo.path) { transcriptionResult in
+                        self.startTranscription(filePath: uploadInfo.path) { transcriptionResult in
                             completion(transcriptionResult)
                         }
                     case .failure(let error):
-                        print("[Vercel] Upload failed: \(error.localizedDescription)")
+                        print("[API] Upload failed: \(error.localizedDescription)")
                         completion(.failure(error))
                     }
                 }
             case .failure(let error):
-                print("[Vercel] GetUploadURL failed: \(error.localizedDescription)")
+                print("[API] GetUploadURL failed: \(error.localizedDescription)")
                 completion(.failure(error))
             }
         }

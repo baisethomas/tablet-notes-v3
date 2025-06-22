@@ -15,8 +15,8 @@ class SupabaseService {
         self.supabase = SupabaseClient(supabaseURL: supabaseURL, supabaseKey: supabaseKey)
     }
 
-    // Vercel API endpoint
-    private let vercelApiBaseUrl = "https://tablet-notes-v3-e19h3hk8c-creativenative-projects.vercel.app"
+    // Netlify API endpoint
+    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
 
     struct SignedUploadURLResponse: Codable {
         let uploadUrl: String
@@ -28,7 +28,7 @@ class SupabaseService {
     /// - Parameter fileName: The name of the file to be uploaded (e.g., "recording.m4a").
     /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
     func getSignedUploadURL(for fileName: String) async throws -> (uploadUrl: URL, path: String) {
-        let url = URL(string: "\(vercelApiBaseUrl)/api/generate-upload-url")!
+        let url = URL(string: "\(apiBaseUrl)/api/generate-upload-url")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
