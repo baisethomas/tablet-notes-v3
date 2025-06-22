@@ -5,180 +5,178 @@ import Combine
 
 // Ensure TabletNotes/TabletNotes/Resources/AssemblyAIKey.swift and TabletNotes/TabletNotes/Models/Transcript.swift are included in the build target for AssemblyAIConfig and TranscriptSegment to be in scope.
 
-class AssemblyAITranscriptionService: ObservableObject {
-    private let apiKey = AssemblyAIConfig.apiKey
-    private let uploadEndpoint = "https://api.assemblyai.com/v2/upload"
-    private let transcriptEndpoint = "https://api.assemblyai.com/v2/transcript"
+// MARK: - Vercel API Models
 
-    // 1. Upload audio file to AssemblyAI
-    func uploadAudioFile(_ audioFileURL: URL, completion: @escaping (Result<String, Error>) -> Void) {
-        print("[AssemblyAI] Uploading audio file: \(audioFileURL)")
-        var request = URLRequest(url: URL(string: uploadEndpoint)!)
+// For /api/generate-upload-url
+struct GenerateUploadURLResponse: Codable {
+    let uploadUrl: String
+    let path: String
+    let token: String
+}
+
+// For /api/transcribe
+// Based on transcribe.js, it returns a transcript-like object.
+// The `segments` are actually words from AssemblyAI.
+struct TranscribeResponse: Codable {
+    let id: String
+    let text: String?
+    let segments: [AssemblyAIWord]? // 'segments' in my Vercel API is 'words' from AssemblyAI
+    let status: String
+}
+
+struct AssemblyAIWord: Codable {
+    let text: String
+    let start: Int
+    let end: Int
+    let confidence: Double
+    let speaker: String?
+}
+
+class AssemblyAITranscriptionService: ObservableObject {
+    // Vercel API endpoints
+    private let vercelApiBaseUrl = "https://tablet-notes-v3.vercel.app"
+    private lazy var generateUploadUrlEndpoint = "\(vercelApiBaseUrl)/api/generate-upload-url"
+    private lazy var transcribeEndpointVercel = "\(vercelApiBaseUrl)/api/transcribe"
+
+    // 1. Get Upload URL from Vercel backend
+    private func getUploadURL(fileName: String, completion: @escaping (Result<GenerateUploadURLResponse, Error>) -> Void) {
+        print("[Vercel] Getting upload URL for \(fileName)")
+        guard let url = URL(string: generateUploadUrlEndpoint) else {
+            completion(.failure(NSError(domain: "InvalidURL", code: 0, userInfo: nil)))
+            return
+        }
+
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "authorization")
-        request.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["fileName": fileName]
+        request.httpBody = try? JSONEncoder().encode(body)
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let data = data else {
+                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
+                return
+            }
+            do {
+                let decodedResponse = try JSONDecoder().decode(GenerateUploadURLResponse.self, from: data)
+                completion(.success(decodedResponse))
+            } catch {
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("[Vercel] Failed to decode JSON. Raw response: \(responseString)")
+                }
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    // 2. Upload file to Supabase using the signed URL
+    private func uploadFile(to uploadUrl: String, fileURL: URL, completion: @escaping (Result<Void, Error>) -> Void) {
+        print("[Vercel] Uploading file to Supabase: \(fileURL)")
+        guard let url = URL(string: uploadUrl) else {
+            completion(.failure(NSError(domain: "InvalidURL", code: 1, userInfo: nil)))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("audio/m4a", forHTTPHeaderField: "Content-Type")
+
         do {
-            let audioData = try Data(contentsOf: audioFileURL)
-            let task = URLSession.shared.uploadTask(with: request, from: audioData) { data, response, error in
+            let audioData = try Data(contentsOf: fileURL)
+            URLSession.shared.uploadTask(with: request, from: audioData) { data, response, error in
                 if let error = error {
-                    print("[AssemblyAI] Upload error: \(error.localizedDescription)")
                     completion(.failure(error))
                     return
                 }
-                if let httpResponse = response as? HTTPURLResponse {
-                    print("[AssemblyAI] Upload HTTP status: \(httpResponse.statusCode)")
-                }
-                guard let data = data else {
-                    print("[AssemblyAI] Upload failed: No data returned")
-                    completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data returned from upload"])) )
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    print("[Vercel] Supabase upload failed with status code: \(statusCode)")
+                    if let responseData = data, let responseString = String(data: responseData, encoding: .utf8) {
+                        print("[Vercel] Supabase error response: \(responseString)")
+                    }
+                    completion(.failure(NSError(domain: "UploadFailed", code: statusCode, userInfo: nil)))
                     return
                 }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("[AssemblyAI] Upload response JSON: \(json)")
-                    if let uploadURL = json["upload_url"] as? String {
-                        completion(.success(uploadURL))
-                    } else {
-                        print("[AssemblyAI] Upload failed: No upload_url in response")
-                        completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "No upload_url in response"])) )
-                    }
-                } else {
-                    print("[AssemblyAI] Upload failed: Could not parse JSON")
-                    completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Could not parse upload response JSON"])) )
-                }
-            }
-            task.resume()
+                completion(.success(()))
+            }.resume()
         } catch {
-            print("[AssemblyAI] Failed to read audio file data: \(error.localizedDescription)")
             completion(.failure(error))
         }
     }
 
-    // 2. Start transcription job
-    func startTranscription(uploadUrl: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        print("[AssemblyAI] Starting transcription with uploadUrl: \(uploadUrl)")
-        var request = URLRequest(url: URL(string: transcriptEndpoint)!)
-        request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "authorization")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let body: [String: Any] = [
-            "audio_url": uploadUrl
-        ]
-        let httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
-        if let httpBody = httpBody, let jsonString = String(data: httpBody, encoding: .utf8) {
-            print("[AssemblyAI] Raw JSON body: \(jsonString)")
+    // 3. Start Transcription via Vercel backend
+    private func startVercelTranscription(filePath: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        print("[Vercel] Starting transcription for path: \(filePath)")
+        guard let url = URL(string: transcribeEndpointVercel) else {
+            completion(.failure(NSError(domain: "InvalidURL", code: 2, userInfo: nil)))
+            return
         }
-        request.httpBody = httpBody
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["filePath": filePath]
+        request.httpBody = try? JSONEncoder().encode(body)
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                print("[AssemblyAI] Transcription start error: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
-            }
-            if let httpResponse = response as? HTTPURLResponse {
-                print("[AssemblyAI] Transcription start HTTP status: \(httpResponse.statusCode)")
             }
             guard let data = data else {
-                print("[AssemblyAI] Transcription start failed: No data returned")
-                completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data returned from transcription start"])) )
+                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
                 return
             }
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                print("[AssemblyAI] Transcription start response JSON: \(json)")
-                if let id = json["id"] as? String {
-                    // Continue polling for result (existing logic)
-                    self.pollTranscriptionResult(id: id, completion: completion)
+            
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                let statusCode = httpResponse.statusCode
+                let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+                print("[Vercel] Transcription failed with status: \(statusCode), body: \(responseBody)")
+                completion(.failure(NSError(domain: "TranscriptionError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(responseBody)"])))
+                return
+            }
+            
+            do {
+                let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                if decodedResponse.status == "completed" || decodedResponse.status == "success" {
+                    let text = decodedResponse.text ?? ""
+                    let segments: [TranscriptSegment] = [] 
+                    completion(.success((text, segments)))
                 } else {
-                    print("[AssemblyAI] Transcription start failed: No id in response")
-                    completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "No id in transcription start response"])) )
+                    completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.status)"])))
                 }
-            } else {
-                print("[AssemblyAI] Transcription start failed: Could not parse JSON")
-                completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Could not parse transcription start response JSON"])) )
-            }
-        }
-        task.resume()
-    }
-
-    // Fetch paragraphs for a completed transcript
-    private func fetchParagraphs(transcriptId: String, text: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        let url = URL(string: "\(transcriptEndpoint)/\(transcriptId)/paragraphs")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "authorization")
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
+            } catch {
+                let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+                print("[Vercel] JSON Decoding Error: \(error.localizedDescription). Response: \(responseBody)")
                 completion(.failure(error))
-                return
             }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let paragraphs = json["paragraphs"] as? [[String: Any]] else {
-                completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch paragraphs"])) )
-                return
-            }
-            let segments: [TranscriptSegment] = paragraphs.compactMap { para in
-                guard let start = para["start"] as? Double,
-                      let end = para["end"] as? Double,
-                      let text = para["text"] as? String else { return nil }
-                return TranscriptSegment(
-                    id: UUID(),
-                    text: text,
-                    startTime: start / 1000.0,
-                    endTime: end / 1000.0
-                )
-            }
-            completion(.success((text, segments)))
-        }
-        task.resume()
+        }.resume()
     }
 
-    // 3. Poll for result (now returns both text and segments)
-    func pollTranscriptionResult(id: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        let url = URL(string: "\(transcriptEndpoint)/\(id)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "authorization")
-
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let status = json["status"] as? String else {
-                completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Polling failed"])))
-                return
-            }
-            if status == "completed", let text = json["text"] as? String {
-                // Fetch paragraphs from the dedicated endpoint
-                self.fetchParagraphs(transcriptId: id, text: text, completion: completion)
-            } else if status == "failed" {
-                completion(.failure(NSError(domain: "AssemblyAI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed"])))
-            } else {
-                // Still processing, poll again after delay
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                    self.pollTranscriptionResult(id: id, completion: completion)
-                }
-            }
-        }
-        task.resume()
-    }
-
-    // 4. High-level function to transcribe a file (now returns both text and segments)
+    // High-level function to transcribe a file using Vercel Backend
     func transcribeAudioFile(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        uploadAudioFile(url) { result in
+        let fileName = url.lastPathComponent
+        
+        getUploadURL(fileName: fileName) { result in
             switch result {
-            case .success(let uploadUrl):
-                self.startTranscription(uploadUrl: uploadUrl) { result in
-                    switch result {
-                    case .success(let (text, segments)):
-                        completion(.success((text, segments)))
+            case .success(let uploadInfo):
+                self.uploadFile(to: uploadInfo.uploadUrl, fileURL: url) { uploadResult in
+                    switch uploadResult {
+                    case .success:
+                        self.startVercelTranscription(filePath: uploadInfo.path) { transcriptionResult in
+                            completion(transcriptionResult)
+                        }
                     case .failure(let error):
+                        print("[Vercel] Upload failed: \(error.localizedDescription)")
                         completion(.failure(error))
                     }
                 }
             case .failure(let error):
+                print("[Vercel] GetUploadURL failed: \(error.localizedDescription)")
                 completion(.failure(error))
             }
         }

@@ -46,7 +46,6 @@ struct RecordingView: View {
     @State private var transcriptProcessingError: String? = nil
     @StateObject private var summaryService = SummaryService()
     @State private var latestSummaryText: String? = nil
-    @StateObject private var assemblyAIService = AssemblyAITranscriptionService()
     #endif
 
     var body: some View {
@@ -307,19 +306,18 @@ struct RecordingView: View {
         if let url = audioFileURL {
             isProcessingTranscript = true
             transcriptProcessingError = nil
-            assemblyAIService.transcribeAudioFile(url: url) { result in
-                print("[RecordingView] AssemblyAI transcription callback fired. Result: \(result)")
+            transcriptionService.transcribeAudioFile(url: url) { text, segments in
+                print("[RecordingView] Vercel transcription callback fired.")
                 DispatchQueue.main.async {
                     isProcessingTranscript = false
-                    switch result {
-                    case .success(let (text, segments)):
-                        print("[RecordingView] AssemblyAI transcription succeeded. Text length: \(text.count), Segments count: \(segments.count ?? 0)")
+                    if let text = text {
+                        print("[RecordingView] Vercel transcription succeeded. Text length: \(text.count), Segments count: \(segments.count)")
                         transcript = text
                         detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
                         // Save the sermon after successful transcription!
                         handleTranscriptionResult(title: title, date: date, url: url)(text, segments)
-                    case .failure(let error):
-                        print("[RecordingView] AssemblyAI transcription failed: \(error.localizedDescription)")
+                    } else {
+                        print("[RecordingView] Vercel transcription failed.")
                         // Optionally show an error to the user
                     }
                 }
@@ -327,10 +325,10 @@ struct RecordingView: View {
         }
     }
 
-    private func handleTranscriptionResult(title: String, date: Date, url: URL) -> (String?, [TranscriptSegment]?) -> Void {
+    private func handleTranscriptionResult(title: String, date: Date, url: URL) -> (String?, [TranscriptSegment]) -> Void {
         return { text, segments in
             guard let text = text else { return }
-            let transcriptModel = Transcript(text: text, segments: segments ?? [])
+            let transcriptModel = Transcript(text: text, segments: segments)
             let summaryModel = Summary(text: "", type: serviceType, status: "processing")
             let newSermon = Sermon(
                 title: title,

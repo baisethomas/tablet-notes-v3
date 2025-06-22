@@ -18,6 +18,9 @@ class TranscriptionService: NSObject, ObservableObject {
     private var lastPartial: String = ""
     private var isRestarting = false
 
+    // Add AssemblyAI service instance
+    private let assemblyAITranscriptionService = AssemblyAITranscriptionService()
+
     func startTranscription() throws {
         guard !audioEngine.isRunning else { return }
         fullTranscript = ""
@@ -117,41 +120,16 @@ class TranscriptionService: NSObject, ObservableObject {
 
     // Post-recording transcription from file
     func transcribeAudioFile(url: URL, completion: @escaping (_ text: String?, _ segments: [TranscriptSegment]) -> Void) {
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        recognizer?.recognitionTask(with: request) { result, error in
-            if let result = result, result.isFinal {
-                let text = result.bestTranscription.formattedString
-                let rawSegments = result.bestTranscription.segments
-                var groupedSegments: [TranscriptSegment] = []
-                var currentWords: [String] = []
-                var segmentStart: TimeInterval? = nil
-                var segmentEnd: TimeInterval? = nil
-                let maxDuration: TimeInterval = 5.0
-                for (i, s) in rawSegments.enumerated() {
-                    if segmentStart == nil { segmentStart = s.timestamp }
-                    segmentEnd = s.timestamp + s.duration
-                    currentWords.append(s.substring)
-                    let isSentenceEnd = s.substring.last.map { ".?!".contains($0) } ?? false
-                    let nextTimestamp = (i + 1 < rawSegments.count) ? rawSegments[i + 1].timestamp : segmentEnd ?? s.timestamp
-                    let duration = (segmentStart != nil && segmentEnd != nil) ? (segmentEnd! - segmentStart!) : 0
-                    if duration >= maxDuration || isSentenceEnd {
-                        let segmentText = currentWords.joined(separator: " ")
-                        groupedSegments.append(TranscriptSegment(text: segmentText, startTime: segmentStart ?? s.timestamp, endTime: segmentEnd ?? s.timestamp))
-                        currentWords = []
-                        segmentStart = (i + 1 < rawSegments.count) ? rawSegments[i + 1].timestamp : nil
-                        segmentEnd = nil
-                    }
+        // Use AssemblyAI service for file transcription
+        assemblyAITranscriptionService.transcribeAudioFile(url: url) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let (text, segments)):
+                    completion(text, segments)
+                case .failure(let error):
+                    print("[TranscriptionService] Vercel transcription error: \(error.localizedDescription)")
+                    completion(nil, [])
                 }
-                // Add any remaining words as a segment
-                if !currentWords.isEmpty, let start = segmentStart, let end = segmentEnd {
-                    let segmentText = currentWords.joined(separator: " ")
-                    groupedSegments.append(TranscriptSegment(text: segmentText, startTime: start, endTime: end))
-                }
-                completion(text, groupedSegments)
-            } else if let error = error {
-                print("[TranscriptionService] File transcription error: \(error)")
-                completion(nil, [])
             }
         }
     }
