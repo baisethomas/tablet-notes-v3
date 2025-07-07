@@ -31,7 +31,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSettings: true, showBack: false)
+            HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSyncStatus: true, showBack: false, syncStatus: HeaderView.SyncStatus.synced)
             Spacer(minLength: 0)
             VStack(spacing: 24) {
                 Text("Tablet Notes Home")

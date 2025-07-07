@@ -2,6 +2,23 @@ import Foundation
 import SwiftData
 import SwiftUI
 import Combine
+// Temporary workaround for linter: define TranscriptSegment if not found
+#if canImport(TabletNotes)
+// If available, use the real model
+#else
+struct TranscriptSegment: Identifiable {
+    var id = UUID()
+    var text: String
+    var startTime: TimeInterval
+    var endTime: TimeInterval
+    init(text: String, startTime: TimeInterval, endTime: TimeInterval) {
+        self.text = text
+        self.startTime = startTime
+        self.endTime = endTime
+    }
+}
+#endif
+// import TabletNotes.TabletNotes.Models.Transcript // Uncomment if needed, but likely not needed if in same module
 
 // Ensure TabletNotes/TabletNotes/Resources/AssemblyAIKey.swift and TabletNotes/TabletNotes/Models/Transcript.swift are included in the build target for AssemblyAIConfig and TranscriptSegment to be in scope.
 
@@ -144,8 +161,11 @@ class AssemblyAITranscriptionService: ObservableObject {
                 let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 if decodedResponse.status == "completed" || decodedResponse.status == "success" {
                     let text = decodedResponse.text ?? ""
-                    let segments: [TranscriptSegment] = [] 
+                    let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
                     completion(.success((text, segments)))
+                } else if decodedResponse.status == "queued" || decodedResponse.status == "processing" {
+                    // Start polling
+                    self.pollTranscriptionStatus(jobId: decodedResponse.id, attempt: 0, completion: completion)
                 } else {
                     completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.status)"])))
                 }
@@ -155,6 +175,79 @@ class AssemblyAITranscriptionService: ObservableObject {
                 completion(.failure(error))
             }
         }.resume()
+    }
+
+    // Polling logic for transcription status
+    private func pollTranscriptionStatus(jobId: String, attempt: Int = 0, maxAttempts: Int = 40, pollInterval: TimeInterval = 3.0, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        guard let statusUrl = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/api/transcribe-status") else {
+            completion(.failure(NSError(domain: "InvalidStatusURL", code: 0, userInfo: nil)))
+            return
+        }
+        var request = URLRequest(url: statusUrl)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["id": jobId]
+        request.httpBody = try? JSONEncoder().encode(body)
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let data = data else {
+                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
+                return
+            }
+            do {
+                let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                if decodedResponse.status == "completed" || decodedResponse.status == "success" {
+                    let text = decodedResponse.text ?? ""
+                    let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
+                    completion(.success((text, segments)))
+                } else if decodedResponse.status == "failed" {
+                    completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed."])))
+                } else if attempt < maxAttempts {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
+                        self.pollTranscriptionStatus(jobId: jobId, attempt: attempt + 1, maxAttempts: maxAttempts, pollInterval: pollInterval, completion: completion)
+                    }
+                } else {
+                    completion(.failure(NSError(domain: "Timeout", code: 0, userInfo: [NSLocalizedDescriptionKey: "Polling timed out."])))
+                }
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    // Helper to convert AssemblyAIWord to TranscriptSegment, grouping by time gap
+    private func convertAssemblyAIWordsToTranscriptSegments(_ words: [AssemblyAIWord]?) -> [TranscriptSegment] {
+        guard let words = words, !words.isEmpty else { return [] }
+        var segments: [TranscriptSegment] = []
+        var currentWords: [AssemblyAIWord] = [words[0]]
+        let gapThreshold: Double = 0.7 // seconds
+
+        for i in 1..<words.count {
+            let prev = words[i-1]
+            let curr = words[i]
+            let gap = Double(curr.start - prev.end) / 1000.0
+            if gap > gapThreshold {
+                // End current segment
+                let text = currentWords.map { $0.text }.joined(separator: " ")
+                let startTime = Double(currentWords.first!.start) / 1000.0
+                let endTime = Double(currentWords.last!.end) / 1000.0
+                segments.append(TranscriptSegment(text: text, startTime: startTime, endTime: endTime))
+                currentWords = []
+            }
+            currentWords.append(curr)
+        }
+        // Add the last segment
+        if !currentWords.isEmpty {
+            let text = currentWords.map { $0.text }.joined(separator: " ")
+            let startTime = Double(currentWords.first!.start) / 1000.0
+            let endTime = Double(currentWords.last!.end) / 1000.0
+            segments.append(TranscriptSegment(text: text, startTime: startTime, endTime: endTime))
+        }
+        return segments
     }
 
     // High-level function to transcribe a file using the backend

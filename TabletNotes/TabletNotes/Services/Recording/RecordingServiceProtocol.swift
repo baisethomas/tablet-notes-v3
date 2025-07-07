@@ -4,8 +4,9 @@ import Combine
 protocol RecordingServiceProtocol {
     var isRecordingPublisher: AnyPublisher<Bool, Never> { get }
     var audioFileURLPublisher: AnyPublisher<URL?, Never> { get }
-    func startRecording() throws
-    func stopRecording() throws
+    var isPausedPublisher: AnyPublisher<Bool, Never> { get }
+    func startRecording(serviceType: String) throws
+    func stopRecording()
     func pauseRecording() throws
     func resumeRecording() throws
 } 

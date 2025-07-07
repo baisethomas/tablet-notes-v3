@@ -127,7 +127,7 @@ class TranscriptionService: NSObject, ObservableObject {
                 case .success(let (text, segments)):
                     completion(text, segments)
                 case .failure(let error):
-                    print("[TranscriptionService] Vercel transcription error: \(error.localizedDescription)")
+                    print("[TranscriptionService] Netlify transcription error: \(error.localizedDescription)")
                     completion(nil, [])
                 }
             }

@@ -7,6 +7,7 @@ import Foundation
 
 class AppCoordinator: ObservableObject {
     enum Screen {
+        case onboarding
         case home
         case recording(serviceType: String)
         case notes
@@ -15,20 +16,39 @@ class AppCoordinator: ObservableObject {
         case sermonDetail(sermon: Sermon)
         case settings
     }
-    @Published private var screen: Screen = .home
+    @Published private var screen: Screen = .onboarding
     @Published private var selectedServiceType: String? = nil
     @Published private var lastTranscript: Transcript? = nil
     @Published private var lastAudioFileURL: URL? = nil
     private let noteService = NoteService()
     private let sermonService: SermonService
+    @Published private var hasSeenOnboarding = false
 
     init(modelContext: ModelContext) {
         self.sermonService = SermonService(modelContext: modelContext)
+        // Check if user has seen onboarding before
+        if UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
+            self.hasSeenOnboarding = true
+            self.screen = .home
+        }
     }
 
     @ViewBuilder
     func start() -> some View {
         switch screen {
+        case .onboarding:
+            OnboardingView(
+                onComplete: {
+                    UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                    self.hasSeenOnboarding = true
+                    self.screen = .home
+                },
+                onSkip: {
+                    UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                    self.hasSeenOnboarding = true
+                    self.screen = .home
+                }
+            )
         case .home:
             VStack {
                 ContentView(sermonService: sermonService, onStartRecording: { serviceType in
@@ -53,13 +73,16 @@ class AppCoordinator: ObservableObject {
         case .summary(let serviceType, let transcript, let audioFileURL):
             SummaryView(serviceType: serviceType, transcript: transcript, audioFileURL: audioFileURL, sermonService: sermonService, noteService: noteService, onNext: { self.screen = .settings })
         case .sermonList:
-            SermonListView(sermonService: sermonService, onBack: { self.screen = .home }) { sermon in
+            SermonListView(sermonService: sermonService, onSermonSelected: { sermon in
                 self.screen = .sermonDetail(sermon: sermon)
-            }
+            })
         case .sermonDetail(let sermon):
             SermonDetailView(sermonService: sermonService, sermonID: sermon.id, onBack: { self.screen = .sermonList })
         case .settings:
-            SettingsView(onNext: { self.screen = .home })
+            SettingsView(
+                onNext: { self.screen = .home },
+                onShowOnboarding: { self.screen = .onboarding }
+            )
         }
     }
 }

@@ -4,11 +4,33 @@ struct HeaderView: View {
     let title: String
     let showLogo: Bool
     let showSearch: Bool
-    let showSettings: Bool
+    let showSyncStatus: Bool
     let showBack: Bool
+    let syncStatus: SyncStatus
     var onBack: (() -> Void)? = nil
     var onSearch: (() -> Void)? = nil
-    var onSettings: (() -> Void)? = nil
+    var onSyncStatus: (() -> Void)? = nil
+    
+    // Convenience initializer with default sync status
+    init(title: String, showLogo: Bool = false, showSearch: Bool = false, showSyncStatus: Bool = false, showBack: Bool = false, syncStatus: SyncStatus = .synced, onBack: (() -> Void)? = nil, onSearch: (() -> Void)? = nil, onSyncStatus: (() -> Void)? = nil) {
+        self.title = title
+        self.showLogo = showLogo
+        self.showSearch = showSearch
+        self.showSyncStatus = showSyncStatus
+        self.showBack = showBack
+        self.syncStatus = syncStatus
+        self.onBack = onBack
+        self.onSearch = onSearch
+        self.onSyncStatus = onSyncStatus
+    }
+    
+    enum SyncStatus {
+        case synced
+        case syncing
+        case error
+        case localOnly
+        case offline
+    }
     
     var body: some View {
         HStack {
@@ -49,18 +71,26 @@ struct HeaderView: View {
                     }
                 }
             }
-            if showSettings {
-                Button(action: { onSettings?() }) {
+            if showSyncStatus {
+                Button(action: { onSyncStatus?() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(Color(hex: "#F7F7F7"))
                             .frame(width: 40, height: 40)
-                        Image(systemName: "gearshape")
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-                            .accessibilityLabel("Settings")
+                        
+                        if syncStatus == .syncing {
+                            // Show loading spinner for syncing
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .progressViewStyle(CircularProgressViewStyle(tint: syncStatusColor))
+                        } else {
+                            Image(systemName: syncStatusIcon)
+                                .font(.title2)
+                                .foregroundColor(syncStatusColor)
+                        }
                     }
                 }
+                .accessibilityLabel(syncStatusAccessibilityLabel)
             }
         }
         .padding(.horizontal)
@@ -68,12 +98,60 @@ struct HeaderView: View {
         .padding(.bottom, 4)
         .background(Color.white.opacity(0.95))
     }
+    
+    private var syncStatusIcon: String {
+        switch syncStatus {
+        case .synced:
+            return "checkmark.icloud"
+        case .syncing:
+            return "icloud"
+        case .error:
+            return "exclamationmark.icloud"
+        case .localOnly:
+            return "icloud.slash"
+        case .offline:
+            return "wifi.slash"
+        }
+    }
+    
+    private var syncStatusColor: Color {
+        switch syncStatus {
+        case .synced:
+            return .green
+        case .syncing:
+            return .orange
+        case .error:
+            return .red
+        case .localOnly:
+            return .gray
+        case .offline:
+            return .secondary
+        }
+    }
+    
+    private var syncStatusAccessibilityLabel: String {
+        switch syncStatus {
+        case .synced:
+            return "All data synced"
+        case .syncing:
+            return "Syncing data"
+        case .error:
+            return "Sync error - tap for details"
+        case .localOnly:
+            return "Local data only"
+        case .offline:
+            return "Offline mode"
+        }
+    }
 }
 
 #Preview {
     VStack(spacing: 0) {
-        HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSettings: true, showBack: true, onBack: {})
+        HeaderView(title: "TabletNotes", showLogo: true, showSearch: true, showSyncStatus: true, showBack: true, syncStatus: HeaderView.SyncStatus.synced, onBack: {})
         Divider()
+        HeaderView(title: "Syncing...", showLogo: true, showSyncStatus: true, syncStatus: HeaderView.SyncStatus.syncing)
+        Divider()
+        HeaderView(title: "Error", showLogo: true, showSyncStatus: true, syncStatus: HeaderView.SyncStatus.error)
     }
 }
 

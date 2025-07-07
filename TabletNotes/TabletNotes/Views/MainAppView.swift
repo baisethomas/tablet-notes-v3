@@ -15,6 +15,8 @@ enum AppScreen {
     case recording(serviceType: String?)
     case sermonDetail(sermon: Sermon)
     case sermons
+    case settings
+    case account
 }
 
 struct MainAppView: View {
@@ -23,6 +25,7 @@ struct MainAppView: View {
     @State private var showServiceTypeModal = false
     @State private var selectedServiceType: String? = nil
     @State private var lastCreatedSermon: Sermon? = nil
+    @State private var showSplash = true
     @StateObject private var sermonService: SermonService
 
     init(modelContext: ModelContext) {
@@ -31,15 +34,24 @@ struct MainAppView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
+        if showSplash {
+            BrandSplashView {
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    showSplash = false
+                }
+            }
+        } else {
+            NavigationStack {
+                ZStack(alignment: .bottom) {
                 switch currentScreen {
                 case .home:
                     AnyView(SermonListView(
                         sermonService: sermonService,
-                        onBack: nil,
-                        onSermonTap: { sermon in
+                        onSermonSelected: { sermon in
                             currentScreen = .sermonDetail(sermon: sermon)
+                        },
+                        onSettings: {
+                            currentScreen = .settings
                         }
                     ))
                 case .recording(let serviceType):
@@ -62,9 +74,29 @@ struct MainAppView: View {
                 case .sermons:
                     AnyView(SermonListView(
                         sermonService: sermonService,
-                        onBack: { currentScreen = .home },
-                        onSermonTap: { sermon in
+                        onSermonSelected: { sermon in
                             currentScreen = .sermonDetail(sermon: sermon)
+                        },
+                        onSettings: {
+                            currentScreen = .settings
+                        }
+                    ))
+                case .settings:
+                    AnyView(SettingsView(
+                        onNext: { 
+                            currentScreen = .home 
+                        },
+                        onNavigateToAccount: {
+                            currentScreen = .account
+                        }
+                    ))
+                case .account:
+                    AnyView(AccountView(
+                        onBack: { 
+                            currentScreen = .home 
+                        },
+                        onNavigateToSettings: {
+                            currentScreen = .settings
                         }
                     ))
                 }
@@ -72,7 +104,7 @@ struct MainAppView: View {
                     selectedTab: tabForScreen(currentScreen),
                     onHome: { currentScreen = .home },
                     onRecord: { showServiceTypeModal = true },
-                    onAccount: { /* handle account */ }
+                    onAccount: { currentScreen = .account }
                 )
             }
             .ignoresSafeArea(edges: .bottom)
@@ -97,6 +129,7 @@ struct MainAppView: View {
                 .presentationDetents([.medium])
             }
         }
+        }
     }
 
     func tabForScreen(_ screen: AppScreen) -> FooterTab {
@@ -104,6 +137,8 @@ struct MainAppView: View {
         case .home: return .home
         case .recording: return .record
         case .sermonDetail, .sermons: return .home
+        case .settings: return .home
+        case .account: return .account
         }
     }
 }

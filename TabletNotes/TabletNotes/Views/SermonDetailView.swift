@@ -8,6 +8,243 @@ import SwiftData
 // Ensure TabletNotes/TabletNotes/Models/Sermon.swift is included in the build target for this file to resolve 'Sermon' in scope.
 // import TabletNotes.Models // Removed because the module does not exist and causes a build error.
 
+// MARK: - Enhanced Loading State Component
+struct ProcessingStateView: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    
+    @State private var animationOffset: CGFloat = 0
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                // Background circle
+                Circle()
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 3)
+                    .frame(width: 60, height: 60)
+                
+                // Animated progress circle
+                Circle()
+                    .trim(from: 0, to: 0.3)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .frame(width: 60, height: 60)
+                    .rotationEffect(.degrees(animationOffset))
+                
+                // Icon
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundColor(.accentColor)
+            }
+            .frame(width: 60, height: 60)
+            .onAppear {
+                // Delay the animation start to ensure proper layout
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                        animationOffset = 360
+                    }
+                }
+            }
+            
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Enhanced Error State Component
+struct ErrorStateView: View {
+    let title: String
+    let subtitle: String
+    let actionTitle: String?
+    let action: (() -> Void)?
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.orange)
+                
+                VStack(spacing: 8) {
+                    Text(title)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            
+            if let actionTitle = actionTitle, let action = action {
+                Button(action: action) {
+                    Text(actionTitle)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.orange)
+                        .cornerRadius(25)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Enhanced Tab Button Component
+struct TabButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .medium)
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
+                
+                Rectangle()
+                    .frame(height: 2)
+                    .foregroundColor(isSelected ? .accentColor : .clear)
+                    .animation(.easeInOut(duration: 0.2), value: isSelected)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Enhanced Audio Player Component
+struct AudioPlayerView: View {
+    @Binding var isPlaying: Bool
+    @Binding var currentTime: TimeInterval
+    @Binding var duration: TimeInterval
+    let onPlayPause: () -> Void
+    let onSeek: (TimeInterval) -> Void
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Progress bar
+            VStack(spacing: 8) {
+                Slider(value: Binding<Double>(
+                    get: { currentTime },
+                    set: { newValue in
+                        onSeek(newValue)
+                    }
+                ), in: 0...(duration > 0 ? duration : 1))
+                .accentColor(.accentColor)
+                .background(Color.gray.opacity(0.2))
+                
+                // Time labels
+                HStack {
+                    Text(timeString(from: currentTime))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                    
+                    Spacer()
+                    
+                    Text(timeString(from: duration))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            
+            // Play/pause button
+            Button(action: {
+                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                impactFeedback.impactOccurred()
+                onPlayPause()
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 60, height: 60)
+                        .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                    
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                        .offset(x: isPlaying ? 0 : 2) // Slight offset for play icon
+                }
+            }
+            .buttonStyle(.plain)
+            .scaleEffect(isPlaying ? 1.1 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isPlaying)
+        }
+        .padding()
+        .cornerRadius(16)
+    }
+    
+    private func timeString(from interval: TimeInterval) -> String {
+        let minutes = Int(interval) / 60
+        let seconds = Int(interval) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+}
+
+// MARK: - Clean Transcript Segment Component
+struct TranscriptSegmentView: View {
+    let segment: TranscriptSegment
+    let onTimestampTap: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Clean timestamp - no bubble
+            Button(action: {
+                onTimestampTap()
+            }) {
+                Text(timeString(from: segment.startTime))
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            
+            // Clean text - no outline
+            Text(segment.text)
+                .font(.body)
+                .foregroundColor(.primary)
+                .lineSpacing(4)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 12)
+    }
+    
+    private func timeString(from interval: TimeInterval) -> String {
+        let minutes = Int(interval) / 60
+        let seconds = Int(interval) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+
+}
+
 struct SermonDetailView: View {
     @ObservedObject var sermonService: SermonService
     let sermonID: UUID
@@ -19,11 +256,22 @@ struct SermonDetailView: View {
     @State private var duration: TimeInterval = 0
     @State private var timer: Timer? = nil
     @State private var editableTitle: String = ""
+    @State private var isEditingTitle = false
+    @State private var editableSpeaker: String = ""
+    @State private var isEditingSpeaker = false
     
     enum Tab: String, CaseIterable {
         case summary = "Summary"
         case transcript = "Transcript"
         case notes = "Notes"
+        
+        var icon: String {
+            switch self {
+            case .summary: return "doc.text"
+            case .transcript: return "text.bubble"
+            case .notes: return "note.text"
+            }
+        }
     }
     
     var sermon: Sermon? {
@@ -31,265 +279,600 @@ struct SermonDetailView: View {
     }
     
     var body: some View {
-        let sermon = sermon
-        if sermon != nil {
-            let sermon = sermon! // safe because of the check above
-            VStack(spacing: 0) {
-                HeaderView(
-                    title: "",
-                    showLogo: false,
-                    showSearch: false,
-                    showSettings: true,
-                    showBack: true,
-                    onBack: onBack
-                )
-                // Top Bar
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        TextField("Title", text: $editableTitle, onCommit: {
-                            sermonService.saveSermon(
-                                title: editableTitle,
-                                audioFileURL: sermon.audioFileURL,
-                                date: sermon.date,
-                                serviceType: sermon.serviceType,
-                                transcript: sermon.transcript,
-                                notes: sermon.notes,
-                                summary: sermon.summary,
-                                transcriptionStatus: sermon.transcriptionStatus,
-                                summaryStatus: sermon.summaryStatus,
-                                id: sermon.id
-                            )
-                        })
-                        .font(.headline)
-                        .foregroundColor(.black)
-                        HStack(spacing: 8) {
-                            Text(formattedDate)
-                            Text(formattedTime)
-                            if duration > 0 {
-                                Text("\(Int(duration / 60)) min")
-                            }
-                            Text(sermon.serviceType)
-                        }
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                    }
-                    Spacer()
-                }
-                .padding([.top, .horizontal])
-                // Segmented Control
-                HStack {
-                    ForEach(Tab.allCases, id: \.self) { tab in
-                        Button(action: { selectedTab = tab }) {
-                            VStack {
-                                Text(tab.rawValue)
-                                    .font(.subheadline)
-                                    .foregroundColor(selectedTab == tab ? Color.blue : Color.primary)
-                                Rectangle()
-                                    .frame(height: 2)
-                                    .foregroundColor(selectedTab == tab ? Color.blue : Color.clear)
+        NavigationView {
+            if let sermon = sermon {
+                VStack(spacing: 0) {
+                    HeaderView(
+                        title: "",
+                        showLogo: false,
+                        showSearch: false,
+                        showSyncStatus: false,
+                        showBack: true,
+                        onBack: onBack
+                    )
+                    
+                    // Enhanced header section
+                    VStack(spacing: 16) {
+                        // Title section
+                        VStack(spacing: 8) {
+                            if isEditingTitle {
+                                TextField("Sermon Title", text: $editableTitle)
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .onSubmit {
+                                        saveTitle()
+                                    }
+                            } else {
+                                HStack {
+                                    Text(editableTitle)
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(2)
+                                    
+                                    Spacer()
+                                    
+                                    Button(action: {
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                        impactFeedback.impactOccurred()
+                                        isEditingTitle = true
+                                    }) {
+                                        Image(systemName: "pencil")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .padding(8)
+                                            .cornerRadius(8)
+                                    }
+                                }
+                                .onTapGesture {
+                                    isEditingTitle = true
+                                }
                             }
                         }
-                        .frame(maxWidth: .infinity)
+                        
+                        // Metadata section
+                        VStack(spacing: 12) {
+                            HStack(spacing: 16) {
+                                Label(formattedDate, systemImage: "calendar")
+                                Label(formattedTime, systemImage: "clock")
+                                if duration > 0 {
+                                    Label("\(Int(duration / 60)) min", systemImage: "timer")
+                                }
+                                Label(sermon.serviceType, systemImage: "church.fill")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            // Speaker section
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "person.circle")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                    Text("Speaker")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                }
+                                
+                                if isEditingSpeaker {
+                                    HStack {
+                                        TextField("Enter speaker name", text: $editableSpeaker)
+                                            .font(.subheadline)
+                                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                                            .onSubmit {
+                                                saveSpeaker()
+                                            }
+                                        
+                                        Button("Save") {
+                                            saveSpeaker()
+                                        }
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                        
+                                        Button("Cancel") {
+                                            editableSpeaker = sermon.speaker ?? ""
+                                            isEditingSpeaker = false
+                                        }
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    }
+                                } else {
+                                    HStack {
+                                        Text(editableSpeaker.isEmpty ? "Tap to add speaker" : editableSpeaker)
+                                            .font(.subheadline)
+                                            .foregroundColor(editableSpeaker.isEmpty ? .secondary : .primary)
+                                            .italic(editableSpeaker.isEmpty)
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                            impactFeedback.impactOccurred()
+                                            isEditingSpeaker = true
+                                        }) {
+                                            Image(systemName: "pencil")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .padding(6)
+                                                .cornerRadius(6)
+                                        }
+                                    }
+                                    .onTapGesture {
+                                        isEditingSpeaker = true
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .cornerRadius(12)
+                        }
                     }
-                }
-                .padding(.top, 8)
-                .background(Color.white)
-                Divider()
-                // Content Area
-                Group {
-                    switch selectedTab {
-                    case .summary:
-                        summaryTabView
-                    case .transcript:
-                        transcriptTabView
-                    case .notes:
-                        notesTabView
+                    .padding(.horizontal)
+                    .padding(.bottom, 16)
+                    
+                    // Enhanced tab section
+                    HStack(spacing: 0) {
+                        ForEach(Tab.allCases, id: \.self) { tab in
+                            TabButton(
+                                title: tab.rawValue,
+                                isSelected: selectedTab == tab
+                            ) {
+                                selectedTab = tab
+                            }
+                        }
                     }
-                    Spacer()
+                    .padding(.horizontal)
+                    
+                    Divider()
+                    
+                    // Enhanced content area
+                    Group {
+                        switch selectedTab {
+                        case .summary:
+                            summaryTabView
+                        case .transcript:
+                            transcriptTabView
+                        case .notes:
+                            notesTabView
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: selectedTab)
                 }
                 .onAppear {
                     editableTitle = sermon.title
-                    if duration == 0 {
-                        let url = sermon.audioFileURL
-                        do {
-                            let player = try AVAudioPlayer(contentsOf: url)
-                            duration = player.duration
-                        } catch {
-                            print("Failed to load audio for duration: \(error)")
-                        }
-                    }
-                    print("[DEBUG] SermonDetailView onAppear: transcriptionStatus = \(sermon.transcriptionStatus)")
-                }
-                .onChange(of: sermon.transcriptionStatus) { oldValue, newValue in
-                    print("[DEBUG] SermonDetailView transcriptionStatus changed: \(oldValue) -> \(newValue)")
+                    editableSpeaker = sermon.speaker ?? ""
+                    setupAudioPlayer()
                 }
                 .onDisappear {
-                    timer?.invalidate()
-                    audioPlayer?.stop()
-                    audioPlayer = nil
+                    cleanup()
                 }
-            }
-        } else {
-            VStack {
-                Text("This sermon was deleted or is no longer available.")
-                    .foregroundColor(.secondary)
-                    .padding()
-                Button("Back to Sermons") {
-                    onBack?()
+            } else {
+                // Enhanced not found state
+                VStack(spacing: 20) {
+                    Image(systemName: "doc.questionmark")
+                        .font(.system(size: 64))
+                        .foregroundColor(.secondary)
+                    
+                    VStack(spacing: 8) {
+                        Text("Sermon Not Found")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        
+                        Text("This sermon may have been deleted or is no longer available.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    
+                    Button(action: {
+                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                        impactFeedback.impactOccurred()
+                        onBack?()
+                    }) {
+                        Text("Back to Sermons")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(Color.accentColor)
+                            .cornerRadius(25)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .navigationBarHidden(true)
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+    
+    // MARK: - Helper Methods
+    private func setupAudioPlayer() {
+        guard let sermon = sermon, duration == 0 else { return }
+        
+        do {
+            let player = try AVAudioPlayer(contentsOf: sermon.audioFileURL)
+            duration = player.duration
+        } catch {
+            print("Failed to load audio for duration: \(error)")
+        }
+    }
+    
+    private func saveTitle() {
+        guard let sermon = sermon else { return }
+        
+        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+        impactFeedback.impactOccurred()
+        
+        sermonService.saveSermon(
+            title: editableTitle,
+            audioFileURL: sermon.audioFileURL,
+            date: sermon.date,
+            serviceType: sermon.serviceType,
+            speaker: sermon.speaker,
+            transcript: sermon.transcript,
+            notes: sermon.notes,
+            summary: sermon.summary,
+            transcriptionStatus: sermon.transcriptionStatus,
+            summaryStatus: sermon.summaryStatus,
+            id: sermon.id
+        )
+        
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isEditingTitle = false
+        }
+    }
+    
+    private func saveSpeaker() {
+        guard let sermon = sermon else { return }
+        
+        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+        impactFeedback.impactOccurred()
+        
+        let trimmedSpeaker = editableSpeaker.trimmingCharacters(in: .whitespacesAndNewlines)
+        sermonService.saveSermon(
+            title: sermon.title,
+            audioFileURL: sermon.audioFileURL,
+            date: sermon.date,
+            serviceType: sermon.serviceType,
+            speaker: trimmedSpeaker.isEmpty ? nil : trimmedSpeaker,
+            transcript: sermon.transcript,
+            notes: sermon.notes,
+            summary: sermon.summary,
+            transcriptionStatus: sermon.transcriptionStatus,
+            summaryStatus: sermon.summaryStatus,
+            id: sermon.id
+        )
+        
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isEditingSpeaker = false
+        }
+    }
+    
+    private func cleanup() {
+        timer?.invalidate()
+        audioPlayer?.stop()
+        audioPlayer = nil
     }
     
     private var formattedDate: String {
         DateFormatter.localizedString(from: sermon?.date ?? Date(), dateStyle: .medium, timeStyle: .none)
     }
+    
     private var formattedTime: String {
         DateFormatter.localizedString(from: sermon?.date ?? Date(), dateStyle: .none, timeStyle: .short)
     }
+    
+    // MARK: - Tab Views
+    var summaryTabView: some View {
+        Group {
+            if let sermon = sermon {
+                switch sermon.summaryStatus {
+                case "processing":
+                    ProcessingStateView(
+                        title: "Generating Summary",
+                        subtitle: "AI is analyzing your sermon content to create a comprehensive summary.",
+                        icon: "doc.text"
+                    )
+                case "failed":
+                    ErrorStateView(
+                        title: "Summary Generation Failed",
+                        subtitle: "We couldn't generate a summary for this sermon. Please try again.",
+                        actionTitle: "Retry",
+                        action: {
+                            // Retry logic would go here
+                        }
+                    )
+                default:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
+                            
+                            Text(cleanSummary)
+                                .font(.body)
+                                .foregroundColor(.primary)
+                                .lineSpacing(4)
+                                .padding()
+                                .cornerRadius(12)
+                        }
+                        .padding()
+                        .padding(.bottom, 100)
+                    }
+                }
+            } else {
+                Text("No summary available.")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+    
+    var transcriptTabView: some View {
+        VStack {
+            if let sermon = sermon {
+                switch sermon.transcriptionStatus {
+                case "processing":
+                    ProcessingStateView(
+                        title: "Transcribing Audio",
+                        subtitle: "Converting your sermon audio to text. This may take a few minutes.",
+                        icon: "text.bubble"
+                    )
+                case "failed":
+                    ErrorStateView(
+                        title: "Transcription Failed",
+                        subtitle: "We couldn't transcribe this sermon. Please check your audio file and try again.",
+                        actionTitle: "Retry",
+                        action: {
+                            // Retry logic would go here
+                        }
+                    )
+                default:
+                    ZStack(alignment: .bottom) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 20) {
+                                if let transcript = sermon.transcript {
+                                    // Display transcript segments with timestamps
+                                    if !transcript.segments.isEmpty {
+                                        ForEach(transcript.segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                // Clickable timestamp
+                                                Button(action: {
+                                                    playFromTimestamp(segment.startTime)
+                                                }) {
+                                                    Text(timeString(from: segment.startTime))
+                                                        .font(.caption)
+                                                        .fontWeight(.medium)
+                                                        .foregroundColor(.secondary)
+                                                        .padding(.horizontal, 8)
+                                                        .padding(.vertical, 4)
+                                                        .background(Color(.systemGray6))
+                                                        .cornerRadius(6)
+                                                }
+                                                .buttonStyle(.plain)
+                                                
+                                                // Segment text
+                                                Text(segment.text)
+                                                    .font(.body)
+                                                    .foregroundColor(.primary)
+                                                    .lineSpacing(6)
+                                                    .lineLimit(nil)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                            .padding(.vertical, 8)
+                                        }
+                                    } else {
+                                        // Fallback to full text if no segments
+                                        Text(transcript.text)
+                                            .font(.body)
+                                            .foregroundColor(.primary)
+                                            .lineSpacing(6)
+                                            .lineLimit(nil)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                } else {
+                                    Text("No transcript available.")
+                                        .font(.body)
+                                        .foregroundColor(.secondary)
+                                        .padding()
+                                }
+                            }
+                            .padding()
+                            .padding(.bottom, 120) // Extra space for bottom audio player
+                        }
+                        
+                        // Clean audio player at bottom
+                        VStack(spacing: 0) {
+                            // Simple progress bar
+                            VStack(spacing: 8) {
+                                Slider(value: Binding<Double>(
+                                    get: { currentTime },
+                                    set: { newValue in
+                                        seekToTime(newValue)
+                                    }
+                                ), in: 0...(duration > 0 ? duration : 1))
+                                .accentColor(.accentColor)
+                                
+                                HStack {
+                                    Text(timeString(from: currentTime))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .monospacedDigit()
+                                    
+                                    Spacer()
+                                    
+                                    Text(timeString(from: duration))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .monospacedDigit()
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                            
+                            // Play/pause/stop buttons
+                            HStack(spacing: 20) {
+                                Button(action: togglePlayback) {
+                                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                
+                                Button(action: stopPlayback) {
+                                    Image(systemName: "stop.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 16)
+                        }
+                        .background(Color(.systemBackground))
+                        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: -4)
+                    }
+                }
+            } else {
+                Text("No transcript available.")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+    
+    var notesTabView: some View {
+        Group {
+            if let sermon = sermon, !sermon.notes.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(sermon.notes.sorted(by: { $0.timestamp < $1.timestamp })) { note in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "note.text")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                    
+                                    Text("At \(timeString(from: note.timestamp))")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Spacer()
+                                }
+                                
+                                Text(note.text)
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .lineSpacing(2)
+                            }
+                            .padding()
+                            .cornerRadius(12)
+                        }
+                    }
+                    .padding()
+                    .padding(.bottom, 100)
+                }
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    
+                    VStack(spacing: 8) {
+                        Text("No Notes")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        
+                        Text("Notes taken during recording will appear here.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+    
+    // MARK: - Audio Player Methods
+    private func togglePlayback() {
+        guard let sermon = sermon else { return }
+        
+        if isPlaying {
+            audioPlayer?.pause()
+            isPlaying = false
+            timer?.invalidate()
+        } else {
+            if audioPlayer == nil {
+                setupAudioPlayerForPlayback(sermon: sermon)
+            }
+            audioPlayer?.play()
+            isPlaying = true
+            startTimer()
+        }
+    }
+    
+    private func stopPlayback() {
+        audioPlayer?.stop()
+        audioPlayer?.currentTime = 0
+        currentTime = 0
+        isPlaying = false
+        timer?.invalidate()
+    }
+    
+    private func playFromTimestamp(_ timestamp: TimeInterval) {
+        guard let sermon = sermon else { return }
+        
+        if audioPlayer == nil {
+            setupAudioPlayerForPlayback(sermon: sermon)
+        }
+        
+        audioPlayer?.currentTime = timestamp
+        audioPlayer?.play()
+        isPlaying = true
+        startTimer()
+    }
+    
+    private func seekToTime(_ time: TimeInterval) {
+        currentTime = time
+        audioPlayer?.currentTime = time
+    }
+    
+    private func setupAudioPlayerForPlayback(sermon: Sermon) {
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: sermon.audioFileURL)
+            duration = audioPlayer?.duration ?? 0
+            audioPlayer?.prepareToPlay()
+        } catch {
+            print("Failed to load audio: \(error)")
+        }
+    }
+    
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            currentTime = audioPlayer?.currentTime ?? 0
+            if let player = audioPlayer, !player.isPlaying {
+                isPlaying = false
+                timer?.invalidate()
+            }
+        }
+    }
+    
     private func timeString(from interval: TimeInterval) -> String {
         let minutes = Int(interval) / 60
         let seconds = Int(interval) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
-    
-    var summaryTabView: some View {
-        if let sermon = sermon {
-            if sermon.summaryStatus == "processing" {
-                return AnyView(VStack { ProgressView("Generating summary...") }.padding())
-            } else if sermon.summaryStatus == "failed" {
-                return AnyView(VStack { Text("Summary generation failed.").foregroundColor(.red) }.padding())
-            } else {
-                let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
-                return AnyView(ScrollView { Text(cleanSummary).padding().padding(.bottom, 100) })
-            }
-        } else {
-            return AnyView(Text("No summary available.").padding())
-        }
-    }
+}
 
-    var transcriptTabView: some View {
-        if let sermon = sermon {
-            if sermon.transcriptionStatus == "processing" {
-                return AnyView(VStack { ProgressView("Transcribing audio...") }.padding())
-            } else if sermon.transcriptionStatus == "failed" {
-                return AnyView(VStack { Text("Transcription failed.").foregroundColor(.red) }.padding())
-            } else {
-                return AnyView(
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            if let segments = sermon.transcript?.segments, !segments.isEmpty {
-                                ForEach(segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Button(action: {
-                                            if audioPlayer == nil {
-                                                let url = sermon.audioFileURL
-                                                do {
-                                                    audioPlayer = try AVAudioPlayer(contentsOf: url)
-                                                    duration = audioPlayer?.duration ?? 0
-                                                    audioPlayer?.prepareToPlay()
-                                                } catch {
-                                                    print("Failed to load audio: \(error)")
-                                                }
-                                            }
-                                            audioPlayer?.currentTime = segment.startTime
-                                            audioPlayer?.play()
-                                            isPlaying = true
-                                            timer?.invalidate()
-                                            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                                                currentTime = audioPlayer?.currentTime ?? 0
-                                                if let player = audioPlayer, !player.isPlaying {
-                                                    isPlaying = false
-                                                    timer?.invalidate()
-                                                }
-                                            }
-                                        }) {
-                                            Text("[\(timeString(from: segment.startTime))]")
-                                                .font(.caption)
-                                                .foregroundColor(.blue)
-                                                .underline()
-                                        }
-                                        Text(segment.text)
-                                            .font(.body)
-                                    }
-                                }
-                            } else {
-                                Text(sermon.transcript?.text ?? "No transcript available.")
-                                    .padding(.top, 8)
-                            }
-                            Spacer(minLength: 24)
-                            VStack(spacing: 8) {
-                                Slider(value: Binding<Double>(
-                                    get: { currentTime },
-                                    set: { newValue in
-                                        currentTime = newValue
-                                        audioPlayer?.currentTime = newValue
-                                    }
-                                ), in: 0...(duration > 0 ? duration : 1))
-                                .accentColor(.blue)
-                                HStack(spacing: 16) {
-                                    Button(action: {
-                                        if isPlaying {
-                                            audioPlayer?.pause()
-                                            isPlaying = false
-                                            timer?.invalidate()
-                                        } else {
-                                            if audioPlayer == nil {
-                                                let url = sermon.audioFileURL
-                                                do {
-                                                    audioPlayer = try AVAudioPlayer(contentsOf: url)
-                                                    duration = audioPlayer?.duration ?? 0
-                                                    audioPlayer?.prepareToPlay()
-                                                } catch {
-                                                    print("Failed to load audio: \(error)")
-                                                }
-                                            }
-                                            audioPlayer?.play()
-                                            isPlaying = true
-                                            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true, block: { _ in
-                                                currentTime = audioPlayer?.currentTime ?? 0
-                                                if let player = audioPlayer, !player.isPlaying {
-                                                    isPlaying = false
-                                                    timer?.invalidate()
-                                                }
-                                            })
-                                        }
-                                    }) {
-                                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                            .resizable()
-                                            .frame(width: 40, height: 40)
-                                            .foregroundColor(.blue)
-                                    }
-                                    Text("\(timeString(from: currentTime)) / \(timeString(from: duration))")
-                                        .font(.caption)
-                                }
-                            }
-                            .padding(.top, 16)
-                        }.padding().padding(.bottom, 100)
-                    }
-                )
-            }
-        } else {
-            return AnyView(Text("No transcript available.").padding())
-        }
-    }
-
-    var notesTabView: some View {
-        if let sermon = sermon {
-            return AnyView(
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(sermon.notes as [Note], id: \.id) { note in
-                            Text(note.text)
-                                .font(.body)
-                        }
-                    }.padding().padding(.bottom, 100)
-                }
-            )
-        } else {
-            return AnyView(Text("No notes available.").padding())
-        }
-    }
+#Preview {
+    SermonDetailView(
+        sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))),
+        sermonID: UUID()
+    )
 }
 

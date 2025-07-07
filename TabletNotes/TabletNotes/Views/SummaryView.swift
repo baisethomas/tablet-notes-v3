@@ -24,7 +24,7 @@ struct SummaryView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                HeaderView(title: "Summary", showLogo: true, showSearch: false, showSettings: true, showBack: false)
+                HeaderView(title: "Summary", showLogo: true, showSearch: false, showSyncStatus: true, showBack: false, syncStatus: HeaderView.SyncStatus.synced)
                 Spacer(minLength: 0)
                 VStack(spacing: 24) {
                     if status == "pending" {
@@ -37,12 +37,31 @@ struct SummaryView: View {
                                 .padding(.bottom, 100)
                         }
                     } else if status == "failed" {
-                        Text("Failed to generate summary.")
-                            .foregroundColor(.red)
-                        Button("Retry") {
-                            summaryService.retrySummary(for: transcript?.text ?? "", type: serviceType)
+                        VStack(spacing: 16) {
+                            Text("Failed to generate summary.")
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                            
+                            if let errorMessage = summary, errorMessage.hasPrefix("[Error]") {
+                                Text(errorMessage.replacingOccurrences(of: "[Error] ", with: ""))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                            }
+                            
+                            HStack(spacing: 12) {
+                                Button("Retry") {
+                                    summaryService.retrySummary(for: transcript?.text ?? "", type: serviceType)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                
+                                Button("Basic Summary") {
+                                    summaryService.generateBasicSummary(for: transcript?.text ?? "", type: serviceType)
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                     Button("Continue") {
                         saveSermonAndContinue()
@@ -85,7 +104,7 @@ struct SummaryView: View {
             print("[SummaryView] No transcript provided!")
             return
         }
-        sermonService.saveSermon(title: title, audioFileURL: audioFileURL, date: date, serviceType: serviceType, transcript: transcript, notes: notes, summary: summaryModel)
+        sermonService.saveSermon(title: title, audioFileURL: audioFileURL, date: date, serviceType: serviceType, speaker: nil, transcript: transcript, notes: notes, summary: summaryModel)
         onNext?()
     }
 }

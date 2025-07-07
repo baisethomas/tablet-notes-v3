@@ -9,14 +9,18 @@ class RecordingService: NSObject, ObservableObject {
     private let fileManager = FileManager.default
     private var recordingURL: URL?
     @Published var isRecording: Bool = false
+    @Published var isPaused: Bool = false
     let isRecordingPublisher: AnyPublisher<Bool, Never>
     let audioFileURLPublisher: AnyPublisher<URL?, Never>
+    let isPausedPublisher: AnyPublisher<Bool, Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
+    private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
 
     override init() {
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
+        isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
         super.init()
     }
 
@@ -43,14 +47,32 @@ class RecordingService: NSObject, ObservableObject {
     func stopRecording() {
         audioRecorder?.stop()
         isRecording = false
+        isPaused = false
         isRecordingSubject.send(false)
+        isPausedSubject.send(false)
+    }
+    
+    func pauseRecording() throws {
+        guard isRecording, !isPaused else { return }
+        audioRecorder?.pause()
+        isPaused = true
+        isPausedSubject.send(true)
+    }
+    
+    func resumeRecording() throws {
+        guard isRecording, isPaused else { return }
+        audioRecorder?.record()
+        isPaused = false
+        isPausedSubject.send(false)
     }
 }
 
 extension RecordingService: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         isRecording = false
+        isPaused = false
         isRecordingSubject.send(false)
+        isPausedSubject.send(false)
         if flag {
             audioFileURLSubject.send(recorder.url)
         } else {
