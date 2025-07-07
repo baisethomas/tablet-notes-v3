@@ -63,108 +63,106 @@ struct SermonRowView: View {
     @State private var isPressed = false
     
     var body: some View {
-        HStack(spacing: 16) {
-                // Status indicator
-                VStack {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 12, height: 12)
-                        .overlay(
-                            Circle()
-                                .stroke(statusColor.opacity(0.3), lineWidth: 2)
-                                .frame(width: 20, height: 20)
-                        )
+        VStack(spacing: 0) {
+            // Main content area
+            VStack(alignment: .leading, spacing: 12) {
+                // Title and date row
+                HStack(alignment: .top) {
+                    Text(sermon.title)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    
                     Spacer()
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    // Title and date
-                    HStack {
-                        Text(sermon.title)
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                            .lineLimit(2)
-                        
-                        Spacer()
-                        
+                    
+                    VStack(alignment: .trailing, spacing: 2) {
                         Text(sermon.date, style: .date)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                    }
-                    
-                    // Service type badge
-                    HStack {
-                        Image(systemName: serviceTypeIcon)
+                        
+                        // Chevron moved to top right
+                        Image(systemName: "chevron.right")
                             .font(.caption)
-                            .foregroundColor(.accentColor)
-                        
-                        Text(sermon.serviceType)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.accentColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.accentColor.opacity(0.1))
-                            .cornerRadius(8)
-                        
-                        Spacer()
-                        
-                        // Status badges
-                        HStack(spacing: 4) {
-                            StatusBadge(
-                                title: "Transcript",
-                                status: sermon.transcriptionStatus,
-                                icon: "text.bubble"
-                            )
-                            
-                            StatusBadge(
-                                title: "Summary",
-                                status: sermon.summaryStatus,
-                                icon: "doc.text"
-                            )
-                        }
-                    }
-                    
-                    // Summary key points or notes preview
-                    if let summary = sermon.summary, !summary.text.isEmpty, summary.status == "complete" {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "lightbulb")
-                                    .font(.caption2)
-                                    .foregroundColor(.accentColor)
-                                Text("Key Points")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.accentColor)
-                            }
-                            
-                            Text(extractKeyPoints(from: summary.text))
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(4)
-                                .multilineTextAlignment(.leading)
-                        }
-                    } else if !sermon.notes.isEmpty {
-                        HStack(spacing: 4) {
-                            Image(systemName: "note.text")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            
-                            Text("\(sermon.notes.count) note\(sermon.notes.count == 1 ? "" : "s")")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
+                            .foregroundColor(.secondary)
                     }
                 }
                 
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // Service type badge
+                HStack {
+                    Image(systemName: serviceTypeIcon)
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    
+                    Text(sermon.serviceType)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .cornerRadius(8)
+                    
+                    Spacer()
+                }
+                
+                // Summary key points or notes preview
+                if let summary = sermon.summary, !summary.text.isEmpty, summary.status == "complete" {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "lightbulb")
+                                .font(.caption2)
+                                .foregroundColor(.accentColor)
+                            Text("Key Points")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(.accentColor)
+                        }
+                        
+                        Text(extractKeyPoints(from: summary.text))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(4)
+                            .multilineTextAlignment(.leading)
+                    }
+                } else if !sermon.notes.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "note.text")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("\(sermon.notes.count) note\(sermon.notes.count == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+            
+            // Status badges at bottom right
+            HStack {
+                Spacer()
+                
+                HStack(spacing: 8) {
+                    StatusBadge(
+                        title: "Transcript",
+                        status: sermon.transcriptionStatus,
+                        icon: "text.bubble"
+                    )
+                    
+                    StatusBadge(
+                        title: "Summary",
+                        status: sermon.summaryStatus,
+                        icon: "doc.text"
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 16)
         .background(Color(.systemBackground))
         .cornerRadius(12)
         .overlay(
@@ -184,19 +182,6 @@ struct SermonRowView: View {
             withAnimation(.easeInOut(duration: 0.1)) {
                 isPressed = pressing
             }
-        }
-    }
-    
-    private var statusColor: Color {
-        switch (sermon.transcriptionStatus, sermon.summaryStatus) {
-        case ("complete", "complete"):
-            return .green
-        case ("processing", _), (_, "processing"):
-            return .orange
-        case ("failed", _), (_, "failed"):
-            return .red
-        default:
-            return .gray
         }
     }
     
