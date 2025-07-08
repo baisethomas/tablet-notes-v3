@@ -115,11 +115,7 @@ struct TabButton: View {
     let action: () -> Void
     
     var body: some View {
-        Button(action: {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-            action()
-        }) {
+        Button(action: action) {
             VStack(spacing: 8) {
                 Text(title)
                     .font(.subheadline)
@@ -175,11 +171,7 @@ struct AudioPlayerView: View {
             }
             
             // Play/pause button
-            Button(action: {
-                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                impactFeedback.impactOccurred()
-                onPlayPause()
-            }) {
+            Button(action: onPlayPause) {
                 ZStack {
                     Circle()
                         .fill(Color.accentColor)
@@ -612,7 +604,71 @@ struct SermonDetailView: View {
     }
     
     var transcriptTabView: some View {
-        VStack {
+        VStack(spacing: 0) {
+            // Compact single-line audio player at the top - always visible when there's a sermon
+            if let sermon = sermon {
+                VStack(spacing: 0) {
+                    // Single-line audio player
+                    HStack(spacing: 12) {
+                        // Play/pause button
+                        Button(action: togglePlayback) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.accentColor)
+                                    .frame(width: 28, height: 28)
+                                
+                                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white)
+                                    .offset(x: isPlaying ? 0 : 1) // Slight offset for play icon
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        
+                        // Current time
+                        Text(timeString(from: currentTime))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                            .frame(width: 35, alignment: .trailing)
+                        
+                        // Progress slider
+                        Slider(value: Binding<Double>(
+                            get: { currentTime },
+                            set: { newValue in
+                                seekToTime(newValue)
+                            }
+                        ), in: 0...(duration > 0 ? duration : 1))
+                        .accentColor(.accentColor)
+                        
+                        // Total time
+                        Text(timeString(from: duration))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                            .frame(width: 35, alignment: .leading)
+                        
+                        // Skip forward button
+                        Button(action: {
+                            let newTime = min(currentTime + 15, duration)
+                            seekToTime(newTime)
+                        }) {
+                            Image(systemName: "goforward.15")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemBackground))
+                    
+                    Divider()
+                }
+                .background(Color(.systemBackground))
+            }
+            
+            // Main content area
             if let sermon = sermon {
                 switch sermon.transcriptionStatus {
                 case "processing":
@@ -631,108 +687,56 @@ struct SermonDetailView: View {
                         }
                     )
                 default:
-                    ZStack(alignment: .bottom) {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 20) {
-                                if let transcript = sermon.transcript {
-                                    // Display transcript segments with timestamps
-                                    if !transcript.segments.isEmpty {
-                                        ForEach(transcript.segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                // Clickable timestamp
-                                                Button(action: {
-                                                    playFromTimestamp(segment.startTime)
-                                                }) {
-                                                    Text(timeString(from: segment.startTime))
-                                                        .font(.caption)
-                                                        .fontWeight(.medium)
-                                                        .foregroundColor(.secondary)
-                                                        .padding(.horizontal, 8)
-                                                        .padding(.vertical, 4)
-                                                        .background(Color(.systemGray6))
-                                                        .cornerRadius(6)
-                                                }
-                                                .buttonStyle(.plain)
-                                                
-                                                // Segment text
-                                                Text(segment.text)
-                                                    .font(.body)
-                                                    .foregroundColor(.primary)
-                                                    .lineSpacing(6)
-                                                    .lineLimit(nil)
-                                                    .fixedSize(horizontal: false, vertical: true)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if let transcript = sermon.transcript {
+                                // Display transcript segments with timestamps
+                                if !transcript.segments.isEmpty {
+                                    ForEach(transcript.segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            // Clickable timestamp
+                                            Button(action: {
+                                                playFromTimestamp(segment.startTime)
+                                            }) {
+                                                Text(timeString(from: segment.startTime))
+                                                    .font(.caption)
+                                                    .fontWeight(.medium)
+                                                    .foregroundColor(.secondary)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color(.systemGray6))
+                                                    .cornerRadius(6)
                                             }
-                                            .padding(.vertical, 8)
+                                            .buttonStyle(.plain)
+                                            
+                                            // Segment text
+                                            Text(segment.text)
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                                .lineSpacing(6)
+                                                .lineLimit(nil)
+                                                .fixedSize(horizontal: false, vertical: true)
                                         }
-                                    } else {
-                                        // Fallback to full text if no segments
-                                        Text(transcript.text)
-                                            .font(.body)
-                                            .foregroundColor(.primary)
-                                            .lineSpacing(6)
-                                            .lineLimit(nil)
-                                            .fixedSize(horizontal: false, vertical: true)
+                                        .padding(.vertical, 8)
                                     }
                                 } else {
-                                    Text("No transcript available.")
+                                    // Fallback to full text if no segments
+                                    Text(transcript.text)
                                         .font(.body)
-                                        .foregroundColor(.secondary)
-                                        .padding()
+                                        .foregroundColor(.primary)
+                                        .lineSpacing(6)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
+                            } else {
+                                Text("No transcript available.")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                    .padding()
                             }
-                            .padding()
-                            .padding(.bottom, 120) // Extra space for bottom audio player
                         }
-                        
-                        // Clean audio player at bottom
-                        VStack(spacing: 0) {
-                            // Simple progress bar
-                            VStack(spacing: 8) {
-                                Slider(value: Binding<Double>(
-                                    get: { currentTime },
-                                    set: { newValue in
-                                        seekToTime(newValue)
-                                    }
-                                ), in: 0...(duration > 0 ? duration : 1))
-                                .accentColor(.accentColor)
-                                
-                                HStack {
-                                    Text(timeString(from: currentTime))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .monospacedDigit()
-                                    
-                                    Spacer()
-                                    
-                                    Text(timeString(from: duration))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .monospacedDigit()
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.top, 16)
-                            
-                            // Play/pause/stop buttons
-                            HStack(spacing: 20) {
-                                Button(action: togglePlayback) {
-                                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.accentColor)
-                                }
-                                .buttonStyle(.plain)
-                                
-                                Button(action: stopPlayback) {
-                                    Image(systemName: "stop.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.vertical, 16)
-                        }
-                        .background(Color(.systemBackground))
-                        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: -4)
+                        .padding()
+                        .padding(.bottom, 20) // Standard bottom padding
                     }
                 }
             } else {
@@ -842,12 +846,28 @@ struct SermonDetailView: View {
     }
     
     private func setupAudioPlayerForPlayback(sermon: Sermon) {
+        print("[AudioPlayer] Attempting to load audio from: \(sermon.audioFileURL)")
+        
+        // Check if file exists
+        let fileExists = FileManager.default.fileExists(atPath: sermon.audioFileURL.path)
+        print("[AudioPlayer] File exists: \(fileExists)")
+        
+        if !fileExists {
+            print("[AudioPlayer] ERROR: Audio file not found at path: \(sermon.audioFileURL.path)")
+            return
+        }
+        
         do {
             audioPlayer = try AVAudioPlayer(contentsOf: sermon.audioFileURL)
             duration = audioPlayer?.duration ?? 0
             audioPlayer?.prepareToPlay()
+            print("[AudioPlayer] Successfully loaded audio. Duration: \(duration) seconds")
         } catch {
-            print("Failed to load audio: \(error)")
+            print("[AudioPlayer] Failed to load audio: \(error)")
+            if let nsError = error as NSError? {
+                print("[AudioPlayer] Error domain: \(nsError.domain), code: \(nsError.code)")
+                print("[AudioPlayer] Error description: \(nsError.localizedDescription)")
+            }
         }
     }
     

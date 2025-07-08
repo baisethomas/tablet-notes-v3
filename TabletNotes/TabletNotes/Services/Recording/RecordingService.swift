@@ -22,13 +22,34 @@ class RecordingService: NSObject, ObservableObject {
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
         isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
         super.init()
+        
+        // Create audio recordings directory if it doesn't exist
+        createAudioRecordingsDirectory()
+    }
+    
+    private func createAudioRecordingsDirectory() {
+        do {
+            let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let audioPath = documentsPath.appendingPathComponent("AudioRecordings")
+            try fileManager.createDirectory(at: audioPath, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("[RecordingService] Failed to create audio recordings directory: \(error)")
+        }
+    }
+    
+    private func getAudioRecordingsDirectory() -> URL {
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("AudioRecordings")
     }
 
     func startRecording(serviceType: String) throws {
         try recordingSession.setCategory(.playAndRecord, mode: .default)
         try recordingSession.setActive(true)
+        
+        // Use permanent storage instead of temporary directory
         let filename = "sermon_\(UUID().uuidString).m4a"
-        let url = fileManager.temporaryDirectory.appendingPathComponent(filename)
+        let url = getAudioRecordingsDirectory().appendingPathComponent(filename)
+        
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 44100,
@@ -64,6 +85,39 @@ class RecordingService: NSObject, ObservableObject {
         audioRecorder?.record()
         isPaused = false
         isPausedSubject.send(false)
+    }
+    
+    // MARK: - File Management
+    
+    /// Move a temporary audio file to permanent storage
+    func moveToPermamentStorage(temporaryURL: URL) -> URL? {
+        let filename = "sermon_\(UUID().uuidString).m4a"
+        let permanentURL = getAudioRecordingsDirectory().appendingPathComponent(filename)
+        
+        do {
+            // Move file from temporary to permanent location
+            try fileManager.moveItem(at: temporaryURL, to: permanentURL)
+            print("[RecordingService] Moved audio file to permanent storage: \(permanentURL)")
+            return permanentURL
+        } catch {
+            print("[RecordingService] Failed to move audio file to permanent storage: \(error)")
+            return nil
+        }
+    }
+    
+    /// Check if an audio file exists at the given URL
+    func audioFileExists(at url: URL) -> Bool {
+        return fileManager.fileExists(atPath: url.path)
+    }
+    
+    /// Delete an audio file
+    func deleteAudioFile(at url: URL) {
+        do {
+            try fileManager.removeItem(at: url)
+            print("[RecordingService] Deleted audio file: \(url)")
+        } catch {
+            print("[RecordingService] Failed to delete audio file: \(error)")
+        }
     }
 }
 
