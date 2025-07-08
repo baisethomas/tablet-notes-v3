@@ -12,11 +12,15 @@ enum SortOption: String, CaseIterable {
     case oldest = "Oldest First"
 }
 
+@MainActor
 class SermonService: ObservableObject {
     private let modelContext: ModelContext
     private let authManager: AuthenticationManager
+    private var syncService: (any SyncServiceProtocol)?
+    private var subscriptionService: (any SubscriptionServiceProtocol)?
     @Published private(set) var sermons: [Sermon] = []
     @Published private(set) var filteredSermons: [Sermon] = []
+    @Published var limitReachedMessage: String?
     @Published var searchText: String = "" {
         didSet {
             applyFilters()
@@ -33,9 +37,11 @@ class SermonService: ObservableObject {
         }
     }
 
-    init(modelContext: ModelContext, authManager: AuthenticationManager? = nil) {
+    init(modelContext: ModelContext, authManager: AuthenticationManager? = nil, syncService: (any SyncServiceProtocol)? = nil, subscriptionService: (any SubscriptionServiceProtocol)? = nil) {
         self.modelContext = modelContext
         self.authManager = authManager ?? AuthenticationManager.shared
+        self.syncService = syncService
+        self.subscriptionService = subscriptionService
         fetchSermons()
         
         // Listen for auth state changes to refresh sermons
@@ -65,12 +71,29 @@ class SermonService: ObservableObject {
             // Ensure user is authenticated
             guard let currentUser = authManager.currentUser else {
                 print("[SermonService] ERROR: No authenticated user found. Cannot save sermon.")
+                limitReachedMessage = "Please sign in to save sermons"
                 return
             }
             
+            // Check if this is a new sermon (not an update)
+            let sermonID = id ?? UUID()
+            let isNewSermon = !sermons.contains { $0.id == sermonID }
+            
+            // Check usage limits for new sermons
+            if isNewSermon && !currentUser.canCreateNewRecording() {
+                if let remaining = currentUser.remainingRecordings() {
+                    limitReachedMessage = "Recording limit reached! You have \(remaining) recordings remaining this month. Upgrade to Pro for unlimited recordings."
+                } else {
+                    limitReachedMessage = "Recording limit reached! Upgrade to Pro for unlimited recordings."
+                }
+                return
+            }
+            
+            // Clear any previous limit messages
+            limitReachedMessage = nil
+            
             print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
             
-            let sermonID = id ?? UUID()
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
                 existing.title = title
@@ -110,6 +133,24 @@ class SermonService: ObservableObject {
             }
             try? modelContext.save()
             print("[SermonService] Sermon inserted/updated and modelContext saved.")
+            
+            // Track usage for new sermons
+            if isNewSermon {
+                subscriptionService?.incrementRecordingCount()
+                
+                // Calculate audio file size and update storage usage
+                if let fileSize = getFileSize(audioFileURL) {
+                    let fileSizeGB = Double(fileSize) / 1_073_741_824 // Convert bytes to GB
+                    subscriptionService?.incrementStorageUsage(fileSizeGB)
+                }
+            }
+            
+            // Trigger sync if user has sync enabled
+            if let currentUser = authManager.currentUser, currentUser.canSync {
+                markSermonForSync(sermonID)
+                triggerSyncIfNeeded()
+            }
+            
             fetchSermons()
         }
     }
@@ -216,13 +257,27 @@ class SermonService: ObservableObject {
     
     func archiveSermon(_ sermon: Sermon) {
         sermon.isArchived = true
+        markSermonForSync(sermon.id)
         try? modelContext.save()
+        
+        // Trigger sync if user has sync enabled
+        if let currentUser = authManager.currentUser, currentUser.canSync {
+            triggerSyncIfNeeded()
+        }
+        
         applyFilters()
     }
     
     func unarchiveSermon(_ sermon: Sermon) {
         sermon.isArchived = false
+        markSermonForSync(sermon.id)
         try? modelContext.save()
+        
+        // Trigger sync if user has sync enabled
+        if let currentUser = authManager.currentUser, currentUser.canSync {
+            triggerSyncIfNeeded()
+        }
+        
         applyFilters()
     }
     
@@ -243,6 +298,102 @@ class SermonService: ObservableObject {
             modelContext.delete(sermon)
             try? modelContext.save()
             fetchSermons()
+        }
+    }
+    
+    // MARK: - Sync Methods
+    
+    private func markSermonForSync(_ sermonId: UUID) {
+        guard let sermon = sermons.first(where: { $0.id == sermonId }) else { return }
+        sermon.needsSync = true
+        sermon.updatedAt = Date()
+        sermon.syncStatus = "pending"
+    }
+    
+    private func triggerSyncIfNeeded() {
+        guard let syncService = syncService else { return }
+        
+        // Check if there are any sermons that need syncing
+        let needsSync = sermons.contains { $0.needsSync }
+        
+        if needsSync, let syncService = syncService {
+            // Trigger sync in background
+            Task {
+                await syncService.syncAllData()
+            }
+        }
+    }
+    
+    // Public sync methods
+    func syncAllData() {
+        guard let currentUser = authManager.currentUser, currentUser.canSync else { return }
+        Task {
+            await syncService?.syncAllData()
+        }
+    }
+    
+    func isSyncAvailable() -> Bool {
+        guard let currentUser = authManager.currentUser else { return false }
+        return currentUser.canSync
+    }
+    
+    // MARK: - Usage Limits
+    
+    func canCreateNewRecording() -> Bool {
+        guard let currentUser = authManager.currentUser else { return false }
+        return currentUser.canCreateNewRecording()
+    }
+    
+    func canExportSermon() -> Bool {
+        guard let currentUser = authManager.currentUser else { return false }
+        
+        if !currentUser.canExportThisMonth() {
+            if let remaining = currentUser.remainingExports() {
+                limitReachedMessage = "Export limit reached! You have \(remaining) exports remaining this month. Upgrade to Pro for unlimited exports."
+            } else {
+                limitReachedMessage = "Export limit reached! Upgrade to Pro for unlimited exports."
+            }
+            return false
+        }
+        
+        return true
+    }
+    
+    func exportSermon(_ sermon: Sermon) {
+        guard canExportSermon() else { return }
+        
+        // Track export usage
+        subscriptionService?.incrementExportCount()
+        
+        // Perform export logic here
+        // ...
+    }
+    
+    func getRemainingRecordings() -> Int? {
+        return authManager.currentUser?.remainingRecordings()
+    }
+    
+    func getRemainingStorageGB() -> Double? {
+        return authManager.currentUser?.remainingStorageGB()
+    }
+    
+    func getRemainingExports() -> Int? {
+        return authManager.currentUser?.remainingExports()
+    }
+    
+    func clearLimitMessage() {
+        limitReachedMessage = nil
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getFileSize(_ url: URL) -> Int64? {
+        do {
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return fileAttributes[FileAttributeKey.size] as? Int64
+        } catch {
+            print("[SermonService] Error getting file size: \(error)")
+            return nil
         }
     }
 } 
