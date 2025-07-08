@@ -15,15 +15,31 @@ struct TabletNotesApp: App {
     
     init() {
         do {
-            // Configure the container with migration options
-            let schema = Schema([Sermon.self, Note.self, Transcript.self, Summary.self, TranscriptSegment.self])
+            // Configure the container with migration options - include User models
+            let schema = Schema([
+                Sermon.self, 
+                Note.self, 
+                Transcript.self, 
+                Summary.self, 
+                TranscriptSegment.self,
+                User.self,
+                UserNotificationSettings.self
+            ])
             let configuration = ModelConfiguration(schema: schema)
             container = try ModelContainer(for: schema, configurations: configuration)
         } catch {
             // If migration fails, try to create a fresh container
             print("Migration failed, creating fresh container: \(error)")
             do {
-                let schema = Schema([Sermon.self, Note.self, Transcript.self, Summary.self, TranscriptSegment.self])
+                let schema = Schema([
+                    Sermon.self, 
+                    Note.self, 
+                    Transcript.self, 
+                    Summary.self, 
+                    TranscriptSegment.self,
+                    User.self,
+                    UserNotificationSettings.self
+                ])
                 let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
                 container = try ModelContainer(for: schema, configurations: configuration)
             } catch {
@@ -36,6 +52,8 @@ struct TabletNotesApp: App {
     var body: some Scene {
         WindowGroup {
             MainAppView(modelContext: modelContext)
+                .requiresAuthentication()
+                .environment(\.authManager, AuthenticationManager.shared)
         }
     }
 }

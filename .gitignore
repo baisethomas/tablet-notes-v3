@@ -153,3 +153,5 @@ tasks/
 
 # Config
 TabletNotes/TabletNotes/Resources/Config.plist 
+# Local Netlify folder
+.netlify

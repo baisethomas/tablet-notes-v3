@@ -1,17 +1,21 @@
 import SwiftUI
 
 struct AccountView: View {
-    @State private var userName = "John Doe"
-    @State private var userEmail = "john.doe@email.com"
+    @Environment(\.authManager) private var authManager
     @State private var showingEditProfile = false
     @State private var showingAbout = false
     @State private var showingPrivacyPolicy = false
     @State private var showingTerms = false
     @State private var showingSupport = false
     @State private var showingSignOutAlert = false
+    @State private var isSigningOut = false
     
     let onBack: () -> Void
     let onNavigateToSettings: (() -> Void)?
+    
+    private var currentUser: User? {
+        authManager.currentUser
+    }
     
     var body: some View {
         NavigationView {
@@ -56,13 +60,47 @@ struct AccountView: View {
                                     )
                                 
                                 VStack(spacing: 4) {
-                                    Text(userName)
+                                    Text(currentUser?.name ?? "User")
                                         .font(.title2)
                                         .fontWeight(.semibold)
                                     
-                                    Text(userEmail)
+                                    Text(currentUser?.email ?? "user@example.com")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
+                                    
+                                    if let user = currentUser {
+                                        HStack(spacing: 8) {
+                                            if user.isEmailVerified {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "checkmark.seal.fill")
+                                                        .font(.caption)
+                                                        .foregroundColor(.green)
+                                                    Text("Verified")
+                                                        .font(.caption)
+                                                        .foregroundColor(.green)
+                                                }
+                                            } else {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "exclamationmark.triangle.fill")
+                                                        .font(.caption)
+                                                        .foregroundColor(.orange)
+                                                    Text("Verify Email")
+                                                        .font(.caption)
+                                                        .foregroundColor(.orange)
+                                                }
+                                            }
+                                            
+                                            Text("•")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            
+                                            Text(user.subscriptionTier.capitalized)
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.top, 4)
+                                    }
                                 }
                                 
                                 Button("Edit Profile") {
@@ -245,15 +283,24 @@ struct AccountView: View {
                         // Sign Out Section
                         VStack(spacing: 0) {
                             Button(action: {
-                                showingSignOutAlert = true
+                                if !isSigningOut {
+                                    showingSignOutAlert = true
+                                }
                             }) {
                                 HStack {
-                                    Image(systemName: "arrow.right.square")
-                                        .font(.title3)
-                                        .foregroundColor(.red)
-                                        .frame(width: 24, height: 24)
+                                    if isSigningOut {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .red))
+                                            .scaleEffect(0.8)
+                                            .frame(width: 24, height: 24)
+                                    } else {
+                                        Image(systemName: "arrow.right.square")
+                                            .font(.title3)
+                                            .foregroundColor(.red)
+                                            .frame(width: 24, height: 24)
+                                    }
                                     
-                                    Text("Sign Out")
+                                    Text(isSigningOut ? "Signing Out..." : "Sign Out")
                                         .font(.body)
                                         .fontWeight(.medium)
                                         .foregroundColor(.red)
@@ -270,6 +317,7 @@ struct AccountView: View {
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .disabled(isSigningOut)
                         }
                         
                         // App Version Footer
@@ -295,10 +343,7 @@ struct AccountView: View {
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showingEditProfile) {
-            EditProfileView(
-                userName: $userName,
-                userEmail: $userEmail
-            )
+            EditProfileView(user: currentUser)
         }
         .sheet(isPresented: $showingAbout) {
             AppAboutView()
@@ -315,10 +360,37 @@ struct AccountView: View {
         .alert("Sign Out", isPresented: $showingSignOutAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Sign Out", role: .destructive) {
-                // Handle sign out
+                signOut()
             }
         } message: {
             Text("Are you sure you want to sign out?")
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func signOut() {
+        isSigningOut = true
+        
+        Task {
+            do {
+                print("[AccountView] Starting sign out process...")
+                try await authManager.signOut()
+                print("[AccountView] Sign out successful")
+                
+                await MainActor.run {
+                    isSigningOut = false
+                    // Navigation back to auth screen will happen automatically
+                    // via the AuthenticationRequired modifier
+                }
+            } catch {
+                print("[AccountView] Sign out failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    isSigningOut = false
+                    // Could show an error alert here, but sign out should rarely fail
+                    // For now, we'll just reset the loading state
+                }
+            }
         }
     }
 }
@@ -382,16 +454,22 @@ struct AccountRowView: View {
 
 // MARK: - Edit Profile View
 struct EditProfileView: View {
-    @Binding var userName: String
-    @Binding var userEmail: String
+    let user: User?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.authManager) private var authManager
+    
+    @State private var name: String = ""
+    @State private var email: String = ""
+    @State private var isLoading = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
     
     var body: some View {
         NavigationView {
             Form {
                 Section("Personal Information") {
-                    TextField("Name", text: $userName)
-                    TextField("Email", text: $userEmail)
+                    TextField("Name", text: $name)
+                    TextField("Email", text: $email)
                         .keyboardType(.emailAddress)
                         .autocapitalization(.none)
                 }
@@ -406,12 +484,61 @@ struct EditProfileView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        // Handle save
-                        dismiss()
+                    Button(isLoading ? "Saving..." : "Save") {
+                        saveProfile()
                     }
                     .fontWeight(.semibold)
+                    .disabled(isLoading || !isFormValid)
                 }
+            }
+        }
+        .onAppear {
+            // Pre-populate with current user data
+            if let user = user {
+                name = user.name
+                email = user.email
+            }
+        }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+    
+    private var isFormValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        email.contains("@")
+    }
+    
+    private func saveProfile() {
+        guard isFormValid else { return }
+        
+        isLoading = true
+        
+        Task {
+            do {
+                let updatedUser = try await authManager.updateProfile(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    email: email.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                
+                await MainActor.run {
+                    isLoading = false
+                    dismiss()
+                }
+                
+                print("[EditProfileView] Profile updated successfully: \(updatedUser.name)")
+                
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                }
+                
+                print("[EditProfileView] Profile update failed: \(error.localizedDescription)")
             }
         }
     }
