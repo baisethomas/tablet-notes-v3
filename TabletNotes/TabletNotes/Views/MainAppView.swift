@@ -11,6 +11,7 @@ import Combine
 
 // Centralized navigation enum
 enum AppScreen {
+    case onboarding
     case home
     case recording(serviceType: String?)
     case sermonDetail(sermon: Sermon)
@@ -26,11 +27,17 @@ struct MainAppView: View {
     @State private var selectedServiceType: String? = nil
     @State private var lastCreatedSermon: Sermon? = nil
     @State private var showSplash = true
+    @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @StateObject private var sermonService: SermonService
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
+        
+        // Check if user has seen onboarding before
+        if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
+            _currentScreen = State(initialValue: .onboarding)
+        }
     }
 
     var body: some View {
@@ -44,6 +51,23 @@ struct MainAppView: View {
             NavigationStack {
                 ZStack(alignment: .bottom) {
                 switch currentScreen {
+                case .onboarding:
+                    OnboardingView(
+                        onComplete: {
+                            // Only set hasSeenOnboarding to true if this is the first time
+                            if case .home = onboardingReturnScreen {
+                                UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                            }
+                            currentScreen = onboardingReturnScreen
+                        },
+                        onSkip: {
+                            // Only set hasSeenOnboarding to true if this is the first time
+                            if case .home = onboardingReturnScreen {
+                                UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                            }
+                            currentScreen = onboardingReturnScreen
+                        }
+                    )
                 case .home:
                     AnyView(SermonListView(
                         sermonService: sermonService,
@@ -86,6 +110,10 @@ struct MainAppView: View {
                         onNext: { 
                             currentScreen = .home 
                         },
+                        onShowOnboarding: {
+                            onboardingReturnScreen = .settings
+                            currentScreen = .onboarding
+                        },
                         onNavigateToAccount: {
                             currentScreen = .account
                         }
@@ -100,12 +128,16 @@ struct MainAppView: View {
                         }
                     ))
                 }
-                FooterView(
-                    selectedTab: tabForScreen(currentScreen),
-                    onHome: { currentScreen = .home },
-                    onRecord: { showServiceTypeModal = true },
-                    onAccount: { currentScreen = .account }
-                )
+                
+                // Only show footer when not in onboarding
+                if !isOnboardingScreen(currentScreen) {
+                    FooterView(
+                        selectedTab: tabForScreen(currentScreen),
+                        onHome: { currentScreen = .home },
+                        onRecord: { showServiceTypeModal = true },
+                        onAccount: { currentScreen = .account }
+                    )
+                }
             }
             .ignoresSafeArea(edges: .bottom)
             .sheet(isPresented: $showServiceTypeModal) {
@@ -134,12 +166,20 @@ struct MainAppView: View {
 
     func tabForScreen(_ screen: AppScreen) -> FooterTab {
         switch screen {
+        case .onboarding: return .home // Default, though footer won't show
         case .home: return .home
         case .recording: return .record
         case .sermonDetail, .sermons: return .home
         case .settings: return .home
         case .account: return .account
         }
+    }
+    
+    private func isOnboardingScreen(_ screen: AppScreen) -> Bool {
+        if case .onboarding = screen {
+            return true
+        }
+        return false
     }
 }
 
