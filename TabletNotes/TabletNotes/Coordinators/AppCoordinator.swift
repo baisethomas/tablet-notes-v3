@@ -22,10 +22,29 @@ class AppCoordinator: ObservableObject {
     @Published private var lastAudioFileURL: URL? = nil
     private let noteService = NoteService()
     private let sermonService: SermonService
+    private let syncService: SyncService
+    private let supabaseService: SupabaseService
+    private let authManager: AuthenticationManager
+    private let backgroundSyncManager: BackgroundSyncManager
     @Published private var hasSeenOnboarding = false
+    private var onboardingReturnScreen: Screen = .home // Track where to return after onboarding
 
     init(modelContext: ModelContext) {
-        self.sermonService = SermonService(modelContext: modelContext)
+        // Initialize services
+        self.authManager = AuthenticationManager.shared
+        self.supabaseService = SupabaseService()
+        self.syncService = SyncService(
+            modelContext: modelContext,
+            supabaseService: supabaseService,
+            authService: authManager
+        )
+        self.sermonService = SermonService(
+            modelContext: modelContext,
+            authManager: authManager,
+            syncService: syncService
+        )
+        self.backgroundSyncManager = BackgroundSyncManager(syncService: syncService)
+        
         // Check if user has seen onboarding before
         if UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
             self.hasSeenOnboarding = true
@@ -39,14 +58,20 @@ class AppCoordinator: ObservableObject {
         case .onboarding:
             OnboardingView(
                 onComplete: {
-                    UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
-                    self.hasSeenOnboarding = true
-                    self.screen = .home
+                    // Only set hasSeenOnboarding to true if this is the first time
+                    if !self.hasSeenOnboarding {
+                        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                        self.hasSeenOnboarding = true
+                    }
+                    self.screen = self.onboardingReturnScreen
                 },
                 onSkip: {
-                    UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
-                    self.hasSeenOnboarding = true
-                    self.screen = .home
+                    // Only set hasSeenOnboarding to true if this is the first time
+                    if !self.hasSeenOnboarding {
+                        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                        self.hasSeenOnboarding = true
+                    }
+                    self.screen = self.onboardingReturnScreen
                 }
             )
         case .home:
@@ -81,7 +106,11 @@ class AppCoordinator: ObservableObject {
         case .settings:
             SettingsView(
                 onNext: { self.screen = .home },
-                onShowOnboarding: { self.screen = .onboarding }
+                onShowOnboarding: { 
+                    self.onboardingReturnScreen = .settings
+                    self.screen = .onboarding 
+                },
+                sermonService: sermonService
             )
         }
     }
