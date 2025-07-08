@@ -415,7 +415,7 @@ struct SermonListView: View {
                         Image("AppLogo")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 24, height: 24)
+                            .frame(width: 48, height: 48)
                         
                         Text("Sermons")
                             .font(.largeTitle)

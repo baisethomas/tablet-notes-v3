@@ -47,7 +47,7 @@ struct HeaderView: View {
                 Image("AppLogo")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(height: 36)
+                    .frame(height: 48)
                     .accessibilityLabel("TabletNotes Logo")
                     .padding(.trailing, 8)
             }

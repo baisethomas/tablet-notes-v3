@@ -16,8 +16,12 @@ final class Sermon {
     var transcriptionStatus: String // e.g., "processing", "complete", "failed"
     var summaryStatus: String // e.g., "processing", "complete", "failed"
     var isArchived: Bool = false // Whether the sermon is archived
+    
+    // User relationship - each sermon belongs to a user
+    var userId: UUID? // Foreign key to User - optional for migration compatibility
+    @Relationship(inverse: \User.sermons) var user: User?
 
-    init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false) {
+    init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil) {
         self.id = id
         self.title = title
         self.audioFileURL = audioFileURL
@@ -31,5 +35,6 @@ final class Sermon {
         self.transcriptionStatus = transcriptionStatus
         self.summaryStatus = summaryStatus
         self.isArchived = isArchived
+        self.userId = userId
     }
 } 

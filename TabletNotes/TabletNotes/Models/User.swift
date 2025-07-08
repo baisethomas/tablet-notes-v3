@@ -15,6 +15,9 @@ final class User {
     // User preferences
     var notificationSettings: UserNotificationSettings?
     
+    // User's sermons relationship
+    @Relationship(deleteRule: .cascade) var sermons: [Sermon] = []
+    
     init(
         id: UUID = UUID(),
         email: String,

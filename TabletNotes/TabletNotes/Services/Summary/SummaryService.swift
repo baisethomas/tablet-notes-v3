@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Supabase
 
 class SummaryService: ObservableObject {
     private let summarySubject = CurrentValueSubject<String?, Never>(nil)
@@ -9,28 +10,42 @@ class SummaryService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
+    private let supabase: SupabaseClient
+    
+    init(supabase: SupabaseClient = SupabaseService.shared.client) {
+        self.supabase = supabase
+    }
     
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
         statusSubject.send("pending")
         summarySubject.send(nil)
-        let requestBody: [String: Any] = [
-            "text": transcript,
-            "serviceType": type
-        ]
-        guard let url = URL(string: endpoint),
-              let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            print("[SummaryService] ERROR: Failed to create request body or URL")
-            self.statusSubject.send("failed")
-            return
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = httpBody
-        request.timeoutInterval = 60.0 // Increase timeout to 60 seconds
-        print("[SummaryService] Sending request to Netlify summarize endpoint...")
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        
+        Task {
+            do {
+                // Get authentication token
+                let session = try await supabase.auth.session
+                
+                let requestBody: [String: Any] = [
+                    "text": transcript,
+                    "serviceType": type
+                ]
+                guard let url = URL(string: endpoint),
+                      let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+                    print("[SummaryService] ERROR: Failed to create request body or URL")
+                    DispatchQueue.main.async {
+                        self.statusSubject.send("failed")
+                    }
+                    return
+                }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                request.httpBody = httpBody
+                request.timeoutInterval = 60.0 // Increase timeout to 60 seconds
+                print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
+                let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("[SummaryService] ERROR: \(error.localizedDescription)")
                 let errorMessage: String
@@ -90,8 +105,16 @@ class SummaryService: ObservableObject {
                 self.summarySubject.send(summary.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.statusSubject.send("complete")
             }
+                }
+                task.resume()
+            } catch {
+                print("[SummaryService] Authentication error: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.statusSubject.send("failed")
+                    self.summarySubject.send("[Error] Authentication failed: \(error.localizedDescription)")
+                }
+            }
         }
-        task.resume()
     }
 
     func retrySummary(for transcript: String, type: String) {

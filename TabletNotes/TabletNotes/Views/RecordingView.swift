@@ -715,20 +715,8 @@ struct RecordingView: View {
             guard let text = text else { return }
             let transcriptModel = Transcript(text: text, segments: segments)
             let summaryModel = Summary(text: "", type: serviceType, status: "processing")
-            let newSermon = Sermon(
-                title: title,
-                audioFileURL: url,
-                date: date,
-                serviceType: serviceType,
-                speaker: nil, // Default nil speaker for new recordings
-                transcript: transcriptModel,
-                notes: notes,
-                summary: summaryModel,
-                syncStatus: "localOnly",
-                transcriptionStatus: "complete",
-                summaryStatus: "processing"
-            )
-            print("[DEBUG] handleTranscriptionResult: newSermon.transcriptionStatus = \(newSermon.transcriptionStatus)")
+            let sermonId = UUID()
+            print("[DEBUG] handleTranscriptionResult: creating sermon with transcriptionStatus = complete")
             sermonService.saveSermon(
                 title: title,
                 audioFileURL: url,
@@ -740,7 +728,7 @@ struct RecordingView: View {
                 summary: summaryModel,
                 transcriptionStatus: "complete",
                 summaryStatus: "processing",
-                id: newSermon.id
+                id: sermonId
             )
             
             // 🔥 TRIGGER SUMMARIZATION - This was missing!
@@ -767,7 +755,7 @@ struct RecordingView: View {
                             summary: updatedSummary,
                             transcriptionStatus: "complete",
                             summaryStatus: "complete",
-                            id: newSermon.id
+                            id: sermonId
                         )
                     } else if status == "failed" {
                         print("[RecordingView] Summary failed, updating sermon status...")
@@ -783,18 +771,38 @@ struct RecordingView: View {
                             summary: failedSummary,
                             transcriptionStatus: "complete",
                             summaryStatus: "failed",
-                            id: newSermon.id
+                            id: sermonId
                         )
                     }
                 }
                 .store(in: &cancellables)
             
-            onNext?(newSermon)
+            // Create a minimal sermon object for the callback
+            // Note: This is just for the callback - the actual sermon is saved via SermonService
+            Task { @MainActor in
+                if let currentUser = AuthenticationManager.shared.currentUser {
+                    let callbackSermon = Sermon(
+                        id: sermonId,
+                        title: title,
+                        audioFileURL: url,
+                        date: date,
+                        serviceType: serviceType,
+                        speaker: nil,
+                        transcript: transcriptModel,
+                        notes: notes,
+                        summary: summaryModel,
+                        transcriptionStatus: "complete",
+                        summaryStatus: "processing",
+                        userId: currentUser.id
+                    )
+                    onNext?(callbackSermon)
+                }
+            }
         }
     }
     #endif
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))))
+    RecordingView(serviceType: "Sermon", noteService: NoteService(), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared))
 }

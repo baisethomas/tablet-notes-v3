@@ -1,8 +1,22 @@
+const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 
-// Netlify functions have a default timeout of 10 seconds on the free tier.
-// For longer summaries, you may need to upgrade your Netlify plan.
-// See: https://docs.netlify.com/functions/overview/#function-duration
+// Helper function to verify JWT token and get user
+async function getAuthenticatedUser(authHeader, supabase) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Authorization header required');
+  }
+
+  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+  
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  if (error || !user) {
+    throw new Error('Invalid or expired token');
+  }
+  
+  return user;
+}
 
 exports.handler = async (event, context) => {
   // Set up CORS
@@ -29,6 +43,12 @@ exports.handler = async (event, context) => {
   }
 
   try {
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    
+    // Authenticate user
+    const user = await getAuthenticatedUser(event.headers.authorization, supabase);
+    console.log(`[summarize] Authenticated user: ${user.id}`);
+
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
@@ -43,7 +63,7 @@ exports.handler = async (event, context) => {
       };
     }
 
-    console.log('Starting summarization for:', serviceType);
+    console.log(`[summarize] Starting summarization for user ${user.id}, serviceType: ${serviceType}`);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -71,24 +91,31 @@ exports.handler = async (event, context) => {
     });
 
     const summary = completion.choices[0].message.content;
-    console.log('Summarization completed');
+    console.log(`[summarize] Summarization completed for user ${user.id}`);
 
     return {
         statusCode: 200,
         headers,
         body: JSON.stringify({ 
             summary,
-            usage: completion.usage
+            usage: completion.usage,
+            userId: user.id // Include user ID for client verification
         })
     };
 
   } catch (error) {
-    console.error('Summarization error:', error);
+    console.error('[summarize] Summarization error:', error.message);
+    
+    // Return appropriate error status based on error type
+    const statusCode = error.message.includes('Authorization') || 
+                      error.message.includes('Invalid') || 
+                      error.message.includes('expired') ? 401 : 500;
+    
     return {
-        statusCode: 500,
+        statusCode,
         headers,
         body: JSON.stringify({ 
-            error: 'Summarization failed', 
+            error: statusCode === 401 ? 'Authentication required' : 'Summarization failed',
             details: error.message 
         })
     };

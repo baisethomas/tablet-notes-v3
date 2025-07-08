@@ -200,17 +200,12 @@ extension View {
 
 // MARK: - Environment Key for Auth Manager
 private struct AuthManagerKey: EnvironmentKey {
-    static let defaultValue: AuthenticationManager? = nil
+    static let defaultValue: AuthenticationManager = AuthenticationManager.shared
 }
 
 extension EnvironmentValues {
     var authManager: AuthenticationManager {
-        get { 
-            if let manager = self[AuthManagerKey.self] {
-                return manager
-            }
-            return AuthenticationManager.shared
-        }
+        get { self[AuthManagerKey.self] }
         set { self[AuthManagerKey.self] = newValue }
     }
 }

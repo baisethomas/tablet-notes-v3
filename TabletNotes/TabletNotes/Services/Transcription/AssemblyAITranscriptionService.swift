@@ -2,6 +2,7 @@ import Foundation
 import SwiftData
 import SwiftUI
 import Combine
+import Supabase
 // Temporary workaround for linter: define TranscriptSegment if not found
 #if canImport(TabletNotes)
 // If available, use the real model
@@ -54,40 +55,65 @@ class AssemblyAITranscriptionService: ObservableObject {
     private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
     private lazy var generateUploadUrlEndpoint = "\(apiBaseUrl)/api/generate-upload-url"
     private lazy var transcribeEndpoint = "\(apiBaseUrl)/api/transcribe"
+    
+    // Supabase client for authentication
+    private let supabase: SupabaseClient
+    
+    init(supabase: SupabaseClient = SupabaseService.shared.client) {
+        self.supabase = supabase
+    }
 
     // 1. Get Upload URL from backend
     private func getUploadURL(fileName: String, completion: @escaping (Result<GenerateUploadURLResponse, Error>) -> Void) {
         print("[API] Getting upload URL for \(fileName)")
-        guard let url = URL(string: generateUploadUrlEndpoint) else {
-            completion(.failure(NSError(domain: "InvalidURL", code: 0, userInfo: nil)))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["fileName": fileName]
-        request.httpBody = try? JSONEncoder().encode(body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            guard let data = data else {
-                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
-                return
-            }
+        
+        Task {
             do {
-                let decodedResponse = try JSONDecoder().decode(GenerateUploadURLResponse.self, from: data)
-                completion(.success(decodedResponse))
-            } catch {
-                if let responseString = String(data: data, encoding: .utf8) {
-                    print("[API] Failed to decode JSON. Raw response: \(responseString)")
+                // Get authentication token
+                let session = try await supabase.auth.session
+                
+                guard let url = URL(string: generateUploadUrlEndpoint) else {
+                    completion(.failure(NSError(domain: "InvalidURL", code: 0, userInfo: nil)))
+                    return
                 }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                let body = ["fileName": fileName]
+                request.httpBody = try? JSONEncoder().encode(body)
+
+                URLSession.shared.dataTask(with: request) { data, response, error in
+                    if let error = error {
+                        completion(.failure(error))
+                        return
+                    }
+                    guard let data = data else {
+                        completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
+                        return
+                    }
+                    
+                    // Check for authentication error
+                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 401 {
+                        completion(.failure(NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"])))
+                        return
+                    }
+                    
+                    do {
+                        let decodedResponse = try JSONDecoder().decode(GenerateUploadURLResponse.self, from: data)
+                        completion(.success(decodedResponse))
+                    } catch {
+                        if let responseString = String(data: data, encoding: .utf8) {
+                            print("[API] Failed to decode JSON. Raw response: \(responseString)")
+                        }
+                        completion(.failure(error))
+                    }
+                }.resume()
+            } catch {
                 completion(.failure(error))
             }
-        }.resume()
+        }
     }
 
     // 2. Upload file to Supabase using the signed URL
@@ -128,95 +154,117 @@ class AssemblyAITranscriptionService: ObservableObject {
     // 3. Start Transcription via backend
     private func startTranscription(filePath: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         print("[API] Starting transcription for path: \(filePath)")
-        guard let url = URL(string: transcribeEndpoint) else {
-            completion(.failure(NSError(domain: "InvalidURL", code: 2, userInfo: nil)))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["filePath": filePath]
-        request.httpBody = try? JSONEncoder().encode(body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            guard let data = data else {
-                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
-                return
-            }
-            
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                let statusCode = httpResponse.statusCode
-                let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
-                print("[API] Transcription failed with status: \(statusCode), body: \(responseBody)")
-                completion(.failure(NSError(domain: "TranscriptionError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(responseBody)"])))
-                return
-            }
-            
+        
+        Task {
             do {
-                let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-                if decodedResponse.status == "completed" || decodedResponse.status == "success" {
-                    let text = decodedResponse.text ?? ""
-                    let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
-                    completion(.success((text, segments)))
-                } else if decodedResponse.status == "queued" || decodedResponse.status == "processing" {
-                    // Start polling
-                    self.pollTranscriptionStatus(jobId: decodedResponse.id, attempt: 0, completion: completion)
-                } else {
-                    completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.status)"])))
+                // Get authentication token
+                let session = try await supabase.auth.session
+                
+                guard let url = URL(string: transcribeEndpoint) else {
+                    completion(.failure(NSError(domain: "InvalidURL", code: 2, userInfo: nil)))
+                    return
                 }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                let body = ["filePath": filePath]
+                request.httpBody = try? JSONEncoder().encode(body)
+
+                URLSession.shared.dataTask(with: request) { data, response, error in
+                    if let error = error {
+                        completion(.failure(error))
+                        return
+                    }
+                    guard let data = data else {
+                        completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
+                        return
+                    }
+                    
+                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                        let statusCode = httpResponse.statusCode
+                        let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+                        print("[API] Transcription failed with status: \(statusCode), body: \(responseBody)")
+                        completion(.failure(NSError(domain: "TranscriptionError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(responseBody)"])))
+                        return
+                    }
+                    
+                    do {
+                        let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                        if decodedResponse.status == "completed" || decodedResponse.status == "success" {
+                            let text = decodedResponse.text ?? ""
+                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
+                            completion(.success((text, segments)))
+                        } else if decodedResponse.status == "queued" || decodedResponse.status == "processing" {
+                            // Start polling
+                            self.pollTranscriptionStatus(jobId: decodedResponse.id, attempt: 0, completion: completion)
+                        } else {
+                            completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.status)"])))
+                        }
+                    } catch {
+                        let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+                        print("[API] JSON Decoding Error: \(error.localizedDescription). Response: \(responseBody)")
+                        completion(.failure(error))
+                    }
+                }.resume()
             } catch {
-                let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
-                print("[API] JSON Decoding Error: \(error.localizedDescription). Response: \(responseBody)")
                 completion(.failure(error))
             }
-        }.resume()
+        }
     }
 
     // Polling logic for transcription status
     private func pollTranscriptionStatus(jobId: String, attempt: Int = 0, maxAttempts: Int = 40, pollInterval: TimeInterval = 3.0, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
-        guard let statusUrl = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/api/transcribe-status") else {
-            completion(.failure(NSError(domain: "InvalidStatusURL", code: 0, userInfo: nil)))
-            return
-        }
-        var request = URLRequest(url: statusUrl)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["id": jobId]
-        request.httpBody = try? JSONEncoder().encode(body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            guard let data = data else {
-                completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
-                return
-            }
+        
+        Task {
             do {
-                let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-                if decodedResponse.status == "completed" || decodedResponse.status == "success" {
-                    let text = decodedResponse.text ?? ""
-                    let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
-                    completion(.success((text, segments)))
-                } else if decodedResponse.status == "failed" {
-                    completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed."])))
-                } else if attempt < maxAttempts {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
-                        self.pollTranscriptionStatus(jobId: jobId, attempt: attempt + 1, maxAttempts: maxAttempts, pollInterval: pollInterval, completion: completion)
-                    }
-                } else {
-                    completion(.failure(NSError(domain: "Timeout", code: 0, userInfo: [NSLocalizedDescriptionKey: "Polling timed out."])))
+                // Get authentication token
+                let session = try await supabase.auth.session
+                
+                guard let statusUrl = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/api/transcribe-status") else {
+                    completion(.failure(NSError(domain: "InvalidStatusURL", code: 0, userInfo: nil)))
+                    return
                 }
+                var request = URLRequest(url: statusUrl)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                let body = ["id": jobId]
+                request.httpBody = try? JSONEncoder().encode(body)
+
+                URLSession.shared.dataTask(with: request) { data, response, error in
+                    if let error = error {
+                        completion(.failure(error))
+                        return
+                    }
+                    guard let data = data else {
+                        completion(.failure(NSError(domain: "NoData", code: 0, userInfo: nil)))
+                        return
+                    }
+                    do {
+                        let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                        if decodedResponse.status == "completed" || decodedResponse.status == "success" {
+                            let text = decodedResponse.text ?? ""
+                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
+                            completion(.success((text, segments)))
+                        } else if decodedResponse.status == "failed" {
+                            completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed."])))
+                        } else if attempt < maxAttempts {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
+                                self.pollTranscriptionStatus(jobId: jobId, attempt: attempt + 1, maxAttempts: maxAttempts, pollInterval: pollInterval, completion: completion)
+                            }
+                        } else {
+                            completion(.failure(NSError(domain: "Timeout", code: 0, userInfo: [NSLocalizedDescriptionKey: "Polling timed out."])))
+                        }
+                    } catch {
+                        completion(.failure(error))
+                    }
+                }.resume()
             } catch {
                 completion(.failure(error))
             }
-        }.resume()
+        }
     }
 
     // Helper to convert AssemblyAIWord to TranscriptSegment, grouping by time gap
