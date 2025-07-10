@@ -8,12 +8,10 @@ import Foundation
 class ScriptureAnalysisService: ObservableObject, ScriptureAnalysisServiceProtocol {
     // Enhanced regex patterns for various scripture reference formats
     private let patterns = [
-        // Standard format: "John 3:16", "1 Corinthians 13:4-7"
-        #"([1-3]?\s?[A-Za-z]+(?:\s[A-Za-z]+)?)\s(\d+):(\d+)(?:-(\d+))?"#,
-        // Abbreviated format: "Jn 3:16", "1 Cor 13:4-7"
-        #"([1-3]?\s?[A-Za-z]{2,4}\.?)\s(\d+):(\d+)(?:-(\d+))?"#,
-        // Chapter only: "John 3", "1 Corinthians 13"
-        #"([1-3]?\s?[A-Za-z]+(?:\s[A-Za-z]+)?)\s(\d+)(?:\s|$)"#
+        // Standard format: "John 3:16", "1 Corinthians 13:4-7" (word boundary at start)
+        #"(?:^|[^a-zA-Z])([1-3]?\s?[A-Za-z]+(?:\s[A-Za-z]+)?)\s(\d+):(\d+)(?:-(\d+))?"#,
+        // Abbreviated format: "Jn 3:16", "1 Cor 13:4-7" (word boundary at start)
+        #"(?:^|[^a-zA-Z])([1-3]?\s?[A-Za-z]{2,4}\.?)\s(\d+):(\d+)(?:-(\d+))?"#
     ]
     
     private lazy var regexes: [NSRegularExpression] = {
@@ -24,26 +22,61 @@ class ScriptureAnalysisService: ObservableObject, ScriptureAnalysisServiceProtoc
     
     func analyzeScriptureReferences(in text: String) -> [ScriptureReference] {
         var results: Set<ScriptureReference> = []
+        var processedRanges: [NSRange] = []
         let nsrange = NSRange(text.startIndex..<text.endIndex, in: text)
         
-        // Try each regex pattern
+        // Try each regex pattern, but avoid overlapping matches
         for regex in regexes {
             let matches = regex.matches(in: text, options: [], range: nsrange)
             
             for match in matches {
-                if let reference = parseMatch(match, in: text) {
-                    results.insert(reference)
+                // Check if this match overlaps with any previously processed range
+                let matchRange = match.range
+                let overlaps = processedRanges.contains { range in
+                    NSIntersectionRange(range, matchRange).length > 0
+                }
+                
+                if !overlaps, let reference = parseMatch(match, in: text) {
+                    // Only add if we don't already have this exact reference
+                    if !results.contains(where: { existing in
+                        existing.book == reference.book &&
+                        existing.chapter == reference.chapter &&
+                        existing.verseStart == reference.verseStart &&
+                        existing.verseEnd == reference.verseEnd
+                    }) {
+                        results.insert(reference)
+                        processedRanges.append(matchRange)
+                    }
                 }
             }
         }
         
-        return Array(results).sorted { $0.book < $1.book }
+        // Filter out partial matches that are contained within larger matches
+        let filteredResults = results.filter { reference in
+            !results.contains { other in
+                other != reference &&
+                other.book == reference.book &&
+                other.chapter == reference.chapter &&
+                ((other.verseStart <= reference.verseStart && 
+                  (other.verseEnd ?? other.verseStart) >= (reference.verseEnd ?? reference.verseStart)))
+            }
+        }
+        
+        return Array(filteredResults).sorted { lhs, rhs in
+            if lhs.book != rhs.book {
+                return lhs.book < rhs.book
+            }
+            if lhs.chapter != rhs.chapter {
+                return lhs.chapter < rhs.chapter
+            }
+            return lhs.verseStart < rhs.verseStart
+        }
     }
     
     private func parseMatch(_ match: NSTextCheckingResult, in text: String) -> ScriptureReference? {
         guard match.numberOfRanges >= 3 else { return nil }
         
-        let raw = (text as NSString).substring(with: match.range)
+        let raw = (text as NSString).substring(with: match.range).trimmingCharacters(in: .whitespacesAndNewlines)
         let book = (text as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
         
         guard let chapter = Int((text as NSString).substring(with: match.range(at: 2))) else { return nil }

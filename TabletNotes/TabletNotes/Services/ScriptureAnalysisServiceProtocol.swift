@@ -1,12 +1,16 @@
 import Foundation
 
 public struct ScriptureReference: Identifiable, Equatable, Hashable {
-    public let id = UUID()
     public let book: String
     public let chapter: Int
     public let verseStart: Int
     public let verseEnd: Int?
     public let raw: String
+    
+    // Use a computed ID based on the content for proper deduplication
+    public var id: String {
+        return displayText
+    }
     
     // Additional properties for UI and API integration
     public var displayText: String {
@@ -19,6 +23,14 @@ public struct ScriptureReference: Identifiable, Equatable, Hashable {
     
     public var isRange: Bool {
         return verseEnd != nil && verseEnd! > verseStart
+    }
+    
+    // Custom equality based on content, not raw text
+    public static func == (lhs: ScriptureReference, rhs: ScriptureReference) -> Bool {
+        return lhs.book == rhs.book &&
+               lhs.chapter == rhs.chapter &&
+               lhs.verseStart == rhs.verseStart &&
+               lhs.verseEnd == rhs.verseEnd
     }
     
     public func hash(into hasher: inout Hasher) {
