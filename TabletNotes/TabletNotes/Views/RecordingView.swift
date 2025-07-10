@@ -437,61 +437,70 @@ struct RecordingView: View {
         }
         .sheet(isPresented: $showNoteSheet) {
             NavigationView {
-                VStack(spacing: 0) {
-                    // Clean minimal header
-                    HStack {
-                        Image(systemName: "note.text")
-                            .foregroundColor(.accentColor)
-                        Text("Notes")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text(timeString(from: elapsedTime))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    
-                    // Clean text editor - no outline, no background
-                    TextEditor(text: $noteText)
-                        .font(.body)
+                ZStack(alignment: .bottomTrailing) {
+                    VStack(spacing: 0) {
+                        // Clean minimal header
+                        HStack {
+                            Image(systemName: "note.text")
+                                .foregroundColor(.accentColor)
+                            Text("Notes")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Text(timeString(from: elapsedTime))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         .padding()
-                        .background(Color.clear)
-                        .scrollContentBackground(.hidden)
-                    
-                    // Action buttons
-                    HStack(spacing: 16) {
-                        Button("Cancel") {
-                            showNoteSheet = false
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color(.systemGray5))
-                        .foregroundColor(.primary)
-                        .cornerRadius(12)
                         
-                        Button("Save") {
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                            impactFeedback.impactOccurred()
-                            
-                            let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !trimmed.isEmpty {
-                                // Update the single continuous note
-                                if let existingNote = notes.first {
-                                    noteService.updateNote(id: existingNote.id, newText: trimmed)
-                                } else {
-                                    noteService.addNote(text: trimmed, timestamp: elapsedTime)
-                                }
+                        // Clean text editor - no outline, no background
+                        TextEditor(text: $noteText)
+                            .font(.body)
+                            .padding()
+                            .background(Color.clear)
+                            .scrollContentBackground(.hidden)
+                        
+                        // Action buttons
+                        HStack(spacing: 16) {
+                            Button("Cancel") {
+                                showNoteSheet = false
                             }
-                            showNoteSheet = false
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color(.systemGray5))
+                            .foregroundColor(.primary)
+                            .cornerRadius(12)
+                            
+                            Button("Save") {
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                impactFeedback.impactOccurred()
+                                
+                                let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !trimmed.isEmpty {
+                                    // Update the single continuous note
+                                    if let existingNote = notes.first {
+                                        noteService.updateNote(id: existingNote.id, newText: trimmed)
+                                    } else {
+                                        noteService.addNote(text: trimmed, timestamp: elapsedTime)
+                                    }
+                                }
+                                showNoteSheet = false
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.accentColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .padding()
                     }
-                    .padding()
+                    
+                    // Bible FAB positioned in bottom right of the sheet
+                    BibleFAB { reference, content in
+                        insertScriptureIntoNote(reference: reference, content: content)
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 100)
                 }
                 .navigationTitle("")
                 .navigationBarHidden(true)
@@ -804,6 +813,27 @@ struct RecordingView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Scripture Insertion
+    
+    private func insertScriptureIntoNote(reference: ScriptureReference, content: String) {
+        let scriptureText = """
+        📖 \(reference.displayText)
+        \(content)
+        """
+        
+        // Insert scripture into the note text
+        if noteText.isEmpty {
+            noteText = scriptureText
+        } else {
+            // Add some spacing and append the scripture
+            noteText += "\n\n" + scriptureText
+        }
+        
+        // Provide haptic feedback
+        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+        impactFeedback.impactOccurred()
     }
     #endif
 }
