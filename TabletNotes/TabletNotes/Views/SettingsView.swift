@@ -69,6 +69,13 @@ struct SettingsView: View {
                         }
                     }
                     
+                    // Bible Settings
+                    SettingsSection(title: "Bible") {
+                        VStack(spacing: 0) {
+                            BibleTranslationSettingRow()
+                        }
+                    }
+                    
                     // Transcription Settings
                     SettingsSection(title: "Transcription") {
                         VStack(spacing: 0) {
@@ -1127,6 +1134,114 @@ struct StaticPricingCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(isRecommended ? Color.accentColor : Color.clear, lineWidth: 2)
         )
+    }
+}
+
+// MARK: - Bible Translation Setting Row
+struct BibleTranslationSettingRow: View {
+    @State private var selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+    @State private var showingTranslationSheet = false
+    
+    var body: some View {
+        Button(action: {
+            showingTranslationSheet = true
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: "book.closed")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 24, height: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bible Translation")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                    
+                    Text(selectedTranslation.abbreviation + " - " + selectedTranslation.name)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .sheet(isPresented: $showingTranslationSheet) {
+            BibleTranslationSelectionView(
+                selectedTranslation: $selectedTranslation,
+                onSelectionChanged: { newTranslation in
+                    selectedTranslation = newTranslation
+                    BibleAPIConfig.setPreferredBibleTranslation(newTranslation)
+                }
+            )
+        }
+        .onAppear {
+            selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+        }
+    }
+}
+
+// MARK: - Bible Translation Selection View
+struct BibleTranslationSelectionView: View {
+    @Binding var selectedTranslation: BibleTranslation
+    let onSelectionChanged: (BibleTranslation) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(BibleTranslation.allTranslations) { translation in
+                    Button(action: {
+                        onSelectionChanged(translation)
+                        dismiss()
+                    }) {
+                        HStack(spacing: 16) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(translation.abbreviation)
+                                        .font(.headline)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                    
+                                    if translation.id == selectedTranslation.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.accentColor)
+                                    }
+                                }
+                                
+                                Text(translation.name)
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                
+                                Text(translation.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .navigationTitle("Bible Translation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 

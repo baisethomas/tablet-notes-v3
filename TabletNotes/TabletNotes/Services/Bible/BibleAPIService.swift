@@ -68,7 +68,7 @@ struct AudioBible: Codable {
     let id: String
     let name: String
     let nameLocal: String
-    let description: String
+    let description: String?
     let language: BibleLanguage
 }
 
@@ -76,7 +76,9 @@ struct AudioBible: Codable {
 class BibleAPIService: ObservableObject {
     private let apiKey = BibleAPIConfig.apiKey
     private let baseURL = BibleAPIConfig.baseURL
-    private let defaultBibleId = BibleAPIConfig.defaultBibleId
+    private var defaultBibleId: String {
+        return BibleAPIConfig.preferredBibleTranslation.id
+    }
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -131,9 +133,10 @@ class BibleAPIService: ObservableObject {
     // MARK: - Public Methods
     
     /// Fetch a specific verse or range of verses
-    func fetchVerse(reference: ScriptureReference, bibleId: String = BibleAPIConfig.defaultBibleId) async throws -> BibleVerse {
+    func fetchVerse(reference: ScriptureReference, bibleId: String? = nil) async throws -> BibleVerse {
+        let useBibleId = bibleId ?? defaultBibleId
         let verseReference = formatReferenceForAPI(reference)
-        let endpoint = "bibles/\(bibleId)/verses/\(verseReference)"
+        let endpoint = "bibles/\(useBibleId)/verses/\(verseReference)"
         
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
@@ -150,9 +153,10 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Fetch a passage (multiple verses)
-    func fetchPassage(reference: ScriptureReference, bibleId: String = BibleAPIConfig.defaultBibleId) async throws -> BiblePassage {
+    func fetchPassage(reference: ScriptureReference, bibleId: String? = nil) async throws -> BiblePassage {
+        let useBibleId = bibleId ?? defaultBibleId
         let passageReference = formatReferenceForAPI(reference)
-        let endpoint = "bibles/\(bibleId)/passages/\(passageReference)"
+        let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
@@ -169,9 +173,10 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Search for verses containing specific text
-    func searchVerses(query: String, bibleId: String = BibleAPIConfig.defaultBibleId, limit: Int = 10) async throws -> [BibleVerse] {
+    func searchVerses(query: String, bibleId: String? = nil, limit: Int = 10) async throws -> [BibleVerse] {
+        let useBibleId = bibleId ?? defaultBibleId
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let endpoint = "bibles/\(bibleId)/search?query=\(encodedQuery)&limit=\(limit)"
+        let endpoint = "bibles/\(useBibleId)/search?query=\(encodedQuery)&limit=\(limit)"
         
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
@@ -188,8 +193,9 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Get list of books for a specific Bible
-    func fetchBooks(bibleId: String = BibleAPIConfig.defaultBibleId) async throws -> [BibleBook] {
-        let endpoint = "bibles/\(bibleId)/books"
+    func fetchBooks(bibleId: String? = nil) async throws -> [BibleBook] {
+        let useBibleId = bibleId ?? defaultBibleId
+        let endpoint = "bibles/\(useBibleId)/books"
         
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
