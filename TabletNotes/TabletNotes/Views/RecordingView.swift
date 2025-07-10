@@ -831,6 +831,16 @@ struct RecordingView: View {
             noteText += "\n\n" + scriptureText
         }
         
+        // Save the updated note immediately
+        let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            if let existingNote = notes.first {
+                noteService.updateNote(id: existingNote.id, newText: trimmed)
+            } else {
+                noteService.addNote(text: trimmed, timestamp: elapsedTime)
+            }
+        }
+        
         // Provide haptic feedback
         let impactFeedback = UIImpactFeedbackGenerator(style: .light)
         impactFeedback.impactOccurred()

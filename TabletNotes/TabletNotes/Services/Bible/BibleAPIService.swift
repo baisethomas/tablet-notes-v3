@@ -138,6 +138,9 @@ class BibleAPIService: ObservableObject {
         let verseReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/verses/\(verseReference)"
         
+        print("[BibleAPIService] Fetching verse: \(verseReference) from Bible: \(useBibleId)")
+        print("[BibleAPIService] Full endpoint: \(baseURL)/\(endpoint)")
+        
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
         }
@@ -145,6 +148,9 @@ class BibleAPIService: ObservableObject {
         do {
             let (data, _) = try await session.data(for: request)
             let response = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: data)
+            
+            print("[BibleAPIService] Received verse content length: \(response.data.content.count)")
+            
             return response.data
         } catch {
             print("[BibleAPIService] Error fetching verse: \(error)")
@@ -158,6 +164,9 @@ class BibleAPIService: ObservableObject {
         let passageReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
+        print("[BibleAPIService] Fetching passage: \(passageReference) from Bible: \(useBibleId)")
+        print("[BibleAPIService] Full endpoint: \(baseURL)/\(endpoint)")
+        
         guard let request = createRequest(for: endpoint) else {
             throw BibleAPIError.invalidRequest
         }
@@ -165,6 +174,10 @@ class BibleAPIService: ObservableObject {
         do {
             let (data, _) = try await session.data(for: request)
             let response = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: data)
+            
+            print("[BibleAPIService] Received passage content length: \(response.data.content.count)")
+            print("[BibleAPIService] Verse count in response: \(response.data.verseCount ?? 0)")
+            
             return response.data
         } catch {
             print("[BibleAPIService] Error fetching passage: \(error)")
