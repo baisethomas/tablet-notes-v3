@@ -59,34 +59,60 @@ struct BibleBrowserView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
-                            // Book Selector
-                            VStack(alignment: .leading, spacing: 12) {
+                            // Book Selector - Organized by Testament
+                            VStack(alignment: .leading, spacing: 16) {
                                 Text("Select Book")
                                     .font(.headline)
                                     .fontWeight(.semibold)
                                 
-                                LazyVGrid(columns: [
-                                    GridItem(.adaptive(minimum: 100), spacing: 8)
-                                ], spacing: 8) {
-                                    ForEach(availableBooks) { book in
-                                        Button(action: {
-                                            selectedBook = book
-                                            selectedChapter = 1
-                                            selectedVerseStart = 1
-                                            selectedVerseEnd = nil
-                                            loadScripture()
-                                        }) {
-                                            Text(book.abbreviation)
-                                                .font(.caption)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(selectedBook?.id == book.id ? .white : .accentColor)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 8)
-                                                .background(
-                                                    selectedBook?.id == book.id ? 
-                                                    Color.accentColor : Color.accentColor.opacity(0.1)
-                                                )
-                                                .cornerRadius(8)
+                                // Old Testament Section
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Text("Old Testament")
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                    }
+                                    
+                                    LazyVGrid(columns: [
+                                        GridItem(.flexible(), spacing: 8),
+                                        GridItem(.flexible(), spacing: 8)
+                                    ], spacing: 8) {
+                                        ForEach(getOldTestamentBooks()) { book in
+                                            BookButton(book: book, isSelected: selectedBook?.id == book.id) {
+                                                selectedBook = book
+                                                selectedChapter = 1
+                                                selectedVerseStart = 1
+                                                selectedVerseEnd = nil
+                                                loadScripture()
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // New Testament Section
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Text("New Testament")
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                    }
+                                    
+                                    LazyVGrid(columns: [
+                                        GridItem(.flexible(), spacing: 8),
+                                        GridItem(.flexible(), spacing: 8)
+                                    ], spacing: 8) {
+                                        ForEach(getNewTestamentBooks()) { book in
+                                            BookButton(book: book, isSelected: selectedBook?.id == book.id) {
+                                                selectedBook = book
+                                                selectedChapter = 1
+                                                selectedVerseStart = 1
+                                                selectedVerseEnd = nil
+                                                loadScripture()
+                                            }
                                         }
                                     }
                                 }
@@ -356,6 +382,72 @@ struct BibleBrowserView: View {
         )
         
         return cleanedContent.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    // MARK: - Testament Organization
+    
+    private func getOldTestamentBooks() -> [BibleBook] {
+        let oldTestamentOrder = [
+            "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+            "Joshua", "Judges", "Ruth", "1 Samuel", "2 Samuel",
+            "1 Kings", "2 Kings", "1 Chronicles", "2 Chronicles",
+            "Ezra", "Nehemiah", "Esther", "Job", "Psalms",
+            "Proverbs", "Ecclesiastes", "Song of Solomon", "Isaiah",
+            "Jeremiah", "Lamentations", "Ezekiel", "Daniel",
+            "Hosea", "Joel", "Amos", "Obadiah", "Jonah",
+            "Micah", "Nahum", "Habakkuk", "Zephaniah", "Haggai",
+            "Zechariah", "Malachi"
+        ]
+        
+        return oldTestamentOrder.compactMap { testamentBook in
+            availableBooks.first { book in
+                book.name.lowercased().contains(testamentBook.lowercased()) ||
+                book.nameLong.lowercased().contains(testamentBook.lowercased())
+            }
+        }
+    }
+    
+    private func getNewTestamentBooks() -> [BibleBook] {
+        let newTestamentOrder = [
+            "Matthew", "Mark", "Luke", "John", "Acts",
+            "Romans", "1 Corinthians", "2 Corinthians", "Galatians",
+            "Ephesians", "Philippians", "Colossians", "1 Thessalonians",
+            "2 Thessalonians", "1 Timothy", "2 Timothy", "Titus",
+            "Philemon", "Hebrews", "James", "1 Peter", "2 Peter",
+            "1 John", "2 John", "3 John", "Jude", "Revelation"
+        ]
+        
+        return newTestamentOrder.compactMap { testamentBook in
+            availableBooks.first { book in
+                book.name.lowercased().contains(testamentBook.lowercased()) ||
+                book.nameLong.lowercased().contains(testamentBook.lowercased())
+            }
+        }
+    }
+}
+
+// MARK: - Book Button Component
+struct BookButton: View {
+    let book: BibleBook
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(book.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(isSelected ? .white : .primary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(
+                    isSelected ? 
+                    Color.accentColor : Color(.systemGray6)
+                )
+                .cornerRadius(8)
+        }
     }
 }
 
