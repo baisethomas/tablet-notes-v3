@@ -338,14 +338,24 @@ struct BibleBrowserView: View {
     }
     
     private func cleanScriptureContent(_ content: String) -> String {
-        return content
+        // Remove HTML tags and clean up the content
+        var cleanedContent = content
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .replacingOccurrences(of: "&nbsp;", with: " ")
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Fix verse number spacing - add space after verse numbers
+        // This regex matches verse numbers (digits) that are immediately followed by a letter
+        cleanedContent = cleanedContent.replacingOccurrences(
+            of: "(\\d+)([A-Za-z])", 
+            with: "$1 $2", 
+            options: .regularExpression
+        )
+        
+        return cleanedContent.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
