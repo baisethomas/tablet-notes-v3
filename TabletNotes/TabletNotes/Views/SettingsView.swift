@@ -1192,44 +1192,74 @@ struct BibleTranslationSelectionView: View {
     @Binding var selectedTranslation: BibleTranslation
     let onSelectionChanged: (BibleTranslation) -> Void
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var bibleService = BibleAPIService()
+    @State private var availableTranslations: [BibleTranslation] = []
+    @State private var isLoading = true
     
     var body: some View {
         NavigationView {
-            List {
-                ForEach(BibleTranslation.allTranslations) { translation in
-                    Button(action: {
-                        onSelectionChanged(translation)
-                        dismiss()
-                    }) {
-                        HStack(spacing: 16) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(translation.abbreviation)
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.primary)
-                                    
-                                    if translation.id == selectedTranslation.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.accentColor)
-                                    }
-                                }
-                                
-                                Text(translation.name)
-                                    .font(.subheadline)
-                                    .foregroundColor(.primary)
-                                
-                                Text(translation.description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                            
-                            Spacer()
-                        }
-                        .padding(.vertical, 4)
+            Group {
+                if isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading Bible translations...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if availableTranslations.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.orange)
+                        Text("No Bible translations available")
+                            .font(.headline)
+                        Text("Please check your internet connection and try again.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else {
+                    List {
+                        ForEach(availableTranslations) { translation in
+                            Button(action: {
+                                onSelectionChanged(translation)
+                                dismiss()
+                            }) {
+                                HStack(spacing: 16) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(translation.abbreviation)
+                                                .font(.headline)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.primary)
+                                            
+                                            if translation.id == selectedTranslation.id {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundColor(.accentColor)
+                                            }
+                                        }
+                                        
+                                        Text(translation.name)
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                        
+                                        Text(translation.description)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
                 }
             }
             .navigationTitle("Bible Translation")
@@ -1241,6 +1271,41 @@ struct BibleTranslationSelectionView: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            loadAvailableTranslations()
+        }
+    }
+    
+    private func loadAvailableTranslations() {
+        isLoading = true
+        
+        // Wait a bit for the Bible service to load available Bibles
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            let englishBibles = getEnglishBibles()
+            availableTranslations = englishBibles.map { bible in
+                BibleTranslation(
+                    id: bible.id,
+                    name: bible.name,
+                    abbreviation: bible.abbreviation,
+                    description: bible.description ?? "English Bible translation",
+                    language: "English"
+                )
+            }
+            isLoading = false
+        }
+    }
+    
+    private func getEnglishBibles() -> [Bible] {
+        // Filter available Bibles to only show English translations
+        return bibleService.availableBibles.filter { bible in
+            bible.language.name.lowercased().contains("english")
+        }.sorted { first, second in
+            // Prioritize common translations
+            let priority = ["ESV", "NIV", "NLT", "KJV", "NASB", "ASV"]
+            let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
+            let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
+            return firstPriority < secondPriority
         }
     }
 }
