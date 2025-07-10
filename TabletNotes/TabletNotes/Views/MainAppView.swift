@@ -81,7 +81,7 @@ struct MainAppView: View {
                 case .recording(let serviceType):
                     AnyView(RecordingView(
                         serviceType: serviceType ?? "Sermon",
-                        noteService: NoteService(),
+                        noteService: NoteService(sessionId: UUID().uuidString),
                         onNext: { sermon in
                             sermonService.fetchSermons() // Refresh the list
                             lastCreatedSermon = sermon

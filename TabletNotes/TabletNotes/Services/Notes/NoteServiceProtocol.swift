@@ -6,4 +6,5 @@ protocol NoteServiceProtocol {
     func addNote(text: String, timestamp: TimeInterval)
     func updateNote(id: UUID, newText: String)
     func deleteNote(id: UUID)
+    func clearSession()
 } 

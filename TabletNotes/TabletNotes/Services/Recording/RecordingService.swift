@@ -2,6 +2,7 @@ import Foundation
 #if canImport(AVFoundation) && os(iOS)
 import AVFoundation
 import Combine
+import UIKit
 
 class RecordingService: NSObject, ObservableObject {
     private var audioRecorder: AVAudioRecorder?
@@ -25,6 +26,51 @@ class RecordingService: NSObject, ObservableObject {
         
         // Create audio recordings directory if it doesn't exist
         createAudioRecordingsDirectory()
+        
+        // Setup app lifecycle notifications for background handling
+        setupAppLifecycleObservers()
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    private func setupAppLifecycleObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func appDidEnterBackground() {
+        // Ensure audio session remains active in background
+        if isRecording {
+            do {
+                try recordingSession.setActive(true)
+            } catch {
+                print("[RecordingService] Failed to maintain audio session in background: \(error)")
+            }
+        }
+    }
+    
+    @objc private func appWillEnterForeground() {
+        // Reactivate audio session when returning to foreground
+        if isRecording {
+            do {
+                try recordingSession.setActive(true)
+            } catch {
+                print("[RecordingService] Failed to reactivate audio session: \(error)")
+            }
+        }
     }
     
     private func createAudioRecordingsDirectory() {
@@ -43,7 +89,7 @@ class RecordingService: NSObject, ObservableObject {
     }
 
     func startRecording(serviceType: String) throws {
-        try recordingSession.setCategory(.playAndRecord, mode: .default)
+        try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
         try recordingSession.setActive(true)
         
         // Use permanent storage instead of temporary directory

@@ -156,6 +156,7 @@ struct RecordingView: View {
     @ObservedObject var noteService: NoteService
     var onNext: ((Sermon) -> Void)?
     @ObservedObject var sermonService: SermonService
+    private let recordingSessionId = UUID().uuidString
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
     #if canImport(AVFoundation) && os(iOS)
@@ -795,6 +796,10 @@ struct RecordingView: View {
                         summaryStatus: "processing",
                         userId: currentUser.id
                     )
+                    
+                    // Clear the recording session notes since they're now saved in the sermon
+                    noteService.clearSession()
+                    
                     onNext?(callbackSermon)
                 }
             }
