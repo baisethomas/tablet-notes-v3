@@ -584,12 +584,11 @@ struct SermonDetailView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
                             
-                            Text(cleanSummary)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                                .lineSpacing(4)
-                                .padding()
-                                .cornerRadius(12)
+                            SummaryTextView(
+                                summaryText: cleanSummary,
+                                serviceType: sermon.serviceType
+                            )
+                            .padding(.horizontal)
                         }
                         .padding()
                         .padding(.bottom, 100)

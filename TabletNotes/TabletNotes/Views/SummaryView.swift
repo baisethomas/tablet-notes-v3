@@ -31,10 +31,14 @@ struct SummaryView: View {
                         ProgressView("Generating summary...")
                     } else if status == "complete" {
                         ScrollView {
-                            Text(summary ?? "")
-                                .font(.body)
-                                .padding()
-                                .padding(.bottom, 100)
+                            VStack(spacing: 16) {
+                                SummaryTextView(
+                                    summaryText: summary ?? "",
+                                    serviceType: serviceType
+                                )
+                                .padding(.horizontal)
+                            }
+                            .padding(.bottom, 100)
                         }
                     } else if status == "failed" {
                         VStack(spacing: 16) {
