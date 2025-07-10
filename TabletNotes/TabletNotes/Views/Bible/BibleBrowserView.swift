@@ -426,11 +426,15 @@ struct BibleBrowserView: View {
     }
     
     private func getEnglishBibles() -> [Bible] {
-        // Filter available Bibles to only show English translations we support
-        let supportedEnglishIds = BibleTranslation.allTranslations.map { $0.id }
+        // Filter available Bibles to only show English translations
         return bibleService.availableBibles.filter { bible in
-            supportedEnglishIds.contains(bible.id) && 
             bible.language.name.lowercased().contains("english")
+        }.sorted { first, second in
+            // Prioritize common translations
+            let priority = ["ESV", "NIV", "NLT", "KJV", "NASB", "ASV"]
+            let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
+            let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
+            return firstPriority < secondPriority
         }
     }
 }

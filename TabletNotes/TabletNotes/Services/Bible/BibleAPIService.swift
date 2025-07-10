@@ -125,6 +125,12 @@ class BibleAPIService: ObservableObject {
                 },
                 receiveValue: { [weak self] bibles in
                     self?.availableBibles = bibles
+                    print("[BibleAPIService] Loaded \(bibles.count) Bibles")
+                    let englishBibles = bibles.filter { $0.language.name.lowercased().contains("english") }
+                    print("[BibleAPIService] English Bibles available:")
+                    for bible in englishBibles {
+                        print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
+                    }
                 }
             )
             .store(in: &cancellables)
