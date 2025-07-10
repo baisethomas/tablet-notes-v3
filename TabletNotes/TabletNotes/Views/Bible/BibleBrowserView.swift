@@ -26,9 +26,9 @@ struct BibleBrowserView: View {
         NavigationView {
             VStack(spacing: 0) {
                 // Bible Version Selector
-                if !bibleService.availableBibles.isEmpty {
+                if !getEnglishBibles().isEmpty {
                     Picker("Bible Version", selection: $selectedBibleId) {
-                        ForEach(bibleService.availableBibles.prefix(5)) { bible in
+                        ForEach(getEnglishBibles()) { bible in
                             Text("\(bible.abbreviation) - \(bible.name)")
                                 .tag(bible.id)
                         }
@@ -422,6 +422,15 @@ struct BibleBrowserView: View {
                 book.name.lowercased().contains(testamentBook.lowercased()) ||
                 book.nameLong.lowercased().contains(testamentBook.lowercased())
             }
+        }
+    }
+    
+    private func getEnglishBibles() -> [Bible] {
+        // Filter available Bibles to only show English translations we support
+        let supportedEnglishIds = BibleTranslation.allTranslations.map { $0.id }
+        return bibleService.availableBibles.filter { bible in
+            supportedEnglishIds.contains(bible.id) && 
+            bible.language.name.lowercased().contains("english")
         }
     }
 }

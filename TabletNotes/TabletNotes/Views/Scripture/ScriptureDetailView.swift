@@ -28,9 +28,9 @@ struct ScriptureDetailView: View {
                             Spacer()
                         }
                         
-                        if !bibleService.availableBibles.isEmpty {
+                        if !getEnglishBibles().isEmpty {
                             Menu {
-                                ForEach(bibleService.availableBibles.prefix(5)) { bible in
+                                ForEach(getEnglishBibles()) { bible in
                                     Button(action: {
                                         selectedBibleVersion = bible.id
                                         loadScripture()
@@ -223,10 +223,19 @@ struct ScriptureDetailView: View {
     }
     
     private func getCurrentBibleName() -> String {
-        if let bible = bibleService.availableBibles.first(where: { $0.id == selectedBibleVersion }) {
+        if let bible = getEnglishBibles().first(where: { $0.id == selectedBibleVersion }) {
             return bible.abbreviation
         }
         return "ESV"
+    }
+    
+    private func getEnglishBibles() -> [Bible] {
+        // Filter available Bibles to only show English translations we support
+        let supportedEnglishIds = BibleTranslation.allTranslations.map { $0.id }
+        return bibleService.availableBibles.filter { bible in
+            supportedEnglishIds.contains(bible.id) && 
+            bible.language.name.lowercased().contains("english")
+        }
     }
     
     private func shareScripture() {
