@@ -5,6 +5,7 @@ import Foundation
 // import TabletNotes.Models
 // import TabletNotes.Views
 
+@MainActor
 class AppCoordinator: ObservableObject {
     enum Screen {
         case onboarding
@@ -26,6 +27,7 @@ class AppCoordinator: ObservableObject {
     private let supabaseService: SupabaseService
     private let authManager: AuthenticationManager
     private let backgroundSyncManager: BackgroundSyncManager
+    private let subscriptionService: SubscriptionService
     @Published private var hasSeenOnboarding = false
     private var onboardingReturnScreen: Screen = .home // Track where to return after onboarding
 
@@ -33,6 +35,12 @@ class AppCoordinator: ObservableObject {
         // Initialize services
         self.authManager = AuthenticationManager.shared
         self.supabaseService = SupabaseService()
+        
+        // Create subscription service on main actor
+        self.subscriptionService = SubscriptionService(
+            authManager: AuthenticationManager.shared,
+            supabaseService: supabaseService
+        )
         self.syncService = SyncService(
             modelContext: modelContext,
             supabaseService: supabaseService,
@@ -41,7 +49,8 @@ class AppCoordinator: ObservableObject {
         self.sermonService = SermonService(
             modelContext: modelContext,
             authManager: authManager,
-            syncService: syncService
+            syncService: syncService,
+            subscriptionService: subscriptionService
         )
         self.backgroundSyncManager = BackgroundSyncManager(syncService: syncService)
         

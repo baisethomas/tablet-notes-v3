@@ -17,11 +17,17 @@ final class Sermon {
     var summaryStatus: String // e.g., "processing", "complete", "failed"
     var isArchived: Bool = false // Whether the sermon is archived
     
+    // Sync metadata for cross-device sync
+    var lastSyncedAt: Date?
+    var remoteId: String? // Supabase row ID for synced items
+    var updatedAt: Date?
+    var needsSync: Bool = false // Flag to track if local changes need syncing
+    
     // User relationship - each sermon belongs to a user
     var userId: UUID? // Foreign key to User - optional for migration compatibility
     @Relationship(inverse: \User.sermons) var user: User?
 
-    init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil) {
+    init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
         self.id = id
         self.title = title
         self.audioFileURL = audioFileURL
@@ -36,5 +42,9 @@ final class Sermon {
         self.summaryStatus = summaryStatus
         self.isArchived = isArchived
         self.userId = userId
+        self.lastSyncedAt = lastSyncedAt
+        self.remoteId = remoteId
+        self.updatedAt = updatedAt
+        self.needsSync = needsSync
     }
 } 

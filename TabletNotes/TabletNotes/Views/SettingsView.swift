@@ -513,7 +513,7 @@ struct CloudSyncSettingRow: View {
             .padding(.vertical, 12)
             
             if !canSync {
-                HStack {
+                        HStack {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 12))
                         .foregroundColor(.orange)
@@ -522,7 +522,7 @@ struct CloudSyncSettingRow: View {
                         .font(.caption2)
                         .foregroundColor(.orange)
                     
-                    Spacer()
+                            Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
@@ -600,7 +600,7 @@ struct SubscriptionPromptView: View {
                     // Error message
                     if let errorMessage = subscriptionService.errorMessage {
                         Text(errorMessage)
-                            .font(.caption)
+                                .font(.caption)
                             .foregroundColor(.red)
                             .padding()
                     }
@@ -667,8 +667,8 @@ struct CurrentPlanStatusView: View {
             if user.currentPlan.tier == .free {
                 UsageLimitsView(user: user)
             }
-        }
-        .padding(.horizontal, 24)
+                }
+                .padding(.horizontal, 24)
     }
 }
 
@@ -946,7 +946,7 @@ struct LivePricingCard: View {
     @State private var isPurchasing = false
     
     var body: some View {
-        VStack(spacing: 16) {
+                VStack(spacing: 16) {
             if plan.isPopular {
                 Text("MOST POPULAR")
                     .font(.caption)
@@ -960,7 +960,7 @@ struct LivePricingCard: View {
             
             VStack(spacing: 8) {
                 Text(plan.tier.displayName + " " + plan.period.displayName)
-                    .font(.headline)
+                        .font(.headline)
                     .fontWeight(.semibold)
                 
                 HStack(alignment: .bottom, spacing: 4) {
@@ -980,8 +980,8 @@ struct LivePricingCard: View {
                         .fontWeight(.semibold)
                 }
             }
-            
-            VStack(alignment: .leading, spacing: 8) {
+                    
+                    VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(plan.features.prefix(4)), id: \.self) { feature in
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
@@ -1068,7 +1068,7 @@ struct StaticPricingCard: View {
                 
                 HStack(alignment: .bottom, spacing: 4) {
                     Text(plan.displayPrice)
-                        .font(.title2)
+                            .font(.title2)
                         .fontWeight(.bold)
                     
                     Text(plan.period.shortDisplayName)
@@ -1080,7 +1080,7 @@ struct StaticPricingCard: View {
                     Text(savings)
                         .font(.caption)
                         .foregroundColor(.green)
-                        .fontWeight(.semibold)
+                            .fontWeight(.semibold)
                 }
             }
             

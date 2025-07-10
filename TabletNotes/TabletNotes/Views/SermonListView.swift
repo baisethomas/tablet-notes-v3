@@ -405,7 +405,7 @@ struct SermonListView: View {
             }
         }
     }
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -568,14 +568,14 @@ struct SermonListView: View {
                         .background(Color(.systemBackground))
                         
                                                  // Native List for proper swipe actions
-                         List {
+                List {
                              ForEach(Array(groupedSermons.enumerated()), id: \.element.0) { index, element in
                                  let (dateString, sermons) = element
                                  
-                                 Section(header: 
+                        Section(header:
                                      HStack {
                                          Text(dateString)
-                                             .font(.headline)
+                                .font(.headline)
                                              .fontWeight(.semibold)
                                              .foregroundColor(.primary)
                                          
@@ -599,14 +599,14 @@ struct SermonListView: View {
                                         }
                                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                         .listRowBackground(Color.clear)
-                                        .listRowSeparator(.hidden)
-                                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                .listRowSeparator(.hidden)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                             // Delete action (right swipe)
-                                            Button(role: .destructive) {
+                                    Button(role: .destructive) {
                                                 sermonToDelete = sermon
                                                 showingDeleteAlert = true
-                                            } label: {
-                                                Label("Delete", systemImage: "trash")
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
                                             }
                                         }
                                         .swipeActions(edge: .leading, allowsFullSwipe: true) {

@@ -1,7 +1,7 @@
 import Foundation
 import Supabase
 
-class SupabaseService {
+class SupabaseService: SupabaseServiceProtocol {
     static let shared = SupabaseService()
 
     private let supabase: SupabaseClient
@@ -11,7 +11,7 @@ class SupabaseService {
         return supabase
     }
 
-    private init() {
+    init() {
         // NOTE: For a production app, it's better to load these from a Config.plist
         // that is not checked into version control, similar to how we handled the API keys before.
         let supabaseURL = URL(string: "https://ubghnmenxbhhlpxvypea.supabase.co")!
@@ -80,6 +80,91 @@ class SupabaseService {
         let (_, response) = try await URLSession.shared.upload(for: request, from: audioData)
 
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+    
+    /// Generic file upload method for protocol conformance
+    func uploadFile(data: Data, to uploadUrl: URL) async throws {
+        var request = URLRequest(url: uploadUrl)
+        request.httpMethod = "PUT"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        let (_, response) = try await URLSession.shared.upload(for: request, from: data)
+
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+    
+    /// Gets a signed download URL for a file
+    func getSignedDownloadURL(for path: String) async throws -> URL {
+        let url = URL(string: "\(apiBaseUrl)/api/generate-download-url")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Get authentication token
+        let session = try await supabase.auth.session
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        let body = ["path": path]
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+
+        let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
+        guard let downloadUrl = URL(string: decodedResponse.uploadUrl) else {
+            throw URLError(.badURL)
+        }
+        
+        return downloadUrl
+    }
+    
+    /// Updates user profile in Supabase
+    func updateUserProfile(_ user: User) async throws {
+        let url = URL(string: "\(apiBaseUrl)/api/update-profile")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Get authentication token
+        let session = try await supabase.auth.session
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        // Create update payload
+        let updateData: [String: Any] = [
+            "id": user.id.uuidString,
+            "subscription_tier": user.subscriptionTier,
+            "subscription_status": user.subscriptionStatus,
+            "subscription_expiry": user.subscriptionExpiry?.ISO8601Format() ?? NSNull(),
+            "subscription_product_id": user.subscriptionProductId ?? NSNull(),
+            "subscription_purchase_date": user.subscriptionPurchaseDate?.ISO8601Format() ?? NSNull(),
+            "subscription_renewal_date": user.subscriptionRenewalDate?.ISO8601Format() ?? NSNull(),
+            "monthly_recording_count": user.monthlyRecordingCount,
+            "monthly_recording_minutes": user.monthlyRecordingMinutes,
+            "current_storage_used_gb": user.currentStorageUsedGB,
+            "monthly_export_count": user.monthlyExportCount,
+            "last_usage_reset_date": user.lastUsageResetDate?.ISO8601Format() ?? NSNull()
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: updateData)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        guard httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
     }

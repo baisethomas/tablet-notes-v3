@@ -106,7 +106,7 @@ class SyncService: SyncServiceProtocol {
             summaryStatus: sermon.summaryStatus,
             isArchived: sermon.isArchived,
             userId: sermon.userId,
-            updatedAt: sermon.updatedAt
+            updatedAt: sermon.updatedAt ?? Date()
         )
         
         // Upload to Supabase
@@ -143,7 +143,7 @@ class SyncService: SyncServiceProtocol {
         
         if let existingSermon = existingSermons.first {
             // Update existing sermon if remote is newer
-            if remoteSermon.updatedAt > existingSermon.updatedAt {
+            if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
                 updateLocalSermon(existingSermon, with: remoteSermon)
             }
         } else {

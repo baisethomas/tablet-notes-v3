@@ -37,11 +37,11 @@ struct OnboardingView: View {
             TabView(selection: $currentPage) {
                 // Page 1: Welcome with animated logo
                 WelcomePageView()
-                    .tag(0)
+                .tag(0)
                 
                 // Page 2: Interactive recording demo
                 RecordingDemoPageView(isRecordingDemo: $isRecordingDemo)
-                    .tag(1)
+                .tag(1)
                 
                 // Page 3: AI Features showcase
                 AIFeaturesPageView()
@@ -282,8 +282,8 @@ struct AIFeaturesPageView: View {
             VStack(spacing: 24) {
                 Text("AI-Powered Insights")
                     .font(.title2)
-                    .fontWeight(.bold)
-                    .multilineTextAlignment(.center)
+                .fontWeight(.bold)
+                .multilineTextAlignment(.center)
                 
                 VStack(spacing: 16) {
                     // Transcript preview
@@ -408,7 +408,7 @@ struct PersonalizationPageView: View {
                 Text("Personalize Your Experience")
                     .font(.title2)
                     .fontWeight(.bold)
-                    .multilineTextAlignment(.center)
+                .multilineTextAlignment(.center)
                 
                 VStack(spacing: 20) {
                     // Service types selection
@@ -455,9 +455,9 @@ struct PersonalizationPageView: View {
                 
                 Text("We'll use these preferences to enhance your experience and provide better suggestions.")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                .padding(.horizontal, 32)
             }
             
             Spacer()

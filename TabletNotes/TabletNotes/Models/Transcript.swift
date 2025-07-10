@@ -5,10 +5,18 @@ import SwiftData
 final class Transcript {
     var text: String
     @Relationship(deleteRule: .cascade) var segments: [TranscriptSegment]
+    
+    // Sync metadata
+    var remoteId: String?
+    var updatedAt: Date?
+    var needsSync: Bool = false
 
-    init(text: String, segments: [TranscriptSegment] = []) {
+    init(text: String, segments: [TranscriptSegment] = [], remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
         self.text = text
         self.segments = segments
+        self.remoteId = remoteId
+        self.updatedAt = updatedAt
+        self.needsSync = needsSync
     }
 }
 

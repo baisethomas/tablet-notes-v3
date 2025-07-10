@@ -316,7 +316,7 @@ class SermonService: ObservableObject {
         // Check if there are any sermons that need syncing
         let needsSync = sermons.contains { $0.needsSync }
         
-        if needsSync, let syncService = syncService {
+        if needsSync {
             // Trigger sync in background
             Task {
                 await syncService.syncAllData()
