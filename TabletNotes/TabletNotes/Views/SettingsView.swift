@@ -474,7 +474,7 @@ struct CloudSyncSettingRow: View {
     }
     
     private var subscriptionTier: String {
-        authManager.currentUser?.subscriptionTier ?? "free"
+        authManager.currentUser?.subscriptionTier ?? "pro"
     }
     
     var body: some View {
@@ -1316,7 +1316,7 @@ struct TranscriptionProviderPicker: View {
     @Binding var showingSubscriptionPrompt: Bool
     
     private var hasLiveTranscriptionAccess: Bool {
-        let tier = authManager.currentUser?.subscriptionTier ?? "free"
+        let tier = authManager.currentUser?.subscriptionTier ?? "pro"
         return tier == "pro" || tier == "premium"
     }
     

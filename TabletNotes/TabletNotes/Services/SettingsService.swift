@@ -197,7 +197,7 @@ class SettingsService: ObservableObject {
         self.recordingFormat = UserDefaults.standard.string(forKey: "recordingFormat") ?? "M4A"
         self.autoStopMinutes = UserDefaults.standard.object(forKey: "autoStopMinutes") as? Int ?? 120
         
-        self.transcriptionProvider = TranscriptionProvider(rawValue: UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "") ?? .assemblyAI
+        self.transcriptionProvider = TranscriptionProvider(rawValue: UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "") ?? .assemblyAILive
         self.transcriptionLanguage = UserDefaults.standard.string(forKey: "transcriptionLanguage") ?? "en-US"
         self.autoPunctuation = UserDefaults.standard.object(forKey: "autoPunctuation") as? Bool ?? true
         self.speakerDetection = UserDefaults.standard.object(forKey: "speakerDetection") as? Bool ?? false
@@ -241,7 +241,7 @@ class SettingsService: ObservableObject {
         defaultServiceType = "Sermon"
         recordingFormat = "M4A"
         autoStopMinutes = 120
-        transcriptionProvider = .assemblyAI
+        transcriptionProvider = .assemblyAILive
         transcriptionLanguage = "en-US"
         autoPunctuation = true
         speakerDetection = false

@@ -19,8 +19,8 @@ async function getAuthenticatedUser(authHeader, supabase) {
 
 // Helper function to check if user has pro/premium subscription
 function hasLiveTranscriptionAccess(user) {
-  // Check if user has pro or premium tier
-  const tier = user.user_metadata?.subscription_tier || 'free';
+  // Check if user has pro or premium tier (default to pro for new users)
+  const tier = user.user_metadata?.subscription_tier || 'pro';
   return tier === 'pro' || tier === 'premium';
 }
 
