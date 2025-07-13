@@ -74,8 +74,7 @@ struct AudioBible: Codable {
 
 // MARK: - Bible API Service
 class BibleAPIService: ObservableObject {
-    private let apiKey = BibleAPIConfig.apiKey
-    private let baseURL = BibleAPIConfig.baseURL
+    private let netlifyAPIService = BibleNetlifyAPIService()
     private var defaultBibleId: String {
         return BibleAPIConfig.preferredBibleTranslation.id
     }
@@ -86,54 +85,35 @@ class BibleAPIService: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     
-    private lazy var session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
-        return URLSession(configuration: config)
-    }()
-    
     init() {
         loadAvailableBibles()
     }
     
     // MARK: - Private Methods
     
-    private func createRequest(for endpoint: String) -> URLRequest? {
-        guard let url = URL(string: "\(baseURL)/\(endpoint)") else { return nil }
-        
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(apiKey, forHTTPHeaderField: "api-key")
-        
-        return request
-    }
-    
     private func loadAvailableBibles() {
-        guard let request = createRequest(for: "bibles") else { return }
-        
-        session.dataTaskPublisher(for: request)
-            .map(\.data)
-            .decode(type: BibleAPIResponse<[Bible]>.self, decoder: JSONDecoder())
-            .map(\.data)
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { completion in
-                    if case .failure(let error) = completion {
-                        print("[BibleAPIService] Failed to load bibles: \(error)")
-                    }
-                },
-                receiveValue: { [weak self] bibles in
-                    self?.availableBibles = bibles
-                    print("[BibleAPIService] Loaded \(bibles.count) Bibles")
-                    let englishBibles = bibles.filter { $0.language.name.lowercased().contains("english") }
+        Task {
+            do {
+                let response = try await netlifyAPIService.makeRequest(endpoint: "bibles")
+                let jsonData = try JSONSerialization.data(withJSONObject: response)
+                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: jsonData)
+                
+                await MainActor.run {
+                    self.availableBibles = bibleResponse.data
+                    print("[BibleAPIService] Loaded \(bibleResponse.data.count) Bibles")
+                    let englishBibles = bibleResponse.data.filter { $0.language.name.lowercased().contains("english") }
                     print("[BibleAPIService] English Bibles available:")
                     for bible in englishBibles {
                         print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
                     }
                 }
-            )
-            .store(in: &cancellables)
+            } catch {
+                await MainActor.run {
+                    print("[BibleAPIService] Failed to load bibles: \(error)")
+                    self.error = error.localizedDescription
+                }
+            }
+        }
     }
     
     // MARK: - Public Methods
@@ -144,14 +124,11 @@ class BibleAPIService: ObservableObject {
         let verseReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/verses/\(verseReference)"
         
-        guard let request = createRequest(for: endpoint) else {
-            throw BibleAPIError.invalidRequest
-        }
-        
         do {
-            let (data, _) = try await session.data(for: request)
-            let response = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: data)
-            return response.data
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+            return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error fetching verse: \(error)")
             throw BibleAPIError.networkError(error)
@@ -164,14 +141,11 @@ class BibleAPIService: ObservableObject {
         let passageReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
-        guard let request = createRequest(for: endpoint) else {
-            throw BibleAPIError.invalidRequest
-        }
-        
         do {
-            let (data, _) = try await session.data(for: request)
-            let response = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: data)
-            return response.data
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: jsonData)
+            return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error fetching passage: \(error)")
             throw BibleAPIError.networkError(error)
@@ -184,14 +158,11 @@ class BibleAPIService: ObservableObject {
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let endpoint = "bibles/\(useBibleId)/search?query=\(encodedQuery)&limit=\(limit)"
         
-        guard let request = createRequest(for: endpoint) else {
-            throw BibleAPIError.invalidRequest
-        }
-        
         do {
-            let (data, _) = try await session.data(for: request)
-            let response = try JSONDecoder().decode(BibleAPIResponse<[BibleVerse]>.self, from: data)
-            return response.data
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleVerse]>.self, from: jsonData)
+            return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error searching verses: \(error)")
             throw BibleAPIError.networkError(error)
@@ -203,14 +174,11 @@ class BibleAPIService: ObservableObject {
         let useBibleId = bibleId ?? defaultBibleId
         let endpoint = "bibles/\(useBibleId)/books"
         
-        guard let request = createRequest(for: endpoint) else {
-            throw BibleAPIError.invalidRequest
-        }
-        
         do {
-            let (data, _) = try await session.data(for: request)
-            let response = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: data)
-            return response.data
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
+            return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error fetching books: \(error)")
             throw BibleAPIError.networkError(error)
