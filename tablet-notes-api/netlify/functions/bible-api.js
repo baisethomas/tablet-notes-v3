@@ -69,6 +69,7 @@ exports.handler = async (event, context) => {
     }
 
     if (!endpoint) {
+      console.error('[bible-api] No endpoint provided');
       return {
         statusCode: 400,
         headers,
@@ -80,6 +81,7 @@ exports.handler = async (event, context) => {
     const url = `${baseURL}/${endpoint}`;
     
     console.log(`[bible-api] Making ${requestMethod} request to: ${url}`);
+    console.log(`[bible-api] Endpoint received: "${endpoint}"`);
 
     // Make request to Bible API
     const response = await fetch(url, {
@@ -91,12 +93,15 @@ exports.handler = async (event, context) => {
     });
 
     if (!response.ok) {
-      throw new Error(`Bible API request failed: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`[bible-api] Bible API error ${response.status}:`, errorText);
+      throw new Error(`Bible API request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
     const data = await response.json();
     
     console.log(`[bible-api] Request completed successfully for user ${user.id}`);
+    console.log(`[bible-api] Response data:`, JSON.stringify(data, null, 2));
 
     return {
         statusCode: 200,
