@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 // MARK: - Bible Translation
 struct BibleTranslation: Identifiable, Hashable, Codable {
@@ -84,6 +85,14 @@ struct BibleAPIConfig {
 // MARK: - Bible API Service
 class BibleNetlifyAPIService {
     private let netlifyBaseURL = BibleAPIConfig.netlifyBaseURL
+    private let supabase: SupabaseClient
+    
+    init() {
+        guard let url = URL(string: SupabaseConfig.url) else {
+            fatalError("Invalid Supabase URL")
+        }
+        self.supabase = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
+    }
     
     func makeRequest(endpoint: String, method: String = "GET") async throws -> [String: Any] {
         guard let url = URL(string: "\(netlifyBaseURL)/bible-api") else {
@@ -94,11 +103,9 @@ class BibleNetlifyAPIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // Add authorization header if available
-        // This should be set by the app's authentication system
-        if let authToken = UserDefaults.standard.string(forKey: "supabase_auth_token") {
-            request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-        }
+        // Add authorization header using Supabase session
+        let session = try await supabase.auth.session
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         
         let requestBody = [
             "endpoint": endpoint,
