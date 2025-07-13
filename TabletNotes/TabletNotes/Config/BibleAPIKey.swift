@@ -87,7 +87,7 @@ class BibleNetlifyAPIService {
     
     func makeRequest(endpoint: String, method: String = "GET") async throws -> [String: Any] {
         guard let url = URL(string: "\(netlifyBaseURL)/bible-api") else {
-            throw BibleAPIError.invalidURL
+            throw NSError(domain: "BibleAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
         }
         
         var request = URLRequest(url: url)
@@ -110,48 +110,22 @@ class BibleNetlifyAPIService {
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw BibleAPIError.invalidResponse
+            throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
         }
         
         guard httpResponse.statusCode == 200 else {
-            throw BibleAPIError.httpError(httpResponse.statusCode)
+            throw NSError(domain: "BibleAPI", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
         }
         
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw BibleAPIError.invalidJSON
+            throw NSError(domain: "BibleAPI", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
         }
         
         guard let apiData = json["data"] as? [String: Any] else {
-            throw BibleAPIError.missingData
+            throw NSError(domain: "BibleAPI", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing data in response"])
         }
         
         return apiData
     }
 }
 
-// MARK: - Bible API Errors
-enum BibleAPIError: Error {
-    case invalidURL
-    case invalidResponse
-    case httpError(Int)
-    case invalidJSON
-    case missingData
-    case authenticationRequired
-    
-    var localizedDescription: String {
-        switch self {
-        case .invalidURL:
-            return "Invalid URL"
-        case .invalidResponse:
-            return "Invalid response"
-        case .httpError(let code):
-            return "HTTP error: \(code)"
-        case .invalidJSON:
-            return "Invalid JSON response"
-        case .missingData:
-            return "Missing data in response"
-        case .authenticationRequired:
-            return "Authentication required"
-        }
-    }
-}
