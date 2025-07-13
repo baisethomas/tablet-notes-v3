@@ -18,12 +18,21 @@ enum AudioQuality: String, CaseIterable {
 
 enum TranscriptionProvider: String, CaseIterable {
     case assemblyAI = "AssemblyAI"
+    case assemblyAILive = "AssemblyAI Live"
     case appleSpeech = "Apple Speech"
     
     var description: String {
         switch self {
         case .assemblyAI: return "Cloud-based, highly accurate"
+        case .assemblyAILive: return "Real-time AI transcription (Pro/Premium)"
         case .appleSpeech: return "On-device, private"
+        }
+    }
+    
+    var requiresPremium: Bool {
+        switch self {
+        case .assemblyAILive: return true
+        default: return false
         }
     }
 }

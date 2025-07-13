@@ -5,6 +5,7 @@ import SwiftData
 
 
 class TranscriptionService: NSObject, ObservableObject {
+    // Apple Speech Recognition properties
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -18,17 +19,61 @@ class TranscriptionService: NSObject, ObservableObject {
     private var lastPartial: String = ""
     private var isRestarting = false
 
-    // Add AssemblyAI service instance
+    // Service instances
     private let assemblyAITranscriptionService = AssemblyAITranscriptionService()
-
-    func startTranscription() throws {
-        guard !audioEngine.isRunning else { return }
-        fullTranscript = ""
-        lastPartial = ""
-        try startSession()
+    private let assemblyAILiveService = AssemblyAILiveTranscriptionService()
+    private let settingsService = SettingsService.shared
+    private var cancellables = Set<AnyCancellable>()
+    
+    override init() {
+        super.init()
+        setupLiveServiceObserver()
+    }
+    
+    private func setupLiveServiceObserver() {
+        // Forward live service transcripts to our main publisher
+        assemblyAILiveService.transcriptPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcript in
+                self?.transcriptSubject.send(transcript)
+            }
+            .store(in: &cancellables)
     }
 
-    private func startSession() throws {
+    func startTranscription() throws {
+        fullTranscript = ""
+        lastPartial = ""
+        
+        let provider = settingsService.transcriptionProvider
+        
+        switch provider {
+        case .assemblyAILive:
+            Task {
+                do {
+                    try await assemblyAILiveService.startLiveTranscription()
+                } catch {
+                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
+                    // Fallback to Apple Speech if AssemblyAI Live fails
+                    DispatchQueue.main.async {
+                        do {
+                            try self.startAppleSpeechSession()
+                        } catch {
+                            print("[TranscriptionService] Fallback to Apple Speech also failed: \(error)")
+                        }
+                    }
+                }
+            }
+        case .appleSpeech:
+            try startAppleSpeechSession()
+        case .assemblyAI:
+            // AssemblyAI provider uses post-recording transcription only
+            // Fall back to Apple Speech for live transcription
+            try startAppleSpeechSession()
+        }
+    }
+
+    private func startAppleSpeechSession() throws {
+        guard !audioEngine.isRunning else { return }
         print("[TranscriptionService] Starting new session...")
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else { throw NSError(domain: "Transcription", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create request"]) }
@@ -75,13 +120,13 @@ class TranscriptionService: NSObject, ObservableObject {
             }
         }
         lastPartial = ""
-        stopSession(clean: true)
+        stopAppleSpeechSession(clean: true)
         // Wait a short delay before starting a new session
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self = self else { return }
             do {
                 print("[TranscriptionService] Attempting to start new session after restart...")
-                try self.startSession()
+                try self.startAppleSpeechSession()
             } catch {
                 print("[TranscriptionService] Failed to restart transcription session: \(error)")
             }
@@ -91,19 +136,27 @@ class TranscriptionService: NSObject, ObservableObject {
 
     func stopTranscription() {
         print("[TranscriptionService] Stopping transcription...")
-        stopSession(clean: false)
-        // Append the last partial to the full transcript
-        if !lastPartial.isEmpty {
-            if fullTranscript.isEmpty {
-                fullTranscript = lastPartial
-            } else {
-                fullTranscript += " " + lastPartial
+        
+        let provider = settingsService.transcriptionProvider
+        
+        switch provider {
+        case .assemblyAILive:
+            assemblyAILiveService.stopLiveTranscription()
+        case .appleSpeech, .assemblyAI:
+            stopAppleSpeechSession(clean: false)
+            // Append the last partial to the full transcript for Apple Speech
+            if !lastPartial.isEmpty {
+                if fullTranscript.isEmpty {
+                    fullTranscript = lastPartial
+                } else {
+                    fullTranscript += " " + lastPartial
+                }
             }
+            transcriptSubject.send(fullTranscript)
         }
-        transcriptSubject.send(fullTranscript)
     }
 
-    private func stopSession(clean: Bool = false) {
+    private func stopAppleSpeechSession(clean: Bool = false) {
         print("[TranscriptionService] Stopping session...")
         timer?.invalidate()
         audioEngine.inputNode.removeTap(onBus: 0)

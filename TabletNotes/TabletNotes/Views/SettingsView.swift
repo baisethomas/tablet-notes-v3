@@ -79,11 +79,10 @@ struct SettingsView: View {
                     // Transcription Settings
                     SettingsSection(title: "Transcription") {
                         VStack(spacing: 0) {
-                            SettingsPicker(
-                                icon: "brain.head.profile",
-                                title: "Transcription Provider",
-                                subtitle: settings.transcriptionProvider.description,
-                                selection: $settings.transcriptionProvider
+                            TranscriptionProviderPicker(
+                                settings: settings,
+                                authManager: authManager,
+                                showingSubscriptionPrompt: $showingSubscriptionPrompt
                             )
                             
                             SettingsDivider()
@@ -1306,6 +1305,51 @@ struct BibleTranslationSelectionView: View {
             let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
             let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
             return firstPriority < secondPriority
+        }
+    }
+}
+
+// MARK: - Transcription Provider Picker
+struct TranscriptionProviderPicker: View {
+    @ObservedObject var settings: SettingsService
+    @ObservedObject var authManager: AuthenticationManager
+    @Binding var showingSubscriptionPrompt: Bool
+    
+    private var hasLiveTranscriptionAccess: Bool {
+        let tier = authManager.currentUser?.subscriptionTier ?? "free"
+        return tier == "pro" || tier == "premium"
+    }
+    
+    var body: some View {
+        SettingsRow(
+            icon: "brain.head.profile",
+            title: "Transcription Provider",
+            subtitle: settings.transcriptionProvider.description
+        ) {
+            Picker("", selection: $settings.transcriptionProvider) {
+                ForEach(TranscriptionProvider.allCases, id: \.self) { provider in
+                    HStack {
+                        Text(provider.rawValue)
+                        if provider.requiresPremium && !hasLiveTranscriptionAccess {
+                            Image(systemName: "crown.fill")
+                                .foregroundColor(.orange)
+                                .font(.caption2)
+                        }
+                    }
+                    .tag(provider)
+                }
+            }
+            .pickerStyle(MenuPickerStyle())
+            .labelsHidden()
+            .onChange(of: settings.transcriptionProvider) { newProvider in
+                // Check if user is trying to select a premium feature without access
+                if newProvider.requiresPremium && !hasLiveTranscriptionAccess {
+                    // Reset to previous selection
+                    settings.transcriptionProvider = .appleSpeech
+                    // Show subscription prompt
+                    showingSubscriptionPrompt = true
+                }
+            }
         }
     }
 }
