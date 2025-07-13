@@ -12,10 +12,10 @@ class SupabaseService: SupabaseServiceProtocol {
     }
 
     init() {
-        // NOTE: For a production app, it's better to load these from a Config.plist
-        // that is not checked into version control, similar to how we handled the API keys before.
-        let supabaseURL = URL(string: "https://ubghnmenxbhhlpxvypea.supabase.co")!
-        let supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InViZ2hubWVueGJoaGxweHZ5cGVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0NTgzMzMsImV4cCI6MjA2NjAzNDMzM30.gAzL8N2vXA8FhcAIFR0gKV6K7WS0_WCnMyINOiXcDfs"
+        guard let supabaseURL = URL(string: SupabaseConfig.url) else {
+            fatalError("Invalid Supabase URL in configuration")
+        }
+        let supabaseKey = SupabaseConfig.anonKey
         
         self.supabase = SupabaseClient(supabaseURL: supabaseURL, supabaseKey: supabaseKey)
     }
