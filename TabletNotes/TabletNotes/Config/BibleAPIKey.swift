@@ -128,6 +128,12 @@ class BibleNetlifyAPIService {
             throw NSError(domain: "BibleAPI", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
         }
         
+        // Check if this is an error response from our Netlify function
+        if let error = json["error"] as? String {
+            let statusCode = json["status"] as? Int ?? 500
+            throw NSError(domain: "BibleAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        
         guard let apiData = json["data"] as? [String: Any] else {
             throw NSError(domain: "BibleAPI", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing data in response"])
         }

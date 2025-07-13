@@ -131,6 +131,12 @@ class BibleAPIService: ObservableObject {
             return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error fetching verse: \(error)")
+            
+            // Handle verse not found errors gracefully
+            if let nsError = error as NSError?, nsError.code == 404 {
+                throw BibleAPIError.apiError("Verse not found in selected translation")
+            }
+            
             throw BibleAPIError.networkError(error)
         }
     }
@@ -148,6 +154,12 @@ class BibleAPIService: ObservableObject {
             return bibleResponse.data
         } catch {
             print("[BibleAPIService] Error fetching passage: \(error)")
+            
+            // Handle passage not found errors gracefully
+            if let nsError = error as NSError?, nsError.code == 404 {
+                throw BibleAPIError.apiError("Passage not found in selected translation")
+            }
+            
             throw BibleAPIError.networkError(error)
         }
     }

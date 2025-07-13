@@ -95,6 +95,34 @@ exports.handler = async (event, context) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[bible-api] Bible API error ${response.status}:`, errorText);
+      
+      // Handle specific Bible API errors gracefully
+      if (response.status === 404) {
+        // Verse not found - return a proper response instead of throwing
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ 
+            data: null,
+            error: 'Verse not found',
+            status: 404,
+            userId: user.id
+          })
+        };
+      } else if (response.status >= 400 && response.status < 500) {
+        // Client error - return the error information
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ 
+            data: null,
+            error: `Bible API client error: ${response.status} ${response.statusText}`,
+            details: errorText,
+            userId: user.id
+          })
+        };
+      }
+      
       throw new Error(`Bible API request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
