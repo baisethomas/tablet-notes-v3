@@ -1,160 +1,231 @@
 const { createClient } = require('@supabase/supabase-js');
+const { createRateLimitMiddleware } = require('./utils/rateLimiter');
+const { Validator } = require('./utils/validator');
+const { 
+  handleCORS, 
+  createAuthMiddleware, 
+  withTimeout,
+  CircuitBreaker,
+  createErrorResponse,
+  createSuccessResponse
+} = require('./utils/security');
+const { withLogging } = require('./utils/logger');
 
-// Helper function to verify JWT token and get user
-async function getAuthenticatedUser(authHeader, supabase) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Authorization header required');
-  }
+// Circuit breaker for Bible API
+const bibleAPIBreaker = new CircuitBreaker(3, 60000);
 
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+exports.handler = withLogging('bible-api', async (event, context) => {
+  const logger = event.logger;
   
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  // Handle CORS preflight
+  const corsResponse = handleCORS(event);
+  if (corsResponse) return corsResponse;
   
-  if (error || !user) {
-    throw new Error('Invalid or expired token');
-  }
-  
-  return user;
-}
-
-exports.handler = async (event, context) => {
-  // Set up CORS
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-        statusCode: 200,
-        headers,
-        body: ''
-    };
+  // Validate request size
+  const sizeValidation = Validator.validateRequestSize(event);
+  if (!sizeValidation.valid) {
+    logger.warn('Request size validation failed', { error: sizeValidation.error });
+    return createErrorResponse(new Error(sizeValidation.error), 413);
   }
 
   if (event.httpMethod !== 'GET' && event.httpMethod !== 'POST') {
-    return {
-        statusCode: 405,
-        headers,
-        body: JSON.stringify({ error: 'Method not allowed' })
-    };
+    return createErrorResponse(new Error('Method Not Allowed'), 405);
+  }
+  
+  // Apply rate limiting
+  const rateLimitMiddleware = createRateLimitMiddleware('bible');
+  const rateLimitResponse = await rateLimitMiddleware(event, context);
+  if (rateLimitResponse) {
+    logger.rateLimit(event.user?.id || 'anonymous', 'bible', false, {
+      statusCode: rateLimitResponse.statusCode
+    });
+    return rateLimitResponse;
+  }
+  
+  // Apply authentication
+  const authMiddleware = createAuthMiddleware();
+  const authResponse = await authMiddleware(event);
+  if (authResponse) {
+    logger.security('authentication_failed', { 
+      reason: 'missing_or_invalid_token',
+      ip: event.headers['x-forwarded-for'] 
+    });
+    return authResponse;
   }
 
   try {
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-    
-    // Authenticate user
-    const user = await getAuthenticatedUser(event.headers.authorization, supabase);
-    console.log(`[bible-api] Authenticated user: ${user.id}`);
+    const user = event.user; // User was authenticated by middleware
+    logger.info('User authenticated successfully', { userId: user.id });
 
     // Get the Bible API key from environment variables
     const bibleApiKey = process.env.BIBLE_API_KEY;
     if (!bibleApiKey) {
-      throw new Error('Bible API key not configured');
+      logger.error('Bible API key not configured');
+      return createErrorResponse(new Error('Bible API service not available'), 503);
     }
 
     const baseURL = 'https://api.scripture.api.bible/v1';
     
-    // Parse request parameters
+    // Parse and validate request parameters
     let endpoint, requestMethod = 'GET';
     
     if (event.httpMethod === 'GET') {
       // Extract endpoint from query parameters
       endpoint = event.queryStringParameters?.endpoint;
     } else if (event.httpMethod === 'POST') {
-      const body = JSON.parse(event.body);
-      endpoint = body.endpoint;
-      requestMethod = body.method || 'GET';
+      // Validate request body
+      const validationMiddleware = Validator.createValidationMiddleware('bibleApi', 'body');
+      const validationResponse = validationMiddleware(event);
+      if (validationResponse) {
+        logger.validationError(validationResponse.body ? JSON.parse(validationResponse.body).details : [], {
+          userId: user.id
+        });
+        return validationResponse;
+      }
+      
+      const { endpoint: ep, method } = event.validatedData;
+      endpoint = ep;
+      requestMethod = method || 'GET';
     }
 
     if (!endpoint) {
-      console.error('[bible-api] No endpoint provided');
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: 'endpoint parameter is required' })
-      };
+      logger.warn('No endpoint provided', { userId: user.id, method: event.httpMethod });
+      return createErrorResponse(new Error('endpoint parameter is required'), 400);
+    }
+    
+    // Sanitize endpoint to prevent injection
+    const sanitizedEndpoint = Validator.sanitizeText(endpoint, {
+      maxLength: 200,
+      allowHtml: false,
+      allowNewlines: false
+    });
+    
+    if (sanitizedEndpoint !== endpoint) {
+      logger.security('endpoint_sanitization', {
+        userId: user.id,
+        original: endpoint,
+        sanitized: sanitizedEndpoint
+      });
     }
 
     // Construct full URL
-    const url = `${baseURL}/${endpoint}`;
+    const url = `${baseURL}/${sanitizedEndpoint}`;
     
-    console.log(`[bible-api] Making ${requestMethod} request to: ${url}`);
-    console.log(`[bible-api] Endpoint received: "${endpoint}"`);
-
-    // Make request to Bible API
-    const response = await fetch(url, {
+    logger.info('Making Bible API request', {
+      userId: user.id,
       method: requestMethod,
-      headers: {
-        'api-key': bibleApiKey,
-        'Content-Type': 'application/json'
-      }
+      endpoint: sanitizedEndpoint,
+      url
     });
+    
+    logger.apiCall('BibleAPI', sanitizedEndpoint, {
+      method: requestMethod,
+      userId: user.id
+    });
+
+    // Make request to Bible API with circuit breaker and timeout
+    const bibleAPIRequestWithTimeout = withTimeout(
+      () => bibleAPIBreaker.execute(() => fetch(url, {
+        method: requestMethod,
+        headers: {
+          'api-key': bibleApiKey,
+          'Content-Type': 'application/json',
+          'User-Agent': 'TabletNotes/1.0'
+        }
+      })),
+      10000 // 10 second timeout
+    );
+    
+    const response = await bibleAPIRequestWithTimeout();
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[bible-api] Bible API error ${response.status}:`, errorText);
+      logger.warn('Bible API returned error', {
+        userId: user.id,
+        status: response.status,
+        statusText: response.statusText,
+        endpoint: sanitizedEndpoint,
+        errorText: errorText.substring(0, 500) // Truncate for logging
+      });
       
       // Handle specific Bible API errors gracefully
       if (response.status === 404) {
         // Verse not found - return a proper response instead of throwing
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify({ 
-            data: null,
-            error: 'Verse not found',
-            status: 404,
-            userId: user.id
-          })
+        const responseData = {
+          data: null,
+          error: 'Verse not found',
+          status: 404,
+          userId: user.id,
+          endpoint: sanitizedEndpoint
         };
+        
+        const additionalHeaders = context.rateLimitHeaders || {};
+        additionalHeaders.origin = event.headers.origin;
+        
+        return createSuccessResponse(responseData, 200, additionalHeaders);
       } else if (response.status >= 400 && response.status < 500) {
         // Client error - return the error information
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify({ 
-            data: null,
-            error: `Bible API client error: ${response.status} ${response.statusText}`,
-            details: errorText,
-            userId: user.id
-          })
+        const responseData = {
+          data: null,
+          error: `Bible API client error: ${response.status} ${response.statusText}`,
+          details: errorText.substring(0, 200), // Truncate error details
+          userId: user.id,
+          endpoint: sanitizedEndpoint
         };
+        
+        const additionalHeaders = context.rateLimitHeaders || {};
+        additionalHeaders.origin = event.headers.origin;
+        
+        return createSuccessResponse(responseData, 200, additionalHeaders);
       }
       
-      throw new Error(`Bible API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+      throw new Error(`Bible API request failed: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
     
-    console.log(`[bible-api] Request completed successfully for user ${user.id}`);
-    console.log(`[bible-api] Response data:`, JSON.stringify(data, null, 2));
-
-    return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({ 
-            data,
-            userId: user.id // Include user ID for client verification
-        })
+    logger.info('Bible API request completed successfully', {
+      userId: user.id,
+      endpoint: sanitizedEndpoint,
+      responseSize: JSON.stringify(data).length,
+      hasData: !!data.data
+    });
+    
+    const responseData = {
+      data,
+      userId: user.id,
+      endpoint: sanitizedEndpoint,
+      metadata: {
+        responseTime: Date.now() - logger.startTime,
+        apiVersion: 'v1',
+        cached: false
+      }
     };
+    
+    // Add rate limit headers if available
+    const additionalHeaders = context.rateLimitHeaders || {};
+    additionalHeaders.origin = event.headers.origin;
+    
+    return createSuccessResponse(responseData, 200, additionalHeaders);
 
   } catch (error) {
-    console.error('[bible-api] Request error:', error.message);
+    logger.error('Bible API request failed', {
+      userId: event.user?.id,
+      endpoint: event.queryStringParameters?.endpoint || event.validatedData?.endpoint,
+      method: event.httpMethod,
+      errorType: error.constructor.name
+    }, error);
     
-    // Return appropriate error status based on error type
-    const statusCode = error.message.includes('Authorization') || 
-                      error.message.includes('Invalid') || 
-                      error.message.includes('expired') ? 401 : 500;
+    // Determine appropriate status code
+    let statusCode = 500;
+    if (error.message.includes('Circuit breaker')) {
+      statusCode = 503; // Service Unavailable
+    } else if (error.message.includes('timed out')) {
+      statusCode = 408; // Request Timeout
+    } else if (error.message.includes('API key') || error.message.includes('quota')) {
+      statusCode = 503; // Service Unavailable
+    }
     
-    return {
-        statusCode,
-        headers,
-        body: JSON.stringify({ 
-            error: statusCode === 401 ? 'Authentication required' : 'Bible API request failed',
-            details: error.message 
-        })
-    };
+    return createErrorResponse(error, statusCode);
   }
-}
+});

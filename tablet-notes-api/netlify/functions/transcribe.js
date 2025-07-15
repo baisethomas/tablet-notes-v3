@@ -1,54 +1,58 @@
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
+const { createRateLimitMiddleware } = require('./utils/rateLimiter');
+const { Validator } = require('./utils/validator');
+const { 
+  handleCORS, 
+  createAuthMiddleware, 
+  checkResourceOwnership, 
+  withTimeout,
+  CircuitBreaker,
+  createErrorResponse,
+  createSuccessResponse
+} = require('./utils/security');
+const { withLogging } = require('./utils/logger');
 
-// Helper function to verify JWT token and get user
-async function getAuthenticatedUser(authHeader, supabase) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Authorization header required');
-  }
+// Circuit breaker for AssemblyAI API
+const assemblyAIBreaker = new CircuitBreaker(3, 60000); // 3 failures, 1 minute timeout
 
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-  
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
-  if (error || !user) {
-    throw new Error('Invalid or expired token');
-  }
-  
-  return user;
-}
-
-// Helper function to verify user owns the file
-function verifyFileOwnership(filePath, userId) {
-  // File path should be in format: {userId}/{filename}
-  const pathParts = filePath.split('/');
-  if (pathParts.length < 2 || pathParts[0] !== userId) {
-    throw new Error('Access denied: You can only transcribe your own files');
-  }
-}
-
-exports.handler = async (event, context) => {
-    const headers = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    };
-
-    if (event.httpMethod === 'OPTIONS') {
-        return {
-        statusCode: 200,
-        headers,
-        body: '',
-        };
+exports.handler = withLogging('transcribe', async (event, context) => {
+    const logger = event.logger;
+    
+    // Handle CORS preflight
+    const corsResponse = handleCORS(event);
+    if (corsResponse) return corsResponse;
+    
+    // Validate request size
+    const sizeValidation = Validator.validateRequestSize(event);
+    if (!sizeValidation.valid) {
+        logger.warn('Request size validation failed', { error: sizeValidation.error });
+        return createErrorResponse(new Error(sizeValidation.error), 413);
     }
 
-    console.log("[transcribe] Transcribe endpoint hit");
     if (event.httpMethod !== 'POST') {
-        return {
-            statusCode: 405,
-            headers,
-            body: JSON.stringify({ message: 'Method Not Allowed' })
-        };
+        return createErrorResponse(new Error('Method Not Allowed'), 405);
+    }
+    
+    // Apply rate limiting
+    const rateLimitMiddleware = createRateLimitMiddleware('transcription');
+    const rateLimitResponse = await rateLimitMiddleware(event, context);
+    if (rateLimitResponse) {
+        logger.rateLimit(event.user?.id || 'anonymous', 'transcription', false, {
+            statusCode: rateLimitResponse.statusCode
+        });
+        return rateLimitResponse;
+    }
+    
+    // Apply authentication
+    const authMiddleware = createAuthMiddleware();
+    const authResponse = await authMiddleware(event);
+    if (authResponse) {
+        logger.security('authentication_failed', { 
+            reason: 'missing_or_invalid_token',
+            ip: event.headers['x-forwarded-for'] 
+        });
+        return authResponse;
     }
 
     try {
@@ -56,91 +60,134 @@ exports.handler = async (event, context) => {
         const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         
         if (!supabaseUrl || !supabaseKey) {
-            console.error("[transcribe] Supabase environment variables are not set.");
-            return {
-                statusCode: 500,
-                headers,
-                body: JSON.stringify({ error: 'Server configuration error: Supabase variables missing.' })
-            };
+            logger.error('Supabase configuration missing', { 
+                hasUrl: !!supabaseUrl,
+                hasKey: !!supabaseKey 
+            });
+            return createErrorResponse(new Error('Server configuration error'), 500);
         }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
+        const user = event.user; // User was authenticated by middleware
         
-        // Authenticate user
-        const user = await getAuthenticatedUser(event.headers.authorization, supabase);
-        console.log(`[transcribe] Authenticated user: ${user.id}`);
-
-        const { filePath } = JSON.parse(event.body);
-        console.log("[transcribe] Received filePath:", filePath);
-
-        if (!filePath) {
-            return {
-                statusCode: 400,
-                headers,
-                body: JSON.stringify({ error: 'filePath is required' })
-            };
+        logger.info('User authenticated successfully', { userId: user.id });
+        
+        // Validate request body
+        const validationMiddleware = Validator.createValidationMiddleware('transcription', 'body');
+        const validationResponse = validationMiddleware(event);
+        if (validationResponse) {
+            logger.validationError(validationResponse.body ? JSON.parse(validationResponse.body).details : [], {
+                userId: user.id
+            });
+            return validationResponse;
         }
+        
+        const { filePath } = event.validatedData;
+        logger.info('Processing transcription request', { filePath, userId: user.id });
 
         // Verify user owns the file
-        verifyFileOwnership(filePath, user.id);
-        console.log(`[transcribe] File ownership verified for user ${user.id}`);
+        if (!checkResourceOwnership(user, filePath)) {
+            logger.security('unauthorized_file_access', { 
+                userId: user.id,
+                filePath,
+                ip: event.headers['x-forwarded-for']
+            });
+            return createErrorResponse(new Error('Access denied: You can only transcribe your own files'), 403);
+        }
+        
+        logger.info('File ownership verified', { userId: user.id, filePath });
 
         const bucketName = 'audio-files';
-        console.log(`[transcribe] Attempting to download from bucket: ${bucketName}, file: ${filePath}`);
-
-        const { data: blobData, error: downloadError } = await supabase.storage.from(bucketName).download(filePath);
+        logger.info('Downloading file from storage', { bucket: bucketName, filePath });
+        
+        // Download file with timeout
+        const downloadWithTimeout = withTimeout(
+            () => supabase.storage.from(bucketName).download(filePath),
+            30000 // 30 second timeout
+        );
+        
+        const { data: blobData, error: downloadError } = await downloadWithTimeout();
 
         if (downloadError) {
-            console.error("[transcribe] Supabase download error:", downloadError);
-            return {
-                statusCode: 500,
-                headers,
-                body: JSON.stringify({ error: 'Failed to download audio file from storage.', details: downloadError.message })
-            };
+            logger.error('File download failed', { 
+                bucket: bucketName,
+                filePath,
+                userId: user.id 
+            }, downloadError);
+            return createErrorResponse(
+                new Error('Failed to download audio file from storage'), 
+                500
+            );
         }
 
-        console.log("[transcribe] File downloaded from Supabase successfully.");
+        logger.info('File downloaded successfully', { 
+            bucket: bucketName,
+            filePath,
+            fileSize: blobData.size 
+        });
 
         const assembly = new AssemblyAI({
             apiKey: process.env.ASSEMBLYAI_API_KEY,
         });
 
-        console.log("[transcribe] AssemblyAI client created. Starting transcription...");
-        const transcript = await assembly.transcripts.submit({
-            audio: blobData,
+        logger.info('Starting transcription with AssemblyAI', { userId: user.id });
+        logger.apiCall('AssemblyAI', 'transcripts.submit', { 
             speaker_labels: true,
+            fileSize: blobData.size 
         });
         
-        console.log(`[transcribe] Transcription submitted successfully for user ${user.id}:`, transcript.id);
+        // Submit transcription with circuit breaker and timeout
+        const transcriptWithTimeout = withTimeout(
+            () => assemblyAIBreaker.execute(() => assembly.transcripts.submit({
+                audio: blobData,
+                speaker_labels: true,
+                auto_chapters: false,
+                filter_profanity: false,
+                format_text: true
+            })),
+            120000 // 2 minute timeout for submission
+        );
+        
+        const transcript = await transcriptWithTimeout();
+        
+        logger.info('Transcription submitted successfully', { 
+            transcriptId: transcript.id,
+            userId: user.id,
+            status: transcript.status 
+        });
 
-        return {
-            statusCode: 200,
-            headers,
-            body: JSON.stringify({
-                id: transcript.id,
-                text: transcript.text,
-                segments: transcript.words, 
-                status: transcript.status,
-                userId: user.id // Include user ID for client verification
-            })
+        const responseData = {
+            id: transcript.id,
+            text: transcript.text,
+            segments: transcript.words, 
+            status: transcript.status,
+            userId: user.id
         };
+        
+        // Add rate limit headers if available
+        const additionalHeaders = context.rateLimitHeaders || {};
+        additionalHeaders.origin = event.headers.origin;
+        
+        return createSuccessResponse(responseData, 200, additionalHeaders);
 
     } catch (error) {
-        console.error("[transcribe] Error occurred:", error.message);
+        logger.error('Transcription request failed', {
+            userId: event.user?.id,
+            filePath: event.validatedData?.filePath,
+            errorType: error.constructor.name
+        }, error);
         
-        // Return appropriate error status based on error type
-        const statusCode = error.message.includes('Authorization') || 
-                          error.message.includes('Invalid') || 
-                          error.message.includes('expired') ||
-                          error.message.includes('Access denied') ? 401 : 500;
+        // Determine appropriate status code
+        let statusCode = 500;
+        if (error.message.includes('Circuit breaker')) {
+            statusCode = 503; // Service Unavailable
+        } else if (error.message.includes('timed out')) {
+            statusCode = 408; // Request Timeout
+        } else if (error.message.includes('Authorization') || 
+                   error.message.includes('Access denied')) {
+            statusCode = 403; // Forbidden
+        }
         
-        return {
-            statusCode,
-            headers,
-            body: JSON.stringify({ 
-                error: statusCode === 401 ? 'Authentication required' : 'A server error has occurred',
-                details: error.message 
-            })
-        };
+        return createErrorResponse(error, statusCode);
     }
-}
+});

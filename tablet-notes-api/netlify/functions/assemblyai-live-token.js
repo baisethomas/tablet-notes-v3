@@ -1,21 +1,18 @@
 const { createClient } = require('@supabase/supabase-js');
+const { createRateLimitMiddleware } = require('./utils/rateLimiter');
+const { Validator } = require('./utils/validator');
+const { 
+  handleCORS, 
+  createAuthMiddleware, 
+  withTimeout,
+  CircuitBreaker,
+  createErrorResponse,
+  createSuccessResponse
+} = require('./utils/security');
+const { withLogging } = require('./utils/logger');
 
-// Helper function to verify JWT token and get user
-async function getAuthenticatedUser(authHeader, supabase) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Authorization header required');
-  }
-
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-  
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
-  if (error || !user) {
-    throw new Error('Invalid or expired token');
-  }
-  
-  return user;
-}
+// Circuit breaker for AssemblyAI API
+const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
 // Helper function to check if user has pro/premium subscription
 function hasLiveTranscriptionAccess(user) {
@@ -24,103 +21,131 @@ function hasLiveTranscriptionAccess(user) {
   return tier === 'pro' || tier === 'premium';
 }
 
-exports.handler = async (event, context) => {
-  // Set up CORS
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-        statusCode: 200,
-        headers,
-        body: ''
-    };
-  }
+exports.handler = withLogging('assemblyai-live-token', async (event, context) => {
+  const logger = event.logger;
+  
+  // Handle CORS preflight
+  const corsResponse = handleCORS(event);
+  if (corsResponse) return corsResponse;
 
   if (event.httpMethod !== 'POST') {
-    return {
-        statusCode: 405,
-        headers,
-        body: JSON.stringify({ error: 'Method not allowed' })
-    };
+    return createErrorResponse(new Error('Method Not Allowed'), 405);
+  }
+  
+  // Apply rate limiting
+  const rateLimitMiddleware = createRateLimitMiddleware('general');
+  const rateLimitResponse = await rateLimitMiddleware(event, context);
+  if (rateLimitResponse) {
+    logger.rateLimit(event.user?.id || 'anonymous', 'general', false);
+    return rateLimitResponse;
+  }
+  
+  // Apply authentication
+  const authMiddleware = createAuthMiddleware();
+  const authResponse = await authMiddleware(event);
+  if (authResponse) {
+    logger.security('authentication_failed', { 
+      reason: 'missing_or_invalid_token',
+      ip: event.headers['x-forwarded-for'] 
+    });
+    return authResponse;
   }
 
   try {
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-    
-    // Authenticate user
-    const user = await getAuthenticatedUser(event.headers.authorization, supabase);
-    console.log(`[assemblyai-live-token] Authenticated user: ${user.id}`);
+    const user = event.user; // User was authenticated by middleware
+    logger.info('User authenticated successfully', { userId: user.id });
 
     // Check if user has access to live transcription
     if (!hasLiveTranscriptionAccess(user)) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ 
-          error: 'Live transcription requires Pro or Premium subscription',
-          requiredTier: 'pro'
-        })
-      };
+      logger.warn('Live transcription access denied', {
+        userId: user.id,
+        tier: user.user_metadata?.subscription_tier || 'unknown'
+      });
+      return createErrorResponse(
+        new Error('Live transcription requires Pro or Premium subscription'), 
+        403
+      );
     }
 
     // Get the AssemblyAI API key from environment variables
     const assemblyaiApiKey = process.env.ASSEMBLYAI_API_KEY;
     if (!assemblyaiApiKey) {
-      throw new Error('AssemblyAI API key not configured');
+      logger.error('AssemblyAI API key not configured');
+      return createErrorResponse(new Error('Live transcription service not available'), 503);
     }
 
-    // Generate temporary session token from AssemblyAI
-    console.log(`[assemblyai-live-token] Generating session token for user ${user.id}`);
+    logger.info('Generating AssemblyAI session token', { userId: user.id });
+    logger.apiCall('AssemblyAI', 'realtime/token', { userId: user.id });
     
-    const response = await fetch('https://api.assemblyai.com/v2/realtime/token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${assemblyaiApiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        expires_in: 3600 // 1 hour
-      })
-    });
+    // Generate temporary session token from AssemblyAI with circuit breaker
+    const tokenRequestWithTimeout = withTimeout(
+      () => assemblyAIBreaker.execute(() => fetch('https://api.assemblyai.com/v2/realtime/token', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${assemblyaiApiKey}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'TabletNotes/1.0'
+        },
+        body: JSON.stringify({
+          expires_in: 3600 // 1 hour
+        })
+      })),
+      10000 // 10 second timeout
+    );
+    
+    const response = await tokenRequestWithTimeout();
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[assemblyai-live-token] AssemblyAI API error: ${response.status} ${errorText}`);
+      logger.error('AssemblyAI token generation failed', {
+        userId: user.id,
+        status: response.status,
+        statusText: response.statusText,
+        errorText: errorText.substring(0, 200)
+      });
       throw new Error(`AssemblyAI API error: ${response.status}`);
     }
 
     const tokenData = await response.json();
-    console.log(`[assemblyai-live-token] Session token generated successfully for user ${user.id}`);
-
-    return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({ 
-            sessionToken: tokenData.token,
-            expiresIn: tokenData.expires_in,
-            userId: user.id // Include user ID for client verification
-        })
+    
+    logger.info('Session token generated successfully', {
+      userId: user.id,
+      expiresIn: tokenData.expires_in
+    });
+    
+    const responseData = {
+      sessionToken: tokenData.token,
+      expiresIn: tokenData.expires_in,
+      userId: user.id,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        service: 'AssemblyAI',
+        type: 'realtime'
+      }
     };
+    
+    // Add rate limit headers if available
+    const additionalHeaders = context.rateLimitHeaders || {};
+    additionalHeaders.origin = event.headers.origin;
+    
+    return createSuccessResponse(responseData, 200, additionalHeaders);
 
   } catch (error) {
-    console.error('[assemblyai-live-token] Error:', error.message);
+    logger.error('Live token generation failed', {
+      userId: event.user?.id,
+      errorType: error.constructor.name
+    }, error);
     
-    // Return appropriate error status based on error type
-    const statusCode = error.message.includes('Authorization') || 
-                      error.message.includes('Invalid') || 
-                      error.message.includes('expired') ? 401 : 500;
+    // Determine appropriate status code
+    let statusCode = 500;
+    if (error.message.includes('Circuit breaker')) {
+      statusCode = 503; // Service Unavailable
+    } else if (error.message.includes('timed out')) {
+      statusCode = 408; // Request Timeout
+    } else if (error.message.includes('API key') || error.message.includes('quota')) {
+      statusCode = 503; // Service Unavailable
+    }
     
-    return {
-        statusCode,
-        headers,
-        body: JSON.stringify({ 
-            error: statusCode === 401 ? 'Authentication required' : 'Failed to generate session token',
-            details: error.message 
-        })
-    };
+    return createErrorResponse(error, statusCode);
   }
-}
+});

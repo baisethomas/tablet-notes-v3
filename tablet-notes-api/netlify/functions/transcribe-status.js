@@ -1,110 +1,160 @@
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
+const { createRateLimitMiddleware } = require('./utils/rateLimiter');
+const { Validator } = require('./utils/validator');
+const { 
+  handleCORS, 
+  createAuthMiddleware, 
+  withTimeout,
+  CircuitBreaker,
+  createErrorResponse,
+  createSuccessResponse
+} = require('./utils/security');
+const { withLogging } = require('./utils/logger');
 
-// Helper function to verify JWT token and get user
-async function getAuthenticatedUser(authHeader, supabase) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Authorization header required');
-  }
+// Circuit breaker for AssemblyAI API
+const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+exports.handler = withLogging('transcribe-status', async (event, context) => {
+  const logger = event.logger;
   
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
-  if (error || !user) {
-    throw new Error('Invalid or expired token');
-  }
-  
-  return user;
-}
-
-exports.handler = async (event, context) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: '',
-    };
-  }
+  // Handle CORS preflight
+  const corsResponse = handleCORS(event);
+  if (corsResponse) return corsResponse;
 
   if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: 'Method not allowed' }),
-    };
+    return createErrorResponse(new Error('Method Not Allowed'), 405);
+  }
+  
+  // Apply rate limiting
+  const rateLimitMiddleware = createRateLimitMiddleware('general');
+  const rateLimitResponse = await rateLimitMiddleware(event, context);
+  if (rateLimitResponse) {
+    logger.rateLimit(event.user?.id || 'anonymous', 'general', false);
+    return rateLimitResponse;
+  }
+  
+  // Apply authentication
+  const authMiddleware = createAuthMiddleware();
+  const authResponse = await authMiddleware(event);
+  if (authResponse) {
+    logger.security('authentication_failed', { 
+      reason: 'missing_or_invalid_token',
+      ip: event.headers['x-forwarded-for'] 
+    });
+    return authResponse;
   }
 
   try {
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-    
-    // Authenticate user
-    const user = await getAuthenticatedUser(event.headers.authorization, supabase);
-    console.log(`[transcribe-status] Authenticated user: ${user.id}`);
+    const user = event.user; // User was authenticated by middleware
+    logger.info('User authenticated successfully', { userId: user.id });
 
-    const { id, userId } = JSON.parse(event.body);
-    if (!id) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: 'id is required' }),
-      };
+    // Parse and validate request body
+    let requestBody;
+    try {
+      requestBody = JSON.parse(event.body || '{}');
+    } catch (e) {
+      logger.warn('Invalid JSON in request body', { userId: user.id });
+      return createErrorResponse(new Error('Invalid JSON in request body'), 400);
     }
+    
+    const { id, userId } = requestBody;
+    
+    // Validate required fields
+    if (!id || typeof id !== 'string') {
+      logger.warn('Missing or invalid transcription ID', { userId: user.id, providedId: id });
+      return createErrorResponse(new Error('Valid transcription ID is required'), 400);
+    }
+    
+    // Sanitize the ID
+    const sanitizedId = Validator.sanitizeText(id, {
+      maxLength: 100,
+      allowHtml: false,
+      allowNewlines: false
+    });
 
     // Verify user can access this transcription
-    // The client should pass the userId that initiated the transcription
     if (userId && userId !== user.id) {
-      console.log(`[transcribe-status] Access denied: User ${user.id} tried to access transcription for user ${userId}`);
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Access denied: You can only check your own transcriptions' }),
-      };
+      logger.security('unauthorized_transcription_access', {
+        userId: user.id,
+        requestedUserId: userId,
+        transcriptionId: sanitizedId,
+        ip: event.headers['x-forwarded-for']
+      });
+      return createErrorResponse(
+        new Error('Access denied: You can only check your own transcriptions'), 
+        403
+      );
     }
 
-    console.log(`[transcribe-status] Checking transcription status for job ${id}, user ${user.id}`);
-
+    logger.info('Checking transcription status', {
+      transcriptionId: sanitizedId,
+      userId: user.id
+    });
+    
     const assembly = new AssemblyAI({
       apiKey: process.env.ASSEMBLYAI_API_KEY,
     });
+    
+    logger.apiCall('AssemblyAI', 'transcripts.get', {
+      transcriptionId: sanitizedId,
+      userId: user.id
+    });
 
-    // Fetch the transcript status from AssemblyAI
-    const transcript = await assembly.transcripts.get(id);
+    // Fetch the transcript status from AssemblyAI with circuit breaker
+    const getTranscriptWithTimeout = withTimeout(
+      () => assemblyAIBreaker.execute(() => assembly.transcripts.get(sanitizedId)),
+      30000 // 30 second timeout
+    );
+    
+    const transcript = await getTranscriptWithTimeout();
 
-    console.log(`[transcribe-status] Transcription status for user ${user.id}: ${transcript.status}`);
+    logger.info('Transcription status retrieved successfully', {
+      transcriptionId: sanitizedId,
+      userId: user.id,
+      status: transcript.status,
+      hasText: !!transcript.text,
+      segmentCount: transcript.words?.length || 0
+    });
 
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        id: transcript.id,
-        text: transcript.text,
-        segments: transcript.words,
-        status: transcript.status,
-        userId: user.id, // Include user ID for client verification
-      }),
+    const responseData = {
+      id: transcript.id,
+      text: transcript.text,
+      segments: transcript.words,
+      status: transcript.status,
+      userId: user.id,
+      metadata: {
+        audioUrl: transcript.audio_url,
+        processingTime: transcript.processing_time,
+        confidence: transcript.confidence,
+        retrievedAt: new Date().toISOString()
+      }
     };
+    
+    // Add rate limit headers if available
+    const additionalHeaders = context.rateLimitHeaders || {};
+    additionalHeaders.origin = event.headers.origin;
+    
+    return createSuccessResponse(responseData, 200, additionalHeaders);
   } catch (error) {
-    console.error('[transcribe-status] Error:', error.message);
+    logger.error('Transcription status check failed', {
+      userId: event.user?.id,
+      transcriptionId: event.body ? JSON.parse(event.body).id : 'unknown',
+      errorType: error.constructor.name
+    }, error);
     
-    // Return appropriate error status based on error type
-    const statusCode = error.message.includes('Authorization') || 
-                      error.message.includes('Invalid') || 
-                      error.message.includes('expired') ? 401 : 500;
+    // Determine appropriate status code
+    let statusCode = 500;
+    if (error.message.includes('Circuit breaker')) {
+      statusCode = 503; // Service Unavailable
+    } else if (error.message.includes('timed out')) {
+      statusCode = 408; // Request Timeout
+    } else if (error.message.includes('not found') || error.message.includes('404')) {
+      statusCode = 404; // Not Found
+    } else if (error.message.includes('API key') || error.message.includes('quota')) {
+      statusCode = 503; // Service Unavailable
+    }
     
-    return {
-      statusCode,
-      headers,
-      body: JSON.stringify({
-        error: statusCode === 401 ? 'Authentication required' : 'Failed to fetch transcription status',
-        details: error.message,
-      }),
-    };
+    return createErrorResponse(error, statusCode);
   }
-};
+});
