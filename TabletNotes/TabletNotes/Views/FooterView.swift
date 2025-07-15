@@ -16,16 +16,16 @@ struct FooterView: View {
                 VStack {
                     Image(systemName: "house.fill")
                         .font(.title2)
-                        .foregroundColor(selectedTab == .home ? .blue : .gray)
+                        .foregroundColor(selectedTab == .home ? .adaptiveAccent : .adaptiveSecondaryText)
                     Text("Home")
                         .font(.caption)
-                        .foregroundColor(selectedTab == .home ? .blue : .gray)
+                        .foregroundColor(selectedTab == .home ? .adaptiveAccent : .adaptiveSecondaryText)
                 }
             }
             .frame(maxWidth: .infinity)
             ZStack {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.blue)
+                    .fill(Color.adaptiveAccent)
                     .frame(width: 56, height: 56)
                 Button(action: { onRecord?() }) {
                     Image(systemName: "mic.fill")
@@ -40,17 +40,18 @@ struct FooterView: View {
                 VStack {
                     Image(systemName: "person")
                         .font(.title2)
-                        .foregroundColor(selectedTab == .account ? .blue : .gray)
+                        .foregroundColor(selectedTab == .account ? .adaptiveAccent : .adaptiveSecondaryText)
                     Text("Account")
                         .font(.caption)
-                        .foregroundColor(selectedTab == .account ? .blue : .gray)
+                        .foregroundColor(selectedTab == .account ? .adaptiveAccent : .adaptiveSecondaryText)
                 }
             }
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal)
         .padding(.bottom, 8)
-        .background(Color.white.shadow(radius: 2))
+        .background(Color.navigationBackground)
+        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: -1)
     }
 }
 

@@ -371,7 +371,7 @@ struct AboutView: View {
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
                             
-                            Text("Version 1.0.0")
+                            Text(AppVersion.shortVersion)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -403,7 +403,7 @@ struct AboutView: View {
                                 .fontWeight(.semibold)
                             
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Version: 1.0.0 (Build 1)")
+                                Text(AppVersion.versionAndBuild)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 

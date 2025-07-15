@@ -326,7 +326,7 @@ struct AccountView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            Text("Version 1.0.0")
+                            Text(AppVersion.shortVersion)
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -564,7 +564,7 @@ struct AppAboutView: View {
                             .font(.title)
                             .fontWeight(.bold)
                         
-                        Text("Version 1.0.0")
+                        Text(AppVersion.shortVersion)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }

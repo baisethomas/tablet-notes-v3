@@ -29,6 +29,7 @@ struct MainAppView: View {
     @State private var showSplash = true
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @StateObject private var sermonService: SermonService
+    @StateObject private var settingsService = SettingsService.shared
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -140,11 +141,15 @@ struct MainAppView: View {
                 }
             }
             .ignoresSafeArea(edges: .bottom)
+            .background(Color.adaptiveBackground)
+            .customColorScheme(settingsService.appTheme.colorScheme)
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
                     Text("Select Service Type")
                         .font(.headline)
+                        .foregroundColor(.adaptivePrimaryText)
                         .padding()
+                    
                     ForEach(["Sermon", "Bible Study", "Youth Group", "Conference"], id: \.self) { type in
                         Button(type) {
                             selectedServiceType = type
@@ -154,10 +159,16 @@ struct MainAppView: View {
                             }
                         }
                         .font(.title3)
+                        .foregroundColor(.adaptivePrimaryText)
                         .frame(maxWidth: .infinity)
                         .padding()
+                        .background(Color.adaptiveSecondaryBackground)
+                        .cornerRadius(8)
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
                     }
                 }
+                .background(Color.adaptiveBackground)
                 .presentationDetents([.medium])
             }
         }

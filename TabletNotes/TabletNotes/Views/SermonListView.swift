@@ -17,18 +17,18 @@ struct EmptyStateView: View {
             VStack(spacing: 16) {
                 Image(systemName: systemImage)
                     .font(.system(size: 64))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.adaptiveSecondaryText)
                     .opacity(0.6)
                 
                 VStack(spacing: 8) {
                     Text(title)
                         .font(.title2)
                         .fontWeight(.semibold)
-                        .foregroundColor(.primary)
+                        .foregroundColor(.adaptivePrimaryText)
                     
                     Text(subtitle)
                         .font(.body)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
@@ -44,14 +44,14 @@ struct EmptyStateView: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
-                    .background(Color.accentColor)
+                    .background(Color.adaptiveAccent)
                     .cornerRadius(25)
                 }
                 .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        .background(Color.adaptiveBackground)
     }
 }
 
@@ -71,7 +71,7 @@ struct SermonRowView: View {
                     Text(sermon.title)
                         .font(.headline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.primary)
+                        .foregroundColor(.adaptivePrimaryText)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     
@@ -80,12 +80,12 @@ struct SermonRowView: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(sermon.date, style: .date)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                         
                         // Chevron moved to top right
                         Image(systemName: "chevron.right")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                     }
                 }
                 
@@ -93,15 +93,15 @@ struct SermonRowView: View {
                 HStack {
                     Image(systemName: serviceTypeIcon)
                         .font(.caption)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.adaptiveAccent)
                     
                     Text(sermon.serviceType)
                         .font(.caption)
                         .fontWeight(.medium)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.adaptiveAccent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.1))
+                        .background(Color.adaptiveAccent.opacity(0.1))
                         .cornerRadius(8)
                     
                     Spacer()
@@ -113,16 +113,16 @@ struct SermonRowView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "lightbulb")
                                 .font(.caption2)
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(.adaptiveAccent)
                             Text("Key Points")
                                 .font(.caption2)
                                 .fontWeight(.medium)
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(.adaptiveAccent)
                         }
                         
                         Text(extractKeyPoints(from: summary.text))
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                             .lineLimit(4)
                             .multilineTextAlignment(.leading)
                     }
@@ -130,11 +130,11 @@ struct SermonRowView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "note.text")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                         
                         Text("\(sermon.notes.count) note\(sermon.notes.count == 1 ? "" : "s")")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                     }
                 }
             }
@@ -163,11 +163,11 @@ struct SermonRowView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
-        .background(Color(.systemBackground))
+        .background(Color.sermonCardBackground)
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+                .stroke(Color.adaptiveBorder, lineWidth: 1)
         )
         .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.easeInOut(duration: 0.1), value: isPressed)
@@ -451,7 +451,7 @@ struct SermonListView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(.systemBackground))
+                .background(Color.adaptiveBackground)
                 
                 // Search bar (when visible)
                 if showingSearch {
@@ -473,7 +473,7 @@ struct SermonListView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color(.systemGray6))
+                        .background(Color.adaptiveSecondaryBackground)
                         .cornerRadius(10)
                         
                         // Search results summary
@@ -488,7 +488,7 @@ struct SermonListView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
-                    .background(Color(.systemBackground))
+                    .background(Color.adaptiveBackground)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
                 
@@ -497,11 +497,11 @@ struct SermonListView: View {
                     VStack(spacing: 16) {
                         ProgressView()
                             .scaleEffect(1.2)
-                            .progressViewStyle(CircularProgressViewStyle(tint: .accentColor))
+                            .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
                         
                         Text("Loading sermons...")
                             .font(.headline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onAppear {
@@ -546,12 +546,12 @@ struct SermonListView: View {
                         HStack {
                             Text("Sorted by: \(sortOrder.rawValue)")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                             Spacer()
                             let displayCount = sermonService.searchText.isEmpty ? sermonService.sermons.count : sermonService.filteredSermons.count
                             Text("\(displayCount) sermon\(displayCount == 1 ? "" : "s")\(sermonService.searchText.isEmpty ? "" : " found")")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                             
                             // Sort button
                             Button(action: {
@@ -559,13 +559,13 @@ struct SermonListView: View {
                             }) {
                                 Image(systemName: "arrow.up.arrow.down")
                                     .font(.caption)
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(.adaptiveAccent)
                                     .padding(.leading, 8)
                             }
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(Color(.systemBackground))
+                        .background(Color.adaptiveBackground)
                         
                                                  // Native List for proper swipe actions
                 List {
@@ -577,16 +577,16 @@ struct SermonListView: View {
                                          Text(dateString)
                                 .font(.headline)
                                              .fontWeight(.semibold)
-                                             .foregroundColor(.primary)
+                                             .foregroundColor(.adaptivePrimaryText)
                                          
                                          Spacer()
                                          
                                          Text("\(sermons.count)")
                                              .font(.caption)
-                                             .foregroundColor(.secondary)
+                                             .foregroundColor(.adaptiveSecondaryText)
                                              .padding(.horizontal, 8)
                                              .padding(.vertical, 8)
-                                             .background(Color(.systemGray5))
+                                             .background(Color.adaptiveInputBackground)
                                              .cornerRadius(8)
                                      }
                                      .padding(.vertical, 2)
@@ -684,6 +684,8 @@ struct SermonListView: View {
                             }
                                                  }
                          .listStyle(PlainListStyle())
+                         .scrollContentBackground(.hidden)
+                         .background(Color.adaptiveBackground)
                          .listSectionSeparator(.hidden)
                         .refreshable {
                             // Add haptic feedback for refresh

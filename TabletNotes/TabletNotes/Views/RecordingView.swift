@@ -22,7 +22,7 @@ struct WaveformView: View {
         HStack(spacing: 4) {
             ForEach(0..<7, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(isRecording ? Color.red : Color.gray.opacity(0.3))
+                    .fill(isRecording ? Color.recordingRed : Color.adaptiveTertiaryText.opacity(0.3))
                     .frame(width: 3, height: barHeight(for: index))
                     .animation(
                         isRecording ? 
@@ -73,12 +73,12 @@ struct LoadingStateView: View {
         VStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 4)
+                    .stroke(Color.adaptiveTertiaryText.opacity(0.3), lineWidth: 4)
                     .frame(width: 50, height: 50)
                 
                 Circle()
                     .trim(from: 0, to: 0.3)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .stroke(Color.adaptiveAccent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: 50, height: 50)
                     .rotationEffect(.degrees(rotation))
                     .animation(Animation.linear(duration: 1).repeatForever(autoreverses: false), value: rotation)
@@ -87,12 +87,12 @@ struct LoadingStateView: View {
             VStack(spacing: 4) {
                 Text(title)
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.adaptivePrimaryText)
                 
                 if let subtitle = subtitle {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -185,11 +185,11 @@ struct RecordingView: View {
     // Computed properties for the main button
     private var buttonColor: Color {
         if !isRecordingStarted {
-            return .red
+            return .recordingRed
         } else if isPaused {
-            return .green
+            return .successGreen
         } else {
-            return .orange
+            return .warningOrange
         }
     }
     
@@ -206,6 +206,9 @@ struct RecordingView: View {
     var body: some View {
         #if canImport(AVFoundation) && os(iOS)
         ZStack {
+            Color.recordingBackground
+                .ignoresSafeArea()
+            
             VStack(spacing: 0) {
                 HeaderView(title: "Recording", showLogo: true, showSearch: false, showSyncStatus: false, showBack: false)
                 
@@ -243,7 +246,7 @@ struct RecordingView: View {
                     // Timer
                     Text(timeString(from: elapsedTime))
                         .font(.system(size: 18, weight: .medium, design: .monospaced))
-                        .foregroundColor(isRecordingStarted ? .red : .primary)
+                        .foregroundColor(isRecordingStarted ? .recordingRed : .adaptivePrimaryText)
                     
                     // Stop button (when recording)
                     if isRecordingStarted {
@@ -805,9 +808,6 @@ struct RecordingView: View {
                         summaryStatus: "processing",
                         userId: currentUser.id
                     )
-                    
-                    // Clear the recording session notes since they're now saved in the sermon
-                    noteService.clearSession()
                     
                     onNext?(callbackSermon)
                 }

@@ -6,6 +6,7 @@
 //
 
 import Testing
+import SwiftData
 @testable import TabletNotes
 
 struct TabletNotesTests {

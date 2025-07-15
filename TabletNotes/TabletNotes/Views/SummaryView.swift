@@ -109,6 +109,10 @@ struct SummaryView: View {
             return
         }
         sermonService.saveSermon(title: title, audioFileURL: audioFileURL, date: date, serviceType: serviceType, speaker: nil, transcript: transcript, notes: notes, summary: summaryModel)
+        
+        // Clear the session notes after successfully saving to sermon
+        noteService.clearSession()
+        
         onNext?()
     }
 }

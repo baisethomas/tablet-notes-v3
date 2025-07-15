@@ -168,4 +168,25 @@ class SupabaseService: SupabaseServiceProtocol {
             throw URLError(.badServerResponse)
         }
     }
+
+    /// Fetches all remote sermons for a user from the Netlify API
+    func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
+        let url = URL(string: "\(apiBaseUrl)/api/get-sermons?userId=\(userId.uuidString)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        // Get authentication token
+        let session = try await supabase.auth.session
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        // Decode the array of RemoteSermonData
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let sermons = try decoder.decode([RemoteSermonData].self, from: data)
+        return sermons
+    }
 } 

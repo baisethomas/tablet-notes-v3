@@ -17,7 +17,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     @Published var isConnected = false
     @Published var error: String?
     
-    private let sampleRate: Double = 16000 // AssemblyAI requires 16kHz
+    private let sampleRate: Double = 44100 // Use higher quality audio
     
     func startLiveTranscription() async throws {
         guard !isConnected else { return }
@@ -72,7 +72,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
         urlComponents.queryItems = [
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))),
-            URLQueryItem(name: "token", value: sessionToken)
+            URLQueryItem(name: "token", value: sessionToken),
+            URLQueryItem(name: "encoding", value: "pcm_f32le"),
+            URLQueryItem(name: "word_boost", value: "['sermon','church','bible','scripture','jesus','christ','god','lord','faith','prayer','worship','ministry','pastor','preacher','congregation','salvation','grace','mercy','gospel','holy','spirit','heaven','blessing','amen','hallelujah']"),
+            URLQueryItem(name: "boost_param", value: "high")
         ]
         
         guard let url = urlComponents.url else {
@@ -112,10 +115,12 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                     if response.messageType == "PartialTranscript" {
                         // Update with partial transcript
                         let partialText = response.text ?? ""
+                        print("[AssemblyAI Live] Partial: '\(partialText)' (confidence: \(response.confidence ?? 0))")
                         self.transcriptSubject.send(self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText))
                     } else if response.messageType == "FinalTranscript" {
                         // Add to full transcript
                         if let finalText = response.text, !finalText.isEmpty {
+                            print("[AssemblyAI Live] Final: '\(finalText)' (confidence: \(response.confidence ?? 0))")
                             if self.fullTranscript.isEmpty {
                                 self.fullTranscript = finalText
                             } else {
@@ -139,8 +144,8 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
         
-        // Convert to the format AssemblyAI expects (16kHz, 16-bit PCM)
-        guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, 
+        // Convert to high-quality format for better transcription
+        guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, 
                                              sampleRate: sampleRate, 
                                              channels: 1, 
                                              interleaved: false) else {
@@ -151,7 +156,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             throw NSError(domain: "AudioConverterError", code: 1, userInfo: nil)
         }
         
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             
             // Convert audio format
@@ -175,10 +180,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.int16ChannelData?[0] else { return }
+        guard let channelData = buffer.floatChannelData?[0] else { return }
         
         let frameLength = Int(buffer.frameLength)
-        let data = Data(bytes: channelData, count: frameLength * 2) // 2 bytes per sample for 16-bit
+        let data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
         
         let base64String = data.base64EncodedString()
         let message = ["audio_data": base64String]

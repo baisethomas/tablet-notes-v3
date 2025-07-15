@@ -237,9 +237,12 @@ class SyncService: SyncServiceProtocol {
 extension SyncService {
     
     private func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
-        // This would call your Netlify function to fetch sermons
-        // For now, return empty array - implement based on your API
-        return []
+        // Use SupabaseService to make authenticated request to Netlify endpoint
+        guard let supabaseService = self.supabaseService as? SupabaseService else {
+            throw SyncError.networkError
+        }
+        let sermons = try await supabaseService.fetchRemoteSermons(for: userId)
+        return sermons
     }
     
     private func createRemoteSermon(data: SermonSyncData) async throws -> String {
@@ -291,7 +294,7 @@ struct SermonSyncData {
     let updatedAt: Date
 }
 
-struct RemoteSermonData {
+struct RemoteSermonData: Codable {
     let id: String // Remote ID
     let localId: UUID
     let title: String
