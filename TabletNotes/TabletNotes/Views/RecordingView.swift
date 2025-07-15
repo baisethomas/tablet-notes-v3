@@ -269,7 +269,7 @@ struct RecordingView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(.systemGray6).opacity(0.3))
+                .background(Color.adaptiveSecondaryBackground.opacity(0.3))
                 .animation(.spring(response: 0.5, dampingFraction: 0.8), value: isRecordingStarted)
                 
                 // Live transcript area
@@ -279,17 +279,17 @@ struct RecordingView: View {
                             VStack(spacing: 16) {
                                 Image(systemName: "text.bubble")
                                     .font(.system(size: 48))
-                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .foregroundColor(.adaptiveSecondaryText.opacity(0.5))
                                 
                                 VStack(spacing: 8) {
                                     Text("Live Transcript")
                                         .font(.title2)
                                         .fontWeight(.semibold)
-                                        .foregroundColor(.primary)
+                                        .foregroundColor(.adaptivePrimaryText)
                                     
                                     Text(isRecordingStarted ? "Start speaking to see live transcription..." : "Tap record to begin")
                                         .font(.subheadline)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.adaptiveSecondaryText)
                                         .multilineTextAlignment(.center)
                                 }
                             }
@@ -299,29 +299,31 @@ struct RecordingView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
                                     Image(systemName: "text.bubble.fill")
-                                        .foregroundColor(.accentColor)
+                                        .foregroundColor(.adaptiveAccent)
                                     Text("Live Transcript")
                                         .font(.headline)
                                         .fontWeight(.semibold)
+                                        .foregroundColor(.adaptivePrimaryText)
                                     Spacer()
                                     Text("Live")
                                         .font(.caption)
                                         .fontWeight(.medium)
-                                        .foregroundColor(.green)
+                                        .foregroundColor(.successGreen)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.green.opacity(0.1))
+                                        .background(Color.successGreen.opacity(0.1))
                                         .cornerRadius(8)
                                 }
                                 
                                 Text(transcript)
                                     .font(.body)
+                                    .foregroundColor(.adaptivePrimaryText)
                                     .lineSpacing(4)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .textSelection(.enabled)
                             }
                             .padding()
-                            .background(Color(.systemBackground))
+                            .background(Color.transcriptionBackground)
                             .cornerRadius(12)
                             .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
                         }
@@ -331,14 +333,14 @@ struct RecordingView: View {
                             HStack(spacing: 12) {
                                 ProgressView()
                                     .scaleEffect(0.8)
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .accentColor))
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
                                 Text("Processing final transcript...")
                                     .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(.adaptiveSecondaryText)
                                 Spacer()
                             }
                             .padding()
-                            .background(Color(.systemGray6).opacity(0.5))
+                            .background(Color.adaptiveSecondaryBackground.opacity(0.5))
                             .cornerRadius(12)
                             .transition(.opacity.combined(with: .scale))
                         }
@@ -346,19 +348,20 @@ struct RecordingView: View {
                         if let error = transcriptProcessingError {
                             HStack(spacing: 12) {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.orange)
+                                    .foregroundColor(.warningOrange)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Processing Failed")
                                         .font(.subheadline)
                                         .fontWeight(.medium)
+                                        .foregroundColor(.adaptivePrimaryText)
                                     Text(error)
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.adaptiveSecondaryText)
                                 }
                                 Spacer()
                             }
                             .padding()
-                            .background(Color.orange.opacity(0.1))
+                            .background(Color.warningOrange.opacity(0.1))
                             .cornerRadius(12)
                             .transition(.opacity.combined(with: .scale))
                         }
@@ -366,7 +369,7 @@ struct RecordingView: View {
                     .padding()
                     .padding(.bottom, 100)
                 }
-                .background(Color(.systemGroupedBackground))
+                .background(Color.adaptiveBackground)
             }
             
             // Floating Action Button for notes
@@ -381,7 +384,7 @@ struct RecordingView: View {
                     }) {
                         ZStack {
                             Circle()
-                                .fill(Color.accentColor)
+                                .fill(Color.adaptiveAccent)
                                 .frame(width: 56, height: 56)
                                 .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                             
@@ -392,7 +395,7 @@ struct RecordingView: View {
                             // Badge for note count
                             if !notes.isEmpty {
                                 Circle()
-                                    .fill(Color.red)
+                                    .fill(Color.recordingRed)
                                     .frame(width: 20, height: 20)
                                     .overlay(
                                         Text("\(notes.count)")
@@ -445,14 +448,15 @@ struct RecordingView: View {
                         // Clean minimal header
                         HStack {
                             Image(systemName: "note.text")
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(.adaptiveAccent)
                             Text("Notes")
                                 .font(.headline)
                                 .fontWeight(.semibold)
+                                .foregroundColor(.adaptivePrimaryText)
                             Spacer()
                             Text(timeString(from: elapsedTime))
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                         }
                         .padding()
                         
@@ -470,8 +474,8 @@ struct RecordingView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color(.systemGray5))
-                            .foregroundColor(.primary)
+                            .background(Color.adaptiveSecondaryBackground)
+                            .foregroundColor(.adaptivePrimaryText)
                             .cornerRadius(12)
                             
                             Button("Save") {
@@ -491,7 +495,7 @@ struct RecordingView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color.accentColor)
+                            .background(Color.adaptiveAccent)
                             .foregroundColor(.white)
                             .cornerRadius(12)
                         }
@@ -525,16 +529,17 @@ struct RecordingView: View {
                     VStack(spacing: 8) {
                         Image(systemName: "book.closed")
                             .font(.largeTitle)
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.adaptiveAccent)
                         Text(ref.raw)
                             .font(.title2)
                             .fontWeight(.bold)
+                            .foregroundColor(.adaptivePrimaryText)
                         Text("Scripture Reference Detected")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                     }
                     .padding()
-                    .background(Color.accentColor.opacity(0.1))
+                    .background(Color.adaptiveAccent.opacity(0.1))
                     .cornerRadius(16)
                     
                     // Context
@@ -542,10 +547,12 @@ struct RecordingView: View {
                         Text("Context")
                             .font(.headline)
                             .fontWeight(.semibold)
+                            .foregroundColor(.adaptivePrimaryText)
                         Text(ref.raw) // Display scripture reference
                             .font(.body)
+                            .foregroundColor(.adaptivePrimaryText)
                             .padding()
-                            .background(Color(.systemGray6))
+                            .background(Color.adaptiveSecondaryBackground)
                             .cornerRadius(12)
                     }
                     
@@ -561,7 +568,7 @@ struct RecordingView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Color.accentColor)
+                    .background(Color.adaptiveAccent)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                     .padding()
@@ -581,7 +588,7 @@ struct RecordingView: View {
         #else
         VStack {
             Text("Recording is not available on this platform")
-                .foregroundColor(.secondary)
+                .foregroundColor(.adaptiveSecondaryText)
         }
         #endif
     }

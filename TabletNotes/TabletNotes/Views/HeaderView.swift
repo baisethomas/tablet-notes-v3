@@ -38,7 +38,7 @@ struct HeaderView: View {
                 Button(action: { onBack?() }) {
                     Image(systemName: "chevron.left")
                         .font(.title2)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.adaptiveAccent)
                         .accessibilityLabel("Back")
                 }
                 .padding(.trailing, 8)
@@ -53,7 +53,7 @@ struct HeaderView: View {
             }
             Text(title)
                 .font(.system(size: 24, weight: .bold, design: .rounded))
-                .foregroundColor(.primary)
+                .foregroundColor(.adaptivePrimaryText)
                 .accessibilityAddTraits(.isHeader)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -62,11 +62,11 @@ struct HeaderView: View {
                 Button(action: { onSearch?() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(hex: "#F7F7F7"))
+                            .fill(Color.adaptiveInputBackground)
                             .frame(width: 40, height: 40)
                         Image(systemName: "magnifyingglass")
                             .font(.title2)
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.adaptiveAccent)
                             .accessibilityLabel("Search")
                     }
                 }
@@ -75,7 +75,7 @@ struct HeaderView: View {
                 Button(action: { onSyncStatus?() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(hex: "#F7F7F7"))
+                            .fill(Color.adaptiveInputBackground)
                             .frame(width: 40, height: 40)
                         
                         if syncStatus == .syncing {
@@ -96,7 +96,7 @@ struct HeaderView: View {
         .padding(.horizontal)
         .padding(.top, 12)
         .padding(.bottom, 4)
-        .background(Color.white.opacity(0.95))
+        .background(Color.navigationBackground)
     }
     
     private var syncStatusIcon: String {
@@ -117,15 +117,15 @@ struct HeaderView: View {
     private var syncStatusColor: Color {
         switch syncStatus {
         case .synced:
-            return .green
+            return .successGreen
         case .syncing:
-            return .orange
+            return .warningOrange
         case .error:
-            return .red
+            return .recordingRed
         case .localOnly:
-            return .gray
+            return .adaptiveSecondaryText
         case .offline:
-            return .secondary
+            return .adaptiveSecondaryText
         }
     }
     
