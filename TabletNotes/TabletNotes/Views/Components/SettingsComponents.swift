@@ -10,13 +10,13 @@ struct SettingsSection<Content: View>: View {
             Text(title)
                 .font(.headline)
                 .fontWeight(.semibold)
-                .foregroundColor(.primary)
+                .foregroundColor(.adaptivePrimaryText)
                 .padding(.horizontal, 16)
             
             VStack(spacing: 0) {
                 content()
             }
-            .background(Color.white)
+            .background(Color.adaptiveCardBackground)
             .cornerRadius(12)
             .padding(.horizontal, 16)
         }
@@ -42,19 +42,19 @@ struct SettingsRow<Content: View>: View {
             // Icon
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(.accentColor)
+                .foregroundColor(.adaptiveAccent)
                 .frame(width: 24, height: 24)
             
             // Title and subtitle
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.adaptivePrimaryText)
                 
                 if let subtitle = subtitle {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .lineLimit(2)
                 }
             }
@@ -66,7 +66,7 @@ struct SettingsRow<Content: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.white)
+        .background(Color.adaptiveCardBackground)
     }
 }
 

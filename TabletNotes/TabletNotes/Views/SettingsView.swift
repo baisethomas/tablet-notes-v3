@@ -327,7 +327,7 @@ struct SettingsView: View {
                 .padding(.vertical, 24)
             }
         }
-        .background(Color(red: 0.97, green: 0.97, blue: 0.97))
+        .background(Color.adaptiveBackground)
         .alert("Reset Settings", isPresented: $showingResetAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Reset", role: .destructive) {
@@ -445,7 +445,7 @@ struct FeatureRow: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(.accentColor)
+                .foregroundColor(.adaptiveAccent)
                 .frame(width: 24, height: 24)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -482,7 +482,7 @@ struct CloudSyncSettingRow: View {
             HStack(spacing: 12) {
                 Image(systemName: "icloud")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.adaptiveAccent)
                     .frame(width: 24, height: 24)
                 
                 VStack(alignment: .leading, spacing: 2) {
@@ -503,7 +503,7 @@ struct CloudSyncSettingRow: View {
                     }) {
                         Text("Sync Now")
                             .font(.caption)
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.adaptiveAccent)
                     }
                 } else {
                     Button(action: {
@@ -511,7 +511,7 @@ struct CloudSyncSettingRow: View {
                     }) {
                         Text("Upgrade")
                             .font(.caption)
-                            .foregroundColor(.orange)
+                            .foregroundColor(.warningOrange)
                     }
                 }
             }
@@ -522,11 +522,11 @@ struct CloudSyncSettingRow: View {
                         HStack {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.orange)
+                        .foregroundColor(.warningOrange)
                     
                     Text("Sync requires a paid subscription")
                         .font(.caption2)
-                        .foregroundColor(.orange)
+                        .foregroundColor(.warningOrange)
                     
                             Spacer()
                 }
@@ -561,7 +561,7 @@ struct SubscriptionPromptView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "crown.fill")
                             .font(.system(size: 48))
-                            .foregroundColor(.orange)
+                            .foregroundColor(.warningOrange)
                         
                         Text("Upgrade to Pro")
                             .font(.title)
@@ -647,7 +647,7 @@ struct CurrentPlanStatusView: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: user.isPaidUser ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(user.isPaidUser ? .green : .gray)
+                    .foregroundColor(user.isPaidUser ? .successGreen : .adaptiveSecondaryText)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Current Plan")
@@ -666,7 +666,7 @@ struct CurrentPlanStatusView: View {
                     .foregroundColor(.secondary)
             }
             .padding(16)
-            .background(Color.gray.opacity(0.1))
+            .background(Color.adaptiveCardBackground)
             .cornerRadius(12)
             
             // Usage limits for free users
@@ -722,7 +722,7 @@ struct UsageLimitsView: View {
             }
         }
         .padding(12)
-        .background(Color.orange.opacity(0.1))
+        .background(Color.warningOrange.opacity(0.1))
         .cornerRadius(8)
     }
 }
@@ -777,7 +777,7 @@ struct UsageBarView: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Rectangle()
-                        .fill(Color.gray.opacity(0.2))
+                        .fill(Color.adaptiveSecondaryBackground.opacity(0.5))
                         .frame(height: 4)
                         .cornerRadius(2)
                     
@@ -810,11 +810,11 @@ struct UsageBarView: View {
         }
         
         if progress >= 0.9 {
-            return .red
+            return .recordingRed
         } else if progress >= 0.7 {
-            return .orange
+            return .warningOrange
         } else {
-            return .blue
+            return .adaptiveAccent
         }
     }
 }
@@ -886,7 +886,7 @@ struct FeatureComparisonRow: View {
         HStack(spacing: 12) {
             Image(systemName: feature.icon)
                 .font(.system(size: 16))
-                .foregroundColor(.accentColor)
+                .foregroundColor(.adaptiveAccent)
                 .frame(width: 24, height: 24)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -903,15 +903,15 @@ struct FeatureComparisonRow: View {
             
             HStack(spacing: 16) {
                 Image(systemName: freeTier ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundColor(freeTier ? .green : .gray)
+                    .foregroundColor(freeTier ? .successGreen : .adaptiveSecondaryText)
                     .font(.caption)
                 
                 Image(systemName: proTier ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundColor(proTier ? .green : .gray)
+                    .foregroundColor(proTier ? .successGreen : .adaptiveSecondaryText)
                     .font(.caption)
                 
                 Image(systemName: premiumTier ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundColor(premiumTier ? .green : .gray)
+                    .foregroundColor(premiumTier ? .successGreen : .adaptiveSecondaryText)
                     .font(.caption)
             }
         }
@@ -960,7 +960,7 @@ struct LivePricingCard: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
-                    .background(Color.accentColor)
+                    .background(Color.adaptiveAccent)
                     .cornerRadius(8)
             }
             
@@ -982,7 +982,7 @@ struct LivePricingCard: View {
                 if let savings = plan.annualSavings {
                     Text(savings)
                         .font(.caption)
-                        .foregroundColor(.green)
+                        .foregroundColor(.successGreen)
                         .fontWeight(.semibold)
                 }
             }
@@ -992,7 +992,7 @@ struct LivePricingCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundColor(.green)
+                            .foregroundColor(.successGreen)
                         
                         Text(feature.displayName)
                             .font(.caption)
@@ -1028,18 +1028,18 @@ struct LivePricingCard: View {
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(subscriptionService.isProductPurchased(product) ? Color.green : Color.accentColor)
+                .background(subscriptionService.isProductPurchased(product) ? Color.successGreen : Color.adaptiveAccent)
                 .cornerRadius(8)
             }
             .disabled(isPurchasing || subscriptionService.isProductPurchased(product))
         }
         .padding(16)
-        .background(Color.white)
+        .background(Color.adaptiveCardBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(plan.isPopular ? Color.accentColor : Color.clear, lineWidth: 2)
+                .stroke(plan.isPopular ? Color.adaptiveAccent : Color.clear, lineWidth: 2)
         )
     }
 }
@@ -1063,7 +1063,7 @@ struct StaticPricingCard: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
-                    .background(Color.accentColor)
+                    .background(Color.adaptiveAccent)
                     .cornerRadius(8)
             }
             
@@ -1085,7 +1085,7 @@ struct StaticPricingCard: View {
                 if let savings = plan.annualSavings {
                     Text(savings)
                         .font(.caption)
-                        .foregroundColor(.green)
+                        .foregroundColor(.successGreen)
                             .fontWeight(.semibold)
                 }
             }
@@ -1095,7 +1095,7 @@ struct StaticPricingCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundColor(.green)
+                            .foregroundColor(.successGreen)
                         
                         Text(feature.displayName)
                             .font(.caption)
@@ -1120,18 +1120,18 @@ struct StaticPricingCard: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
-                    .background(Color.gray)
+                    .background(Color.adaptiveSecondaryBackground)
                     .cornerRadius(8)
             }
             .disabled(true)
         }
         .padding(16)
-        .background(Color.white)
+        .background(Color.adaptiveCardBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(isRecommended ? Color.accentColor : Color.clear, lineWidth: 2)
+                .stroke(isRecommended ? Color.adaptiveAccent : Color.clear, lineWidth: 2)
         )
     }
 }
@@ -1148,7 +1148,7 @@ struct BibleTranslationSettingRow: View {
             HStack(spacing: 12) {
                 Image(systemName: "book.closed")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.adaptiveAccent)
                     .frame(width: 24, height: 24)
                 
                 VStack(alignment: .leading, spacing: 2) {
@@ -1211,7 +1211,7 @@ struct BibleTranslationSelectionView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.largeTitle)
-                            .foregroundColor(.orange)
+                            .foregroundColor(.warningOrange)
                         Text("No Bible translations available")
                             .font(.headline)
                         Text("Please check your internet connection and try again.")
@@ -1238,7 +1238,7 @@ struct BibleTranslationSelectionView: View {
                                             
                                             if translation.id == selectedTranslation.id {
                                                 Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundColor(.accentColor)
+                                                    .foregroundColor(.adaptiveAccent)
                                             }
                                         }
                                         
@@ -1332,7 +1332,7 @@ struct TranscriptionProviderPicker: View {
                         Text(provider.rawValue)
                         if provider.requiresPremium && !hasLiveTranscriptionAccess {
                             Image(systemName: "crown.fill")
-                                .foregroundColor(.orange)
+                                .foregroundColor(.warningOrange)
                                 .font(.caption2)
                         }
                     }

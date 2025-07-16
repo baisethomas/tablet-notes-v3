@@ -25,7 +25,7 @@ struct AccountView: View {
                     Button(action: onBack) {
                         Image(systemName: "chevron.left")
                             .font(.title2)
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.adaptiveAccent)
                     }
                     
                     Spacer()
@@ -33,6 +33,7 @@ struct AccountView: View {
                     Text("Account")
                         .font(.title2)
                         .fontWeight(.semibold)
+                        .foregroundColor(.adaptivePrimaryText)
                     
                     Spacer()
                     
@@ -42,7 +43,7 @@ struct AccountView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(.systemBackground))
+                .background(Color.navigationBackground)
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -51,22 +52,23 @@ struct AccountView: View {
                             // Profile picture and basic info
                             VStack(spacing: 12) {
                                 Circle()
-                                    .fill(Color.accentColor.opacity(0.1))
+                                    .fill(Color.adaptiveAccent.opacity(0.1))
                                     .frame(width: 80, height: 80)
                                     .overlay(
                                         Image(systemName: "person.fill")
                                             .font(.system(size: 36))
-                                            .foregroundColor(.accentColor)
+                                            .foregroundColor(.adaptiveAccent)
                                     )
                                 
                                 VStack(spacing: 4) {
                                     Text(currentUser?.name ?? "User")
                                         .font(.title2)
                                         .fontWeight(.semibold)
+                                        .foregroundColor(.adaptivePrimaryText)
                                     
                                     Text(currentUser?.email ?? "user@example.com")
                                         .font(.subheadline)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.adaptiveSecondaryText)
                                     
                                     if let user = currentUser {
                                         HStack(spacing: 8) {
@@ -74,30 +76,30 @@ struct AccountView: View {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "checkmark.seal.fill")
                                                         .font(.caption)
-                                                        .foregroundColor(.green)
+                                                        .foregroundColor(.successGreen)
                                                     Text("Verified")
                                                         .font(.caption)
-                                                        .foregroundColor(.green)
+                                                        .foregroundColor(.successGreen)
                                                 }
                                             } else {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "exclamationmark.triangle.fill")
                                                         .font(.caption)
-                                                        .foregroundColor(.orange)
+                                                        .foregroundColor(.warningOrange)
                                                     Text("Verify Email")
                                                         .font(.caption)
-                                                        .foregroundColor(.orange)
+                                                        .foregroundColor(.warningOrange)
                                                 }
                                             }
                                             
                                             Text("•")
                                                 .font(.caption)
-                                                .foregroundColor(.secondary)
+                                                .foregroundColor(.adaptiveSecondaryText)
                                             
                                             Text(user.subscriptionTier.capitalized)
                                                 .font(.caption)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.secondary)
+                                                .foregroundColor(.adaptiveSecondaryText)
                                         }
                                         .padding(.top, 4)
                                     }
@@ -107,15 +109,15 @@ struct AccountView: View {
                                     showingEditProfile = true
                                 }
                                 .font(.subheadline)
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(.adaptiveAccent)
                             }
                             .padding(.vertical, 20)
                             .frame(maxWidth: .infinity)
-                            .background(Color(.systemBackground))
+                            .background(Color.adaptiveCardBackground)
                             .cornerRadius(12)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color(.systemGray5), lineWidth: 1)
+                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
                             )
                         }
                         
@@ -154,11 +156,11 @@ struct AccountView: View {
                                     // Handle data export
                                 }
                             }
-                            .background(Color(.systemBackground))
+                            .background(Color.adaptiveCardBackground)
                             .cornerRadius(12)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color(.systemGray5), lineWidth: 1)
+                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
                             )
                         }
                         
@@ -208,11 +210,11 @@ struct AccountView: View {
                                     // Handle feedback
                                 }
                             }
-                            .background(Color(.systemBackground))
+                            .background(Color.adaptiveCardBackground)
                             .cornerRadius(12)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color(.systemGray5), lineWidth: 1)
+                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
                             )
                         }
                         
@@ -251,11 +253,11 @@ struct AccountView: View {
                                     showingAbout = true
                                 }
                             }
-                            .background(Color(.systemBackground))
+                            .background(Color.adaptiveCardBackground)
                             .cornerRadius(12)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color(.systemGray5), lineWidth: 1)
+                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
                             )
                         }
                         
@@ -272,11 +274,11 @@ struct AccountView: View {
                                     onNavigateToSettings?()
                                 }
                             }
-                            .background(Color(.systemBackground))
+                            .background(Color.adaptiveCardBackground)
                             .cornerRadius(12)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color(.systemGray5), lineWidth: 1)
+                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
                             )
                         }
                         
@@ -290,30 +292,30 @@ struct AccountView: View {
                                 HStack {
                                     if isSigningOut {
                                         ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .red))
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .recordingRed))
                                             .scaleEffect(0.8)
                                             .frame(width: 24, height: 24)
                                     } else {
                                         Image(systemName: "arrow.right.square")
                                             .font(.title3)
-                                            .foregroundColor(.red)
+                                            .foregroundColor(.recordingRed)
                                             .frame(width: 24, height: 24)
                                     }
                                     
                                     Text(isSigningOut ? "Signing Out..." : "Sign Out")
                                         .font(.body)
                                         .fontWeight(.medium)
-                                        .foregroundColor(.red)
+                                        .foregroundColor(.recordingRed)
                                     
                                     Spacer()
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 16)
-                                .background(Color(.systemBackground))
+                                .background(Color.adaptiveCardBackground)
                                 .cornerRadius(12)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color(.systemGray5), lineWidth: 1)
+                                        .stroke(Color.adaptiveBorder, lineWidth: 1)
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -324,11 +326,11 @@ struct AccountView: View {
                         VStack(spacing: 8) {
                             Text("TabletNotes")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                             
                             Text(AppVersion.shortVersion)
                                 .font(.caption2)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                         }
                         .padding(.top, 20)
                         .padding(.bottom, 100) // Extra padding for footer
@@ -336,10 +338,10 @@ struct AccountView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
                 }
-                .background(Color(.systemGroupedBackground))
+                .background(Color.adaptiveBackground)
             }
             .navigationBarHidden(true)
-            .background(Color(.systemGroupedBackground))
+            .background(Color.adaptiveBackground)
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showingEditProfile) {
@@ -404,7 +406,7 @@ struct AccountSectionHeader: View {
             Text(title)
                 .font(.headline)
                 .fontWeight(.semibold)
-                .foregroundColor(.primary)
+                .foregroundColor(.adaptivePrimaryText)
             
             Spacer()
         }
@@ -425,25 +427,25 @@ struct AccountRowView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.title3)
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.adaptiveAccent)
                     .frame(width: 24, height: 24)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.body)
                         .fontWeight(.medium)
-                        .foregroundColor(.primary)
+                        .foregroundColor(.adaptivePrimaryText)
                     
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                 }
                 
                 Spacer()
                 
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.adaptiveSecondaryText)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
