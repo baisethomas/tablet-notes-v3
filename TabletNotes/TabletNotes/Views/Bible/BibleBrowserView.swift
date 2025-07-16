@@ -320,10 +320,10 @@ struct BibleBrowserView: View {
             do {
                 let content: String
                 if reference.isRange {
-                    let passage = try await bibleService.fetchPassage(reference: reference, bibleId: selectedBibleId)
+                    let passage = try await bibleService.fetchPassage(reference: reference.displayText, bibleId: selectedBibleId)
                     content = cleanScriptureContent(passage.content)
                 } else {
-                    let verse = try await bibleService.fetchVerse(reference: reference, bibleId: selectedBibleId)
+                    let verse = try await bibleService.fetchVerse(reference: reference.displayText, bibleId: selectedBibleId)
                     content = cleanScriptureContent(verse.content)
                 }
                 
