@@ -10,11 +10,11 @@ struct SplashView: View {
     
     var body: some View {
         ZStack {
-            // Background gradient
+            // Background gradient (adaptive for dark mode)
             LinearGradient(
                 gradient: Gradient(colors: [
-                    Color.accentColor.opacity(0.1),
-                    Color.white
+                    Color.adaptiveBackground,
+                    Color.adaptiveSecondaryBackground
                 ]),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -27,14 +27,14 @@ struct SplashView: View {
                 // App Logo
                 VStack(spacing: 20) {
                     ZStack {
-                        // Enhanced logo background
+                        // Enhanced logo background (adaptive)
                         Circle()
-                            .fill(Color.white)
+                            .fill(Color.adaptiveCardBackground)
                             .frame(width: 140, height: 140)
                             .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
                         
                         Circle()
-                            .fill(Color.accentColor.opacity(0.05))
+                            .fill(Color.adaptiveAccent.opacity(0.05))
                             .frame(width: 130, height: 130)
                         
                         Image("AppLogo")
@@ -49,13 +49,13 @@ struct SplashView: View {
                     // App Name
                     Text("TabletNotes")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.adaptivePrimaryText)
                         .opacity(textOpacity)
                     
                     // Tagline
                     Text("AI-Powered Sermon Transcription")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .opacity(textOpacity)
                         .multilineTextAlignment(.center)
                 }
@@ -65,13 +65,13 @@ struct SplashView: View {
                 // Loading indicator
                 VStack(spacing: 16) {
                     ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .accentColor))
+                        .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
                         .scaleEffect(1.2)
                         .opacity(textOpacity)
                     
                     Text("Loading...")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .opacity(textOpacity)
                 }
                 .padding(.bottom, 50)
@@ -113,14 +113,14 @@ struct MinimalSplashView: View {
     
     var body: some View {
         ZStack {
-            Color.white
+            Color.adaptiveBackground
                 .ignoresSafeArea()
             
             VStack(spacing: 24) {
                 ZStack {
-                    // Simple background for logo
+                    // Simple background for logo (adaptive)
                     RoundedRectangle(cornerRadius: 25)
-                        .fill(Color.accentColor.opacity(0.08))
+                        .fill(Color.adaptiveCardBackground)
                         .frame(width: 110, height: 110)
                     
                     Image("AppLogo")
@@ -134,7 +134,7 @@ struct MinimalSplashView: View {
                 
                 Text("TabletNotes")
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.adaptivePrimaryText)
                     .opacity(logoOpacity)
             }
         }
@@ -160,15 +160,15 @@ struct BrandSplashView: View {
     @State private var backgroundOpacity: Double = 0.0
     
     let onComplete: () -> Void
-    
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         ZStack {
-            // Animated background
+            // Animated background (adaptive radial gradient)
             RadialGradient(
                 gradient: Gradient(colors: [
-                    Color.accentColor.opacity(0.2),
-                    Color.accentColor.opacity(0.05),
-                    Color.white
+                    colorScheme == .dark ? Color.navyDarkPrimary.opacity(0.9) : Color.navyDarkPrimary.opacity(0.2),
+                    colorScheme == .dark ? Color.navyDarkSecondary.opacity(0.7) : Color.navyDarkSecondary.opacity(0.05),
+                    Color.adaptiveBackground
                 ]),
                 center: .center,
                 startRadius: 50,
@@ -182,56 +182,41 @@ struct BrandSplashView: View {
                 ZStack {
                     // Fallback background circle if image doesn't load
                     Circle()
-                        .fill(Color.accentColor.opacity(0.1))
+                        .fill(Color.adaptiveCardBackground)
                         .frame(width: 120, height: 120)
                         .overlay(
                             Circle()
-                                .stroke(Color.accentColor.opacity(0.3), lineWidth: 2)
+                                .stroke(Color.adaptiveAccent.opacity(0.3), lineWidth: 2)
                         )
                     
                     // App Logo
-                    Group {
-                        if let logoImage = UIImage(named: "AppLogo") {
-                            Image(uiImage: logoImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 100, height: 100)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
-                        } else {
-                            // Fallback if image doesn't load
-                            VStack(spacing: 8) {
-                                Image(systemName: "doc.text.fill")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.accentColor)
-                                Text("TN")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.accentColor)
-                            }
-                            .frame(width: 100, height: 100)
-                        }
-                    }
+                    Image("AppLogo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 100, height: 100)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
                 }
                 .offset(y: logoOffset)
                 .opacity(logoOpacity)
-                .shadow(color: .accentColor.opacity(0.4), radius: 20, x: 0, y: 10)
+                .shadow(color: .adaptiveAccent.opacity(0.4), radius: 20, x: 0, y: 10)
                 
                 // Brand text
                 VStack(spacing: 12) {
                     Text("TabletNotes")
                         .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.adaptivePrimaryText)
                         .offset(y: textOffset)
                         .opacity(textOpacity)
                     
                     Rectangle()
-                        .fill(Color.accentColor)
+                        .fill(Color.adaptiveAccent)
                         .frame(width: 60, height: 3)
                         .cornerRadius(1.5)
                         .opacity(textOpacity)
                     
                     Text("Record • Transcribe • Summarize")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                         .tracking(1.2)
                         .offset(y: textOffset)
                         .opacity(textOpacity)

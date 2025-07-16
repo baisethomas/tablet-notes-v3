@@ -160,17 +160,6 @@ class BibleAPIService: ObservableObject {
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         
-        // Try different reference formats and Bible IDs that might work
-        let testFormats = [
-            "JHN.3.16",     // Current format
-            "JOH.3.16",     // Alternative John abbreviation
-            "43003016",     // Numeric format (book 43, chapter 3, verse 16)
-            "John.3.16",    // Full name
-            "jhn.3.16",     // Lowercase
-            "JHN3.16",      // No separator
-            "JHN 3:16"      // Space and colon
-        ]
-        
         // Use the Berean Standard Bible ID we found in the logs
         let finalBibleId = "bba9f40183526463-01" // Berean Standard Bible (English)
         
