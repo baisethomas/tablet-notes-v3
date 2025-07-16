@@ -134,15 +134,25 @@ class BibleAPIService: ObservableObject {
     /// Fetch a specific verse or range of verses
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
-        let verseReference = formatReferenceForAPI(reference)
         
-        // Test with a known working Bible ID if the current one fails
-        let testBibleId = "de4e12af7f28f599-02" // KJV - might work better
-        let finalBibleId = useBibleId == "06125adad2d5898a-01" ? testBibleId : useBibleId
+        // For testing, try a simple known verse first
+        let testReference = "JHN.3.16" // John 3:16 - most common test verse
+        let verseReference = testReference // Override for testing
+        
+        // Use common API.Bible IDs that are more likely to work
+        let workingBibleIds = [
+            "de4e12af7f28f599-02", // KJV
+            "06125adad2d5898a-01", // ESV (original)
+            "32664dc3288a28df-02", // AMP
+            "78a9f6124f344018-01"  // NIV
+        ]
+        
+        // Try the first working Bible ID
+        let finalBibleId = workingBibleIds[0]
         
         let endpoint = "bibles/\(finalBibleId)/verses/\(verseReference)"
         
-        print("[BibleAPIService] Fetching verse: \(verseReference) from Bible: \(finalBibleId) (original: \(useBibleId))")
+        print("[BibleAPIService] TESTING with: \(verseReference) from Bible: \(finalBibleId) (original request: \(reference))")
         
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
@@ -434,37 +444,47 @@ class BibleAPIService: ObservableObject {
         let bookAbbreviation = convertBookNameToAbbreviation(book)
         print("[BibleAPIService] Converted '\(book)' to '\(bookAbbreviation)'")
         
-        let formattedReference: String
+        // Try different reference formats that are common in Bible APIs
+        let formats = [
+            "\(bookAbbreviation).\(chapter).\(verseRange)",           // Current format: JHN.3.16
+            "\(bookAbbreviation)\(chapter).\(verseRange)",            // No separator: JHN3.16
+            "\(bookAbbreviation).\(chapter):\(verseRange)",           // Colon format: JHN.3:16
+            "\(bookAbbreviation)\(chapter):\(verseRange)",            // Compact colon: JHN3:16
+            "\(bookAbbreviation.lowercased()).\(chapter).\(verseRange)" // Lowercase: jhn.3.16
+        ]
+        
+        // Use the first format for now, but this gives us options to try
+        let formattedReference = formats[0]
+        
         if verseRange.contains("-") {
-            // Range of verses: e.g., "16-18"
+            // Range of verses: e.g., "16-18" 
             let verseComponents = verseRange.components(separatedBy: "-")
             guard verseComponents.count == 2 else { return reference }
             let startVerse = verseComponents[0]
             let endVerse = verseComponents[1]
-            formattedReference = "\(bookAbbreviation).\(chapter).\(startVerse)-\(bookAbbreviation).\(chapter).\(endVerse)"
+            // For ranges, try the most common format
+            return "\(bookAbbreviation).\(chapter).\(startVerse)-\(endVerse)"
         } else {
-            // Single verse: e.g., "16"
-            formattedReference = "\(bookAbbreviation).\(chapter).\(verseRange)"
+            print("[BibleAPIService] Final formatted reference: '\(formattedReference)'")
+            return formattedReference
         }
-        
-        print("[BibleAPIService] Final formatted reference: '\(formattedReference)'")
-        return formattedReference
     }
     
     private func convertBookNameToAbbreviation(_ bookName: String) -> String {
+        // API.Bible standard book abbreviations
         let bookMapping: [String: String] = [
             // Old Testament
             "Genesis": "GEN", "Exodus": "EXO", "Leviticus": "LEV", "Numbers": "NUM", "Deuteronomy": "DEU",
             "Joshua": "JOS", "Judges": "JDG", "Ruth": "RUT", "1 Samuel": "1SA", "2 Samuel": "2SA",
             "1 Kings": "1KI", "2 Kings": "2KI", "1 Chronicles": "1CH", "2 Chronicles": "2CH",
             "Ezra": "EZR", "Nehemiah": "NEH", "Esther": "EST", "Job": "JOB", "Psalms": "PSA",
-            "Proverbs": "PRO", "Ecclesiastes": "ECC", "Song of Solomon": "SNG", "Isaiah": "ISA",
+            "Proverbs": "PRO", "Ecclesiastes": "ECC", "Song of Solomon": "SNG", "Song of Songs": "SNG", "Isaiah": "ISA",
             "Jeremiah": "JER", "Lamentations": "LAM", "Ezekiel": "EZK", "Daniel": "DAN",
             "Hosea": "HOS", "Joel": "JOL", "Amos": "AMO", "Obadiah": "OBA", "Jonah": "JON",
             "Micah": "MIC", "Nahum": "NAM", "Habakkuk": "HAB", "Zephaniah": "ZEP", "Haggai": "HAG",
             "Zechariah": "ZEC", "Malachi": "MAL",
             
-            // New Testament
+            // New Testament - try common variations
             "Matthew": "MAT", "Mark": "MRK", "Luke": "LUK", "John": "JHN", "Acts": "ACT",
             "Romans": "ROM", "1 Corinthians": "1CO", "2 Corinthians": "2CO", "Galatians": "GAL",
             "Ephesians": "EPH", "Philippians": "PHP", "Colossians": "COL", "1 Thessalonians": "1TH",
