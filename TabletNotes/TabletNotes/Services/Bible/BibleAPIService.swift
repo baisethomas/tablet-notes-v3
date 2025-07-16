@@ -14,6 +14,11 @@ struct NestedBibleResponse: Codable {
     let data: [Bible]
 }
 
+// For nested books response
+struct NestedBibleBooksResponse: Codable {
+    let data: [BibleBook]
+}
+
 struct BibleVerse: Codable, Identifiable {
     let id: String
     let orgId: String
@@ -169,7 +174,18 @@ class BibleAPIService: ObservableObject {
         // Use the Berean Standard Bible ID we found in the logs
         let finalBibleId = "bba9f40183526463-01" // Berean Standard Bible (English)
         
-        let verseReference = testFormats[0] // Test with first format
+        // Try the most common formats that might work
+        let commonFormats = [
+            "JOH.3.16",     // Alternative John abbreviation
+            "joh.3.16",     // Lowercase
+            "JOH 3:16",     // Space and colon
+            "JOH-3-16",     // Dash separator
+            "JOH_3_16",     // Underscore separator
+            "43.3.16",      // Numeric book number
+            "JOH.3.16-16"   // Range format
+        ]
+        
+        let verseReference = commonFormats[0] // Test with JOH.3.16
         
         let endpoint = "bibles/\(finalBibleId)/verses/\(verseReference)"
         
@@ -297,8 +313,17 @@ class BibleAPIService: ObservableObject {
             // Check if data field exists and is not null
             if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                let dataValue = json["data"], !(dataValue is NSNull) {
-                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
-                return bibleResponse.data
+                
+                // Try to handle nested structure like the bibles endpoint
+                if let dataDict = dataValue as? [String: Any], let booksArray = dataDict["data"] as? [[String: Any]] {
+                    print("[BibleAPIService] Found books in nested data.data structure")
+                    let nestedResponse = try JSONDecoder().decode(BibleAPIResponse<NestedBibleBooksResponse>.self, from: jsonData)
+                    return nestedResponse.data.data
+                } else {
+                    // Try regular structure
+                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
+                    return bibleResponse.data
+                }
             } else {
                 throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null books data"])
             }
