@@ -43,6 +43,7 @@ struct SplashView: View {
                             .frame(width: 110, height: 110)
                             .clipShape(RoundedRectangle(cornerRadius: 22))
                     }
+                    .frame(maxWidth: 140, maxHeight: 140) // Prevent stretching
                     .scaleEffect(logoScale)
                     .opacity(logoOpacity)
                     
@@ -129,6 +130,7 @@ struct MinimalSplashView: View {
                         .frame(width: 90, height: 90)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                 }
+                .frame(maxWidth: 110, maxHeight: 110) // Prevent stretching
                 .scaleEffect(logoScale)
                 .opacity(logoOpacity)
                 
@@ -196,6 +198,7 @@ struct BrandSplashView: View {
                         .frame(width: 100, height: 100)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                 }
+                .frame(maxWidth: 120, maxHeight: 120) // Prevent stretching
                 .offset(y: logoOffset)
                 .opacity(logoOpacity)
                 .shadow(color: .adaptiveAccent.opacity(0.4), radius: 20, x: 0, y: 10)

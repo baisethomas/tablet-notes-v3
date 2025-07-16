@@ -163,51 +163,67 @@ class BibleAPIService: ObservableObject {
         // Use the Berean Standard Bible ID we found in the logs
         let finalBibleId = "bba9f40183526463-01" // Berean Standard Bible (English)
         
-        // Try multiple formats systematically 
-        let testFormats = [
-            "JOH.3.16",     // Alternative John abbreviation
-            "joh.3.16",     // Lowercase
-            "JOH 3:16",     // Space and colon
-            "JOH-3-16",     // Dash separator
-            "JOH_3_16",     // Underscore separator
-            "43.3.16",      // Numeric book number
-            "JOH.3.16-16",  // Range format
-            "43003016",     // Numeric format (book 43, chapter 3, verse 16)
-            "John.3.16",    // Full name
-            "JOH3.16",      // No separator
-            "JOH03.16",     // Zero-padded
-            "JOH.03.16",    // Zero-padded chapter/verse
-            "JOH.003.016"   // Fully zero-padded
-        ]
-        
-        // Test each format until one works
-        for (index, format) in testFormats.enumerated() {
-            print("[BibleAPIService] Testing format \(index + 1)/\(testFormats.count): \(format)")
+        // First, get the actual books for this Bible to find the correct book ID
+        do {
+            let books = try await fetchBooks(bibleId: finalBibleId)
+            print("[BibleAPIService] Found \(books.count) books in Bible \(finalBibleId)")
             
-            let endpoint = "bibles/\(finalBibleId)/verses/\(format)"
-            
-            do {
-                let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
-                print("[BibleAPIService] SUCCESS with format: \(format)")
-                print("[BibleAPIService] Response: \(response)")
-                
-                // If we get here, this format worked!
-                let jsonData = try JSONSerialization.data(withJSONObject: response)
-                if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                   let dataValue = json["data"], !(dataValue is NSNull) {
-                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
-                    print("[BibleAPIService] Found working format: \(format)")
-                    return bibleResponse.data
-                }
-            } catch {
-                print("[BibleAPIService] Format \(format) failed: \(error)")
-                continue
+            // Find John (Gospel of John)
+            let johnBooks = books.filter { book in
+                book.name.lowercased().contains("john") && 
+                !book.name.lowercased().contains("1") && 
+                !book.name.lowercased().contains("2") && 
+                !book.name.lowercased().contains("3")
             }
+            
+            if let johnBook = johnBooks.first {
+                print("[BibleAPIService] Found John book: \(johnBook.name) (ID: \(johnBook.id))")
+                
+                // Test with the actual book ID
+                let testFormats = [
+                    "\(johnBook.id).3.16",     // Book ID format
+                    "\(johnBook.id).3:16",     // Book ID with colon
+                    "\(johnBook.id) 3:16",     // Book ID with space
+                    "\(johnBook.id)-3-16",     // Book ID with dashes
+                    "\(johnBook.id)_3_16",     // Book ID with underscores
+                    "\(johnBook.id)3.16",      // Book ID no separator
+                    "\(johnBook.id).03.16",    // Book ID zero-padded
+                    "\(johnBook.id).003.016"   // Book ID fully zero-padded
+                ]
+                
+                for (index, format) in testFormats.enumerated() {
+                    print("[BibleAPIService] Testing format \(index + 1)/\(testFormats.count): \(format)")
+                    
+                    let endpoint = "bibles/\(finalBibleId)/verses/\(format)"
+                    
+                    do {
+                        let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+                        print("[BibleAPIService] Raw response: \(response)")
+                        
+                        // Check if we got actual verse data
+                        if let json = response as? [String: Any],
+                           let dataValue = json["data"], !(dataValue is NSNull) {
+                            print("[BibleAPIService] SUCCESS! Found working format: \(format)")
+                            let jsonData = try JSONSerialization.data(withJSONObject: response)
+                            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+                            return bibleResponse.data
+                        } else {
+                            print("[BibleAPIService] Format \(format) returned null data")
+                        }
+                    } catch {
+                        print("[BibleAPIService] Format \(format) failed: \(error)")
+                        continue
+                    }
+                }
+            } else {
+                print("[BibleAPIService] Could not find John book in this Bible")
+            }
+        } catch {
+            print("[BibleAPIService] Failed to fetch books: \(error)")
         }
         
-        // If we get here, none of the formats worked
-        print("[BibleAPIService] All formats failed, using placeholder")
-        let verseReference = testFormats[0] // Fallback for logging
+        print("[BibleAPIService] All attempts failed, using placeholder")
+        let verseReference = "JOH.3.16" // Fallback for logging
         
         // Return placeholder on any error to prevent app crashes
         let placeholderVerse = BibleVerse(
