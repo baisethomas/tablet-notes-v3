@@ -135,9 +135,14 @@ class BibleAPIService: ObservableObject {
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         let verseReference = formatReferenceForAPI(reference)
-        let endpoint = "bibles/\(useBibleId)/verses/\(verseReference)"
         
-        print("[BibleAPIService] Fetching verse: \(verseReference) from Bible: \(useBibleId)")
+        // Test with a known working Bible ID if the current one fails
+        let testBibleId = "de4e12af7f28f599-02" // KJV - might work better
+        let finalBibleId = useBibleId == "06125adad2d5898a-01" ? testBibleId : useBibleId
+        
+        let endpoint = "bibles/\(finalBibleId)/verses/\(verseReference)"
+        
+        print("[BibleAPIService] Fetching verse: \(verseReference) from Bible: \(finalBibleId) (original: \(useBibleId))")
         
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
@@ -166,8 +171,8 @@ class BibleAPIService: ObservableObject {
             
             // Return placeholder on any error to prevent app crashes
             let placeholderVerse = BibleVerse(
-                id: "\(useBibleId):\(verseReference)",
-                orgId: useBibleId,
+                id: "\(finalBibleId):\(verseReference)",
+                orgId: finalBibleId,
                 bookId: "UNK",
                 chapterId: "1",
                 content: "This verse is currently unavailable. Please check your internet connection or try again later.",
@@ -279,8 +284,8 @@ class BibleAPIService: ObservableObject {
         // Provide fallback Bible translations when API fails
         return [
             Bible(
-                id: "de4e12af7f28f599-02",
-                dblId: "de4e12af7f28f599",
+                id: "06125adad2d5898a-01",
+                dblId: "06125adad2d5898a",
                 abbreviation: "ESV",
                 abbreviationLocal: "ESV",
                 name: "English Standard Version",
@@ -302,8 +307,8 @@ class BibleAPIService: ObservableObject {
                 audioBibles: nil
             ),
             Bible(
-                id: "06125adad2d5898a-01",
-                dblId: "06125adad2d5898a",
+                id: "de4e12af7f28f599-02",
+                dblId: "de4e12af7f28f599",
                 abbreviation: "NIV",
                 abbreviationLocal: "NIV",
                 name: "New International Version",
@@ -406,31 +411,44 @@ class BibleAPIService: ObservableObject {
         // Parse the reference string (e.g., "John 3:16" or "John 3:16-18") 
         // and convert to Bible API format (e.g., "JHN.3.16" or "JHN.3.16-JHN.3.18")
         
+        print("[BibleAPIService] Formatting reference: '\(reference)'")
+        
         let components = reference.components(separatedBy: " ")
-        guard components.count >= 2 else { return reference }
+        guard components.count >= 2 else { 
+            print("[BibleAPIService] Invalid reference format, returning as-is: \(reference)")
+            return reference 
+        }
         
         let book = components.dropLast().joined(separator: " ")
         let chapterVerse = components.last ?? ""
         
         let chapterVerseComponents = chapterVerse.components(separatedBy: ":")
-        guard chapterVerseComponents.count == 2 else { return reference }
+        guard chapterVerseComponents.count == 2 else { 
+            print("[BibleAPIService] Invalid chapter:verse format, returning as-is: \(reference)")
+            return reference 
+        }
         
         let chapter = chapterVerseComponents[0]
         let verseRange = chapterVerseComponents[1]
         
         let bookAbbreviation = convertBookNameToAbbreviation(book)
+        print("[BibleAPIService] Converted '\(book)' to '\(bookAbbreviation)'")
         
+        let formattedReference: String
         if verseRange.contains("-") {
             // Range of verses: e.g., "16-18"
             let verseComponents = verseRange.components(separatedBy: "-")
             guard verseComponents.count == 2 else { return reference }
             let startVerse = verseComponents[0]
             let endVerse = verseComponents[1]
-            return "\(bookAbbreviation).\(chapter).\(startVerse)-\(bookAbbreviation).\(chapter).\(endVerse)"
+            formattedReference = "\(bookAbbreviation).\(chapter).\(startVerse)-\(bookAbbreviation).\(chapter).\(endVerse)"
         } else {
             // Single verse: e.g., "16"
-            return "\(bookAbbreviation).\(chapter).\(verseRange)"
+            formattedReference = "\(bookAbbreviation).\(chapter).\(verseRange)"
         }
+        
+        print("[BibleAPIService] Final formatted reference: '\(formattedReference)'")
+        return formattedReference
     }
     
     private func convertBookNameToAbbreviation(_ bookName: String) -> String {
