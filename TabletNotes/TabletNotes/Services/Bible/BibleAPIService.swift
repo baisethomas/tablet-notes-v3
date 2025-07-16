@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 
+// Import ScriptureReference from ScriptureAnalysisServiceProtocol file
+// Since they're in the same module, no explicit import needed, but ensuring visibility
+
 // MARK: - Bible API Models
 struct BibleAPIResponse<T: Codable>: Codable {
     let data: T
@@ -74,8 +77,9 @@ struct AudioBible: Codable {
 
 // MARK: - Bible API Service
 class BibleAPIService: ObservableObject {
+    private let netlifyAPIService = BibleNetlifyAPIService()
     private var defaultBibleId: String {
-        return "de4e12af7f28f599-02" // ESV
+        return BibleAPIConfig.preferredBibleTranslation.id
     }
     
     private var cancellables = Set<AnyCancellable>()
@@ -92,14 +96,27 @@ class BibleAPIService: ObservableObject {
     
     private func loadAvailableBibles() {
         Task {
-            await MainActor.run {
-                print("[BibleAPIService] Loading default Bible translations")
-                self.availableBibles = getDefaultBibles()
-                print("[BibleAPIService] Loaded \(self.availableBibles.count) default Bibles")
-                let englishBibles = self.availableBibles.filter { $0.language.name.lowercased().contains("english") }
-                print("[BibleAPIService] English Bibles available:")
-                for bible in englishBibles {
-                    print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
+            do {
+                let response = try await netlifyAPIService.makeRequest(endpoint: "bibles")
+                let jsonData = try JSONSerialization.data(withJSONObject: response)
+                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: jsonData)
+                
+                await MainActor.run {
+                    self.availableBibles = bibleResponse.data
+                    print("[BibleAPIService] Loaded \(bibleResponse.data.count) Bibles")
+                    let englishBibles = bibleResponse.data.filter { $0.language.name.lowercased().contains("english") }
+                    print("[BibleAPIService] English Bibles available:")
+                    for bible in englishBibles {
+                        print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    print("[BibleAPIService] Failed to load bibles: \(error)")
+                    self.error = error.localizedDescription
+                    // Fallback to default bibles when API fails
+                    self.availableBibles = getDefaultBibles()
+                    print("[BibleAPIService] Using fallback Bible translations")
                 }
             }
         }
@@ -111,66 +128,109 @@ class BibleAPIService: ObservableObject {
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         let verseReference = formatReferenceForAPI(reference)
+        let endpoint = "bibles/\(useBibleId)/verses/\(verseReference)"
         
         print("[BibleAPIService] Fetching verse: \(verseReference) from Bible: \(useBibleId)")
         
-        // For now, return a placeholder verse to prevent app crashes
-        // TODO: Implement actual API call when Bible API service is properly configured
-        let placeholderVerse = BibleVerse(
-            id: "\(useBibleId):\(verseReference)",
-            orgId: useBibleId,
-            bookId: "UNK",
-            chapterId: "1",
-            content: "This verse is currently unavailable. Please check your internet connection or try again later.",
-            reference: reference,
-            verseCount: 1,
-            copyright: nil
-        )
-        
-        return placeholderVerse
+        do {
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+            return bibleResponse.data
+        } catch {
+            print("[BibleAPIService] Error fetching verse: \(error)")
+            
+            // Handle verse not found errors gracefully
+            if let nsError = error as NSError?, nsError.code == 404 {
+                throw BibleAPIError.apiError("Verse not found in selected translation")
+            }
+            
+            // Return placeholder on any error to prevent app crashes
+            let placeholderVerse = BibleVerse(
+                id: "\(useBibleId):\(verseReference)",
+                orgId: useBibleId,
+                bookId: "UNK",
+                chapterId: "1",
+                content: "This verse is currently unavailable. Please check your internet connection or try again later.",
+                reference: reference,
+                verseCount: 1,
+                copyright: nil
+            )
+            return placeholderVerse
+        }
     }
     
     /// Fetch a passage (multiple verses)
     func fetchPassage(reference: String, bibleId: String? = nil) async throws -> BiblePassage {
         let useBibleId = bibleId ?? defaultBibleId
         let passageReference = formatReferenceForAPI(reference)
+        let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
         print("[BibleAPIService] Fetching passage: \(passageReference) from Bible: \(useBibleId)")
         
-        // For now, return a placeholder passage to prevent app crashes
-        // TODO: Implement actual API call when Bible API service is properly configured
-        let placeholderPassage = BiblePassage(
-            id: "\(useBibleId):\(passageReference)",
-            orgId: useBibleId,
-            content: "This passage is currently unavailable. Please check your internet connection or try again later.",
-            reference: reference,
-            verseCount: 1,
-            copyright: nil
-        )
-        
-        return placeholderPassage
+        do {
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: jsonData)
+            return bibleResponse.data
+        } catch {
+            print("[BibleAPIService] Error fetching passage: \(error)")
+            
+            // Handle passage not found errors gracefully
+            if let nsError = error as NSError?, nsError.code == 404 {
+                throw BibleAPIError.apiError("Passage not found in selected translation")
+            }
+            
+            // Return placeholder on any error to prevent app crashes
+            let placeholderPassage = BiblePassage(
+                id: "\(useBibleId):\(passageReference)",
+                orgId: useBibleId,
+                content: "This passage is currently unavailable. Please check your internet connection or try again later.",
+                reference: reference,
+                verseCount: 1,
+                copyright: nil
+            )
+            return placeholderPassage
+        }
     }
     
     /// Search for verses containing specific text
     func searchVerses(query: String, bibleId: String? = nil, limit: Int = 10) async throws -> [BibleVerse] {
         let useBibleId = bibleId ?? defaultBibleId
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let endpoint = "bibles/\(useBibleId)/search?query=\(encodedQuery)&limit=\(limit)"
         
         print("[BibleAPIService] Searching for verses with query: \(query) in Bible: \(useBibleId)")
         
-        // For now, return empty array to prevent app crashes
-        // TODO: Implement actual search API call when Bible API service is properly configured
-        return []
+        do {
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleVerse]>.self, from: jsonData)
+            return bibleResponse.data
+        } catch {
+            print("[BibleAPIService] Error searching verses: \(error)")
+            // Return empty array on error to prevent app crashes
+            return []
+        }
     }
     
     /// Get list of books for a specific Bible
     func fetchBooks(bibleId: String? = nil) async throws -> [BibleBook] {
         let useBibleId = bibleId ?? defaultBibleId
+        let endpoint = "bibles/\(useBibleId)/books"
         
         print("[BibleAPIService] Fetching books for Bible: \(useBibleId)")
         
-        // For now, return standard Bible books to prevent app crashes
-        // TODO: Implement actual API call when Bible API service is properly configured
-        return getStandardBibleBooks()
+        do {
+            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let jsonData = try JSONSerialization.data(withJSONObject: response)
+            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
+            return bibleResponse.data
+        } catch {
+            print("[BibleAPIService] Error fetching books: \(error)")
+            // Return standard Bible books as fallback
+            return getStandardBibleBooks()
+        }
     }
     
     // MARK: - Helper Methods
@@ -303,9 +363,34 @@ class BibleAPIService: ObservableObject {
     }
     
     private func formatReferenceForAPI(_ reference: String) -> String {
-        // For now, just return the reference as-is since we're using placeholder data
-        // TODO: Parse the reference string and format for actual API calls
-        return reference
+        // Parse the reference string (e.g., "John 3:16" or "John 3:16-18") 
+        // and convert to Bible API format (e.g., "JHN.3.16" or "JHN.3.16-JHN.3.18")
+        
+        let components = reference.components(separatedBy: " ")
+        guard components.count >= 2 else { return reference }
+        
+        let book = components.dropLast().joined(separator: " ")
+        let chapterVerse = components.last ?? ""
+        
+        let chapterVerseComponents = chapterVerse.components(separatedBy: ":")
+        guard chapterVerseComponents.count == 2 else { return reference }
+        
+        let chapter = chapterVerseComponents[0]
+        let verseRange = chapterVerseComponents[1]
+        
+        let bookAbbreviation = convertBookNameToAbbreviation(book)
+        
+        if verseRange.contains("-") {
+            // Range of verses: e.g., "16-18"
+            let verseComponents = verseRange.components(separatedBy: "-")
+            guard verseComponents.count == 2 else { return reference }
+            let startVerse = verseComponents[0]
+            let endVerse = verseComponents[1]
+            return "\(bookAbbreviation).\(chapter).\(startVerse)-\(bookAbbreviation).\(chapter).\(endVerse)"
+        } else {
+            // Single verse: e.g., "16"
+            return "\(bookAbbreviation).\(chapter).\(verseRange)"
+        }
     }
     
     private func convertBookNameToAbbreviation(_ bookName: String) -> String {

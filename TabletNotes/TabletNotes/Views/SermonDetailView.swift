@@ -272,210 +272,218 @@ struct SermonDetailView: View {
     
     var body: some View {
         NavigationView {
-            if let sermon = sermon {
-                VStack(spacing: 0) {
-                    HeaderView(
-                        title: "",
-                        showLogo: false,
-                        showSearch: false,
-                        showSyncStatus: false,
-                        showBack: true,
-                        onBack: onBack
-                    )
-                    
-                    // Enhanced header section
-                    VStack(spacing: 16) {
-                        // Title section
-                        VStack(spacing: 8) {
-                            if isEditingTitle {
-                                TextField("Sermon Title", text: $editableTitle)
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                    .onSubmit {
-                                        saveTitle()
-                                    }
-                            } else {
-                                HStack {
-                                    Text(editableTitle)
+            ZStack { // <-- Add ZStack to allow background color
+                Color.adaptiveBackground.ignoresSafeArea() // Navy dark mode background
+                if let sermon = sermon {
+                    VStack(spacing: 0) {
+                        HeaderView(
+                            title: "",
+                            showLogo: false,
+                            showSearch: false,
+                            showSyncStatus: false,
+                            showBack: true,
+                            onBack: onBack
+                        )
+                        
+                        // Enhanced header section
+                        VStack(spacing: 16) {
+                            // Title section
+                            VStack(spacing: 8) {
+                                if isEditingTitle {
+                                    TextField("Sermon Title", text: $editableTitle)
                                         .font(.title2)
                                         .fontWeight(.bold)
-                                        .foregroundColor(.primary)
-                                        .lineLimit(2)
-                                    
-                                    Spacer()
-                                    
-                                    Button(action: {
-                                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                        impactFeedback.impactOccurred()
-                                        isEditingTitle = true
-                                    }) {
-                                        Image(systemName: "pencil")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .padding(8)
-                                            .cornerRadius(8)
-                                    }
-                                }
-                                .onTapGesture {
-                                    isEditingTitle = true
-                                }
-                            }
-                        }
-                        
-                        // Metadata section
-                        VStack(spacing: 12) {
-                            HStack(spacing: 16) {
-                                Label(formattedDate, systemImage: "calendar")
-                                Label(formattedTime, systemImage: "clock")
-                                if duration > 0 {
-                                    Label("\(Int(duration / 60)) min", systemImage: "timer")
-                                }
-                                Label(sermon.serviceType, systemImage: "church.fill")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            
-                            // Speaker section
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Image(systemName: "person.circle")
-                                        .font(.caption)
-                                        .foregroundColor(.accentColor)
-                                    Text("Speaker")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                
-                                if isEditingSpeaker {
-                                    HStack {
-                                        TextField("Enter speaker name", text: $editableSpeaker)
-                                            .font(.subheadline)
-                                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                                            .onSubmit {
-                                                saveSpeaker()
-                                            }
-                                        
-                                        Button("Save") {
-                                            saveSpeaker()
+                                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                                        .onSubmit {
+                                            saveTitle()
                                         }
-                                        .font(.caption)
-                                        .foregroundColor(.accentColor)
-                                        
-                                        Button("Cancel") {
-                                            editableSpeaker = sermon.speaker ?? ""
-                                            isEditingSpeaker = false
-                                        }
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    }
                                 } else {
                                     HStack {
-                                        Text(editableSpeaker.isEmpty ? "Tap to add speaker" : editableSpeaker)
-                                            .font(.subheadline)
-                                            .foregroundColor(editableSpeaker.isEmpty ? .secondary : .primary)
-                                            .italic(editableSpeaker.isEmpty)
+                                        Text(editableTitle)
+                                            .font(.title2)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.adaptivePrimaryText) // navy dark mode text
+                                            .lineLimit(2)
                                         
                                         Spacer()
                                         
                                         Button(action: {
                                             let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                                             impactFeedback.impactOccurred()
-                                            isEditingSpeaker = true
+                                            isEditingTitle = true
                                         }) {
                                             Image(systemName: "pencil")
                                                 .font(.caption)
-                                                .foregroundColor(.secondary)
-                                                .padding(6)
-                                                .cornerRadius(6)
+                                                .foregroundColor(.adaptiveSecondaryText)
+                                                .padding(8)
+                                                .cornerRadius(8)
                                         }
                                     }
                                     .onTapGesture {
-                                        isEditingSpeaker = true
+                                        isEditingTitle = true
                                     }
                                 }
                             }
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 12)
-                            .cornerRadius(12)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 16)
-                    
-                    // Enhanced tab section
-                    HStack(spacing: 0) {
-                        ForEach(Tab.allCases, id: \.self) { tab in
-                            TabButton(
-                                title: tab.rawValue,
-                                isSelected: selectedTab == tab
-                            ) {
-                                selectedTab = tab
+                            
+                            // Metadata section
+                            VStack(spacing: 12) {
+                                HStack(spacing: 16) {
+                                    Label(formattedDate, systemImage: "calendar")
+                                        .foregroundColor(.adaptiveSecondaryText)
+                                    Label(formattedTime, systemImage: "clock")
+                                        .foregroundColor(.adaptiveSecondaryText)
+                                    if duration > 0 {
+                                        Label("\(Int(duration / 60)) min", systemImage: "timer")
+                                            .foregroundColor(.adaptiveSecondaryText)
+                                    }
+                                    Label(sermon.serviceType, systemImage: "church.fill")
+                                        .foregroundColor(.adaptiveSecondaryText)
+                                }
+                                .font(.caption)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                
+                                // Speaker section
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "person.circle")
+                                            .font(.caption)
+                                            .foregroundColor(.adaptiveAccent)
+                                        Text("Speaker")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.adaptiveSecondaryText)
+                                        Spacer()
+                                    }
+                                    
+                                    if isEditingSpeaker {
+                                        HStack {
+                                            TextField("Enter speaker name", text: $editableSpeaker)
+                                                .font(.subheadline)
+                                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                                .onSubmit {
+                                                    saveSpeaker()
+                                                }
+                                            
+                                            Button("Save") {
+                                                saveSpeaker()
+                                            }
+                                            .font(.caption)
+                                            .foregroundColor(.adaptiveAccent)
+                                            
+                                            Button("Cancel") {
+                                                editableSpeaker = sermon.speaker ?? ""
+                                                isEditingSpeaker = false
+                                            }
+                                            .font(.caption)
+                                            .foregroundColor(.adaptiveSecondaryText)
+                                        }
+                                    } else {
+                                        HStack {
+                                            Text(editableSpeaker.isEmpty ? "Tap to add speaker" : editableSpeaker)
+                                                .font(.subheadline)
+                                                .foregroundColor(editableSpeaker.isEmpty ? .adaptiveSecondaryText : .adaptivePrimaryText)
+                                                .italic(editableSpeaker.isEmpty)
+                                            
+                                            Spacer()
+                                            
+                                            Button(action: {
+                                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                                impactFeedback.impactOccurred()
+                                                isEditingSpeaker = true
+                                            }) {
+                                                Image(systemName: "pencil")
+                                                    .font(.caption)
+                                                    .foregroundColor(.adaptiveSecondaryText)
+                                                    .padding(6)
+                                                    .cornerRadius(6)
+                                            }
+                                        }
+                                        .onTapGesture {
+                                            isEditingSpeaker = true
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .cornerRadius(12)
                             }
                         }
-                    }
-                    .padding(.horizontal)
-                    
-                    Divider()
-                    
-                    // Enhanced content area
-                    Group {
-                        switch selectedTab {
-                        case .summary:
-                            summaryTabView
-                        case .transcript:
-                            transcriptTabView
-                        case .notes:
-                            notesTabView
-                        }
-                    }
-                    .animation(.easeInOut(duration: 0.3), value: selectedTab)
-                }
-                .onAppear {
-                    editableTitle = sermon.title
-                    editableSpeaker = sermon.speaker ?? ""
-                    setupAudioPlayer()
-                }
-                .onDisappear {
-                    cleanup()
-                }
-            } else {
-                // Enhanced not found state
-                VStack(spacing: 20) {
-                    Image(systemName: "doc.questionmark")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary)
-                    
-                    VStack(spacing: 8) {
-                        Text("Sermon Not Found")
-                            .font(.title2)
-                            .fontWeight(.semibold)
+                        .padding(.horizontal)
+                        .padding(.bottom, 16)
                         
-                        Text("This sermon may have been deleted or is no longer available.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
+                        // Enhanced tab section
+                        HStack(spacing: 0) {
+                            ForEach(Tab.allCases, id: \.self) { tab in
+                                TabButton(
+                                    title: tab.rawValue,
+                                    isSelected: selectedTab == tab
+                                ) {
+                                    selectedTab = tab
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                        
+                        Divider()
+                        
+                        // Enhanced content area
+                        Group {
+                            switch selectedTab {
+                            case .summary:
+                                summaryTabView
+                            case .transcript:
+                                transcriptTabView
+                            case .notes:
+                                notesTabView
+                            }
+                        }
+                        .animation(.easeInOut(duration: 0.3), value: selectedTab)
                     }
-                    
-                    Button(action: {
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                        impactFeedback.impactOccurred()
-                        onBack?()
-                    }) {
-                        Text("Back to Sermons")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(Color.accentColor)
-                            .cornerRadius(25)
+                    .background(Color.clear) // VStack background clear, ZStack handles bg
+                    .onAppear {
+                        editableTitle = sermon.title
+                        editableSpeaker = sermon.speaker ?? ""
+                        setupAudioPlayer()
                     }
-                    .buttonStyle(.plain)
+                    .onDisappear {
+                        cleanup()
+                    }
+                } else {
+                    // Enhanced not found state
+                    VStack(spacing: 20) {
+                        Image(systemName: "doc.questionmark")
+                            .font(.system(size: 64))
+                            .foregroundColor(.adaptiveSecondaryText)
+                        
+                        VStack(spacing: 8) {
+                            Text("Sermon Not Found")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.adaptivePrimaryText)
+                            
+                            Text("This sermon may have been deleted or is no longer available.")
+                                .font(.subheadline)
+                                .foregroundColor(.adaptiveSecondaryText)
+                                .multilineTextAlignment(.center)
+                        }
+                        
+                        Button(action: {
+                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                            impactFeedback.impactOccurred()
+                            onBack?()
+                        }) {
+                            Text("Back to Sermons")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(Color.adaptiveAccent)
+                                .cornerRadius(25)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationBarHidden(true)
@@ -596,7 +604,7 @@ struct SermonDetailView: View {
                 }
             } else {
                 Text("No summary available.")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.adaptiveSecondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -627,7 +635,7 @@ struct SermonDetailView: View {
                         // Current time
                         Text(timeString(from: currentTime))
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                             .monospacedDigit()
                             .frame(width: 35, alignment: .trailing)
                         
@@ -643,7 +651,7 @@ struct SermonDetailView: View {
                         // Total time
                         Text(timeString(from: duration))
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                             .monospacedDigit()
                             .frame(width: 35, alignment: .leading)
                         
@@ -654,17 +662,17 @@ struct SermonDetailView: View {
                         }) {
                             Image(systemName: "goforward.15")
                                 .font(.system(size: 13))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.adaptiveSecondaryText)
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .background(Color(.systemBackground))
+                    .background(Color.adaptiveCardBackground)
                     
                     Divider()
                 }
-                .background(Color(.systemBackground))
+                .background(Color.adaptiveCardBackground)
             }
             
             // Main content area
@@ -700,10 +708,10 @@ struct SermonDetailView: View {
                                                 Text(timeString(from: segment.startTime))
                                                     .font(.caption)
                                                     .fontWeight(.medium)
-                                                    .foregroundColor(.secondary)
+                                                    .foregroundColor(.adaptiveSecondaryText)
                                                     .padding(.horizontal, 8)
                                                     .padding(.vertical, 4)
-                                                    .background(Color(.systemGray6))
+                                                    .background(Color.adaptiveCardBackground)
                                                     .cornerRadius(6)
                                             }
                                             .buttonStyle(.plain)
@@ -711,7 +719,7 @@ struct SermonDetailView: View {
                                             // Segment text
                                             Text(segment.text)
                                                 .font(.body)
-                                                .foregroundColor(.primary)
+                                                .foregroundColor(.adaptivePrimaryText)
                                                 .lineSpacing(6)
                                                 .lineLimit(nil)
                                                 .fixedSize(horizontal: false, vertical: true)
@@ -722,7 +730,7 @@ struct SermonDetailView: View {
                                     // Fallback to full text if no segments
                                     Text(transcript.text)
                                         .font(.body)
-                                        .foregroundColor(.primary)
+                                        .foregroundColor(.adaptivePrimaryText)
                                         .lineSpacing(6)
                                         .lineLimit(nil)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -730,7 +738,7 @@ struct SermonDetailView: View {
                             } else {
                                 Text("No transcript available.")
                                     .font(.body)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(.adaptiveSecondaryText)
                                     .padding()
                             }
                         }
@@ -740,7 +748,7 @@ struct SermonDetailView: View {
                 }
             } else {
                 Text("No transcript available.")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.adaptiveSecondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -756,19 +764,19 @@ struct SermonDetailView: View {
                                 HStack {
                                     Image(systemName: "note.text")
                                         .font(.caption)
-                                        .foregroundColor(.accentColor)
+                                        .foregroundColor(.adaptiveAccent)
                                     
                                     Text("At \(timeString(from: note.timestamp))")
                                         .font(.caption)
                                         .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.adaptiveSecondaryText)
                                     
                                     Spacer()
                                 }
                                 
                                 Text(note.text)
                                     .font(.body)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(.adaptivePrimaryText)
                                     .lineSpacing(2)
                             }
                             .padding()
@@ -782,16 +790,17 @@ struct SermonDetailView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "note.text")
                         .font(.system(size: 48))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.adaptiveSecondaryText)
                     
                     VStack(spacing: 8) {
                         Text("No Notes")
                             .font(.headline)
                             .fontWeight(.semibold)
+                            .foregroundColor(.adaptivePrimaryText)
                         
                         Text("Notes taken during recording will appear here.")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.adaptiveSecondaryText)
                             .multilineTextAlignment(.center)
                     }
                 }

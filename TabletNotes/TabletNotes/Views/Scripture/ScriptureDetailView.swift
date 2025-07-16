@@ -176,13 +176,13 @@ struct ScriptureDetailView: View {
                 let content: String
                 if reference.isRange {
                     let passage = try await bibleService.fetchPassage(
-                        reference: reference,
+                        reference: reference.displayText,
                         bibleId: selectedBibleVersion
                     )
                     content = cleanScriptureContent(passage.content)
                 } else {
                     let verse = try await bibleService.fetchVerse(
-                        reference: reference,
+                        reference: reference.displayText,
                         bibleId: selectedBibleVersion
                     )
                     content = cleanScriptureContent(verse.content)
