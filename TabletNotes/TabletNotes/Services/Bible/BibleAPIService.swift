@@ -160,8 +160,37 @@ class BibleAPIService: ObservableObject {
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         
-        // Use the Berean Standard Bible ID we found in the logs
-        let finalBibleId = "bba9f40183526463-01" // Berean Standard Bible (English)
+        // Try different Bible IDs to see if the issue is Bible-specific
+        let testBibleIds = [
+            "685d1470fe4d5c3b-01", // American Standard Version (from logs)
+            "bba9f40183526463-01", // Berean Standard Bible (English)
+            "65eec8e0b60e656b-01", // Free Bible Version (from logs)
+            "55212e3cf5d04d49-01"  // Cambridge Paragraph Bible of the KJV (from logs)
+        ]
+        
+        for bibleId in testBibleIds {
+            print("[BibleAPIService] Testing Bible ID: \(bibleId)")
+            
+            // Try to get a simple verse with this Bible - test with Genesis 1:1
+            let testEndpoint = "bibles/\(bibleId)/verses/GEN.1.1"
+            
+            do {
+                let response = try await netlifyAPIService.makeRequest(endpoint: testEndpoint)
+                print("[BibleAPIService] Response for \(bibleId): \(response)")
+                
+                if let json = response as? [String: Any],
+                   let dataValue = json["data"], !(dataValue is NSNull) {
+                    print("[BibleAPIService] SUCCESS! Bible \(bibleId) works!")
+                    let jsonData = try JSONSerialization.data(withJSONObject: response)
+                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+                    return bibleResponse.data
+                }
+            } catch {
+                print("[BibleAPIService] Bible \(bibleId) failed: \(error)")
+            }
+        }
+        
+        let finalBibleId = testBibleIds[0] // Use first for fallback
         
         // First, get the actual books for this Bible to find the correct book ID
         do {
