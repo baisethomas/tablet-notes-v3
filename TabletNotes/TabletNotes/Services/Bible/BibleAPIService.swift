@@ -98,11 +98,33 @@ class BibleAPIService: ObservableObject {
         Task {
             do {
                 let response = try await netlifyAPIService.makeRequest(endpoint: "bibles")
+                print("[BibleAPIService] Raw bibles response: \(response)")
+                
+                // Check if the response has a different structure
+                if let data = response["data"] {
+                    print("[BibleAPIService] Data field type: \(type(of: data))")
+                    print("[BibleAPIService] Data content: \(data)")
+                }
+                
                 let jsonData = try JSONSerialization.data(withJSONObject: response)
                 
                 // First check if data field exists and is not null
                 if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                    let dataValue = json["data"], !(dataValue is NSNull) {
+                    
+                    // Try to handle if data is a dictionary instead of array
+                    if let dataDict = dataValue as? [String: Any] {
+                        print("[BibleAPIService] Data is dictionary, trying to extract array...")
+                        // Look for common array keys in Bible API responses
+                        if let bibles = dataDict["bibles"] as? [[String: Any]] {
+                            print("[BibleAPIService] Found bibles array in data.bibles")
+                        } else if let items = dataDict["items"] as? [[String: Any]] {
+                            print("[BibleAPIService] Found bibles array in data.items")
+                        } else {
+                            print("[BibleAPIService] Dictionary keys: \(dataDict.keys)")
+                        }
+                    }
+                    
                     let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: jsonData)
                     
                     await MainActor.run {
@@ -135,20 +157,30 @@ class BibleAPIService: ObservableObject {
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         
-        // For testing, try a simple known verse first
-        let testReference = "JHN.3.16" // John 3:16 - most common test verse
-        let verseReference = testReference // Override for testing
-        
-        // Use common API.Bible IDs that are more likely to work
-        let workingBibleIds = [
-            "de4e12af7f28f599-02", // KJV
-            "06125adad2d5898a-01", // ESV (original)
-            "32664dc3288a28df-02", // AMP
-            "78a9f6124f344018-01"  // NIV
+        // Try different reference formats and Bible IDs that might work
+        let testFormats = [
+            "JHN.3.16",     // Current format
+            "JOH.3.16",     // Alternative John abbreviation
+            "43003016",     // Numeric format (book 43, chapter 3, verse 16)
+            "John.3.16",    // Full name
+            "jhn.3.16",     // Lowercase
+            "JHN3.16",      // No separator
+            "JHN 3:16"      // Space and colon
         ]
         
-        // Try the first working Bible ID
-        let finalBibleId = workingBibleIds[0]
+        // Try common Bible IDs from various providers
+        let testBibleIds = [
+            "bb7018519693d4cf-01", // Potential API.Bible ID
+            "59dcc9c7cfe39e4d-01", // Another common ID  
+            "de4e12af7f28f599-01", // KJV variant
+            "06125adad2d5898a-01", // ESV original
+            "kjv",                  // Simple identifier
+            "esv",                  // Simple identifier
+            "web"                   // World English Bible
+        ]
+        
+        let verseReference = testFormats[0] // Test with first format
+        let finalBibleId = testBibleIds[0]  // Test with first ID
         
         let endpoint = "bibles/\(finalBibleId)/verses/\(verseReference)"
         
