@@ -174,61 +174,64 @@ class BibleAPIService: ObservableObject {
         // Use the Berean Standard Bible ID we found in the logs
         let finalBibleId = "bba9f40183526463-01" // Berean Standard Bible (English)
         
-        // Try the most common formats that might work
-        let commonFormats = [
+        // Try multiple formats systematically 
+        let testFormats = [
             "JOH.3.16",     // Alternative John abbreviation
             "joh.3.16",     // Lowercase
             "JOH 3:16",     // Space and colon
             "JOH-3-16",     // Dash separator
             "JOH_3_16",     // Underscore separator
             "43.3.16",      // Numeric book number
-            "JOH.3.16-16"   // Range format
+            "JOH.3.16-16",  // Range format
+            "43003016",     // Numeric format (book 43, chapter 3, verse 16)
+            "John.3.16",    // Full name
+            "JOH3.16",      // No separator
+            "JOH03.16",     // Zero-padded
+            "JOH.03.16",    // Zero-padded chapter/verse
+            "JOH.003.016"   // Fully zero-padded
         ]
         
-        let verseReference = commonFormats[0] // Test with JOH.3.16
-        
-        let endpoint = "bibles/\(finalBibleId)/verses/\(verseReference)"
-        
-        print("[BibleAPIService] TESTING with: \(verseReference) from Bible: \(finalBibleId) (original request: \(reference))")
-        
-        do {
-            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
-            let jsonData = try JSONSerialization.data(withJSONObject: response)
+        // Test each format until one works
+        for (index, format) in testFormats.enumerated() {
+            print("[BibleAPIService] Testing format \(index + 1)/\(testFormats.count): \(format)")
             
-            // Check if data field exists and is not null
-            if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                print("[BibleAPIService] Raw API response: \(json)")
-                if let dataValue = json["data"], !(dataValue is NSNull) {
+            let endpoint = "bibles/\(finalBibleId)/verses/\(format)"
+            
+            do {
+                let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+                print("[BibleAPIService] SUCCESS with format: \(format)")
+                print("[BibleAPIService] Response: \(response)")
+                
+                // If we get here, this format worked!
+                let jsonData = try JSONSerialization.data(withJSONObject: response)
+                if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let dataValue = json["data"], !(dataValue is NSNull) {
                     let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+                    print("[BibleAPIService] Found working format: \(format)")
                     return bibleResponse.data
-                } else {
-                    print("[BibleAPIService] Data field is null or missing")
-                    throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null verse data"])
                 }
-            } else {
-                throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response structure"])
+            } catch {
+                print("[BibleAPIService] Format \(format) failed: \(error)")
+                continue
             }
-        } catch {
-            print("[BibleAPIService] Error fetching verse: \(error)")
-            
-            // Handle verse not found errors gracefully
-            if let nsError = error as NSError?, nsError.code == 404 {
-                throw BibleAPIError.apiError("Verse not found in selected translation")
-            }
-            
-            // Return placeholder on any error to prevent app crashes
-            let placeholderVerse = BibleVerse(
-                id: "\(finalBibleId):\(verseReference)",
-                orgId: finalBibleId,
-                bookId: "UNK",
-                chapterId: "1",
-                content: "This verse is currently unavailable. Please check your internet connection or try again later.",
-                reference: reference,
-                verseCount: 1,
-                copyright: nil
-            )
-            return placeholderVerse
         }
+        
+        // If we get here, none of the formats worked
+        print("[BibleAPIService] All formats failed, using placeholder")
+        let verseReference = testFormats[0] // Fallback for logging
+        
+        // Return placeholder on any error to prevent app crashes
+        let placeholderVerse = BibleVerse(
+            id: "\(finalBibleId):\(verseReference)",
+            orgId: finalBibleId,
+            bookId: "UNK",
+            chapterId: "1",
+            content: "This verse is currently unavailable. Please check your internet connection or try again later.",
+            reference: reference,
+            verseCount: 1,
+            copyright: nil
+        )
+        return placeholderVerse
     }
     
     /// Fetch a passage (multiple verses)
