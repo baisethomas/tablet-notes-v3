@@ -99,16 +99,23 @@ class BibleAPIService: ObservableObject {
             do {
                 let response = try await netlifyAPIService.makeRequest(endpoint: "bibles")
                 let jsonData = try JSONSerialization.data(withJSONObject: response)
-                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: jsonData)
                 
-                await MainActor.run {
-                    self.availableBibles = bibleResponse.data
-                    print("[BibleAPIService] Loaded \(bibleResponse.data.count) Bibles")
-                    let englishBibles = bibleResponse.data.filter { $0.language.name.lowercased().contains("english") }
-                    print("[BibleAPIService] English Bibles available:")
-                    for bible in englishBibles {
-                        print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
+                // First check if data field exists and is not null
+                if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let dataValue = json["data"], !(dataValue is NSNull) {
+                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: jsonData)
+                    
+                    await MainActor.run {
+                        self.availableBibles = bibleResponse.data
+                        print("[BibleAPIService] Loaded \(bibleResponse.data.count) Bibles")
+                        let englishBibles = bibleResponse.data.filter { $0.language.name.lowercased().contains("english") }
+                        print("[BibleAPIService] English Bibles available:")
+                        for bible in englishBibles {
+                            print("  - \(bible.abbreviation): \(bible.name) (ID: \(bible.id))")
+                        }
                     }
+                } else {
+                    throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null data"])
                 }
             } catch {
                 await MainActor.run {
@@ -135,8 +142,20 @@ class BibleAPIService: ObservableObject {
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
-            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
-            return bibleResponse.data
+            
+            // Check if data field exists and is not null
+            if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                print("[BibleAPIService] Raw API response: \(json)")
+                if let dataValue = json["data"], !(dataValue is NSNull) {
+                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+                    return bibleResponse.data
+                } else {
+                    print("[BibleAPIService] Data field is null or missing")
+                    throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null verse data"])
+                }
+            } else {
+                throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response structure"])
+            }
         } catch {
             print("[BibleAPIService] Error fetching verse: \(error)")
             
@@ -171,8 +190,15 @@ class BibleAPIService: ObservableObject {
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
-            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: jsonData)
-            return bibleResponse.data
+            
+            // Check if data field exists and is not null
+            if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let dataValue = json["data"], !(dataValue is NSNull) {
+                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: jsonData)
+                return bibleResponse.data
+            } else {
+                throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null passage data"])
+            }
         } catch {
             print("[BibleAPIService] Error fetching passage: \(error)")
             
@@ -205,8 +231,15 @@ class BibleAPIService: ObservableObject {
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
-            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleVerse]>.self, from: jsonData)
-            return bibleResponse.data
+            
+            // Check if data field exists and is not null
+            if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let dataValue = json["data"], !(dataValue is NSNull) {
+                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleVerse]>.self, from: jsonData)
+                return bibleResponse.data
+            } else {
+                throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null search data"])
+            }
         } catch {
             print("[BibleAPIService] Error searching verses: \(error)")
             // Return empty array on error to prevent app crashes
@@ -224,8 +257,15 @@ class BibleAPIService: ObservableObject {
         do {
             let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
-            let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
-            return bibleResponse.data
+            
+            // Check if data field exists and is not null
+            if let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let dataValue = json["data"], !(dataValue is NSNull) {
+                let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: jsonData)
+                return bibleResponse.data
+            } else {
+                throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "API returned null books data"])
+            }
         } catch {
             print("[BibleAPIService] Error fetching books: \(error)")
             // Return standard Bible books as fallback
