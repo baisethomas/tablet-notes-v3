@@ -171,22 +171,39 @@ class BibleAPIService: ObservableObject {
         for bibleId in testBibleIds {
             print("[BibleAPIService] Testing Bible ID: \(bibleId)")
             
-            // Try to get a simple verse with this Bible - test with Genesis 1:1
-            let testEndpoint = "bibles/\(bibleId)/verses/GEN.1.1"
+            // Try different verse reference formats that API.Bible might expect
+            let testFormats = [
+                "bibles/\(bibleId)/verses/GEN.1.1",           // Our current format
+                "bibles/\(bibleId)/verses/GEN1.1",            // No separator
+                "bibles/\(bibleId)/verses/GEN-1-1",           // Dash separator
+                "bibles/\(bibleId)/verses/GEN_1_1",           // Underscore separator
+                "bibles/\(bibleId)/verses/GEN 1:1",           // Space and colon
+                "bibles/\(bibleId)/verses/GEN.1:1",           // Period and colon
+                "bibles/\(bibleId)/passages/GEN.1.1",         // Passages endpoint
+                "bibles/\(bibleId)/chapters/GEN.1/verses/1",  // Chapter-based format
+                "bibles/\(bibleId)/search?query=Genesis 1:1", // Search format
+                "bibles/\(bibleId)/books/GEN/chapters/1/verses/1" // Full hierarchical format
+            ]
             
-            do {
-                let response = try await netlifyAPIService.makeRequest(endpoint: testEndpoint)
-                print("[BibleAPIService] Response for \(bibleId): \(response)")
+            for (index, testEndpoint) in testFormats.enumerated() {
+                print("[BibleAPIService] Testing format \(index + 1)/\(testFormats.count): \(testEndpoint)")
                 
-                if let json = response as? [String: Any],
-                   let dataValue = json["data"], !(dataValue is NSNull) {
-                    print("[BibleAPIService] SUCCESS! Bible \(bibleId) works!")
-                    let jsonData = try JSONSerialization.data(withJSONObject: response)
-                    let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
-                    return bibleResponse.data
+                do {
+                    let response = try await netlifyAPIService.makeRequest(endpoint: testEndpoint)
+                    print("[BibleAPIService] Response: \(response)")
+                    
+                    if let json = response as? [String: Any],
+                       let dataValue = json["data"], !(dataValue is NSNull) {
+                        print("[BibleAPIService] SUCCESS! Found working format: \(testEndpoint)")
+                        let jsonData = try JSONSerialization.data(withJSONObject: response)
+                        let bibleResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: jsonData)
+                        return bibleResponse.data
+                    } else {
+                        print("[BibleAPIService] Format failed: \(testEndpoint)")
+                    }
+                } catch {
+                    print("[BibleAPIService] Format error: \(testEndpoint) - \(error)")
                 }
-            } catch {
-                print("[BibleAPIService] Bible \(bibleId) failed: \(error)")
             }
         }
         
