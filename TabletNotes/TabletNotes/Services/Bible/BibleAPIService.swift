@@ -1,48 +1,6 @@
 import Foundation
 import Combine
 
-// MARK: - Scripture Reference Model
-public struct ScriptureReference: Identifiable, Equatable, Hashable {
-    public let book: String
-    public let chapter: Int
-    public let verseStart: Int
-    public let verseEnd: Int?
-    public let raw: String
-    
-    // Use a computed ID based on the content for proper deduplication
-    public var id: String {
-        return displayText
-    }
-    
-    // Additional properties for UI and API integration
-    public var displayText: String {
-        if let verseEnd = verseEnd {
-            return "\(book) \(chapter):\(verseStart)-\(verseEnd)"
-        } else {
-            return "\(book) \(chapter):\(verseStart)"
-        }
-    }
-    
-    public var isRange: Bool {
-        return verseEnd != nil && verseEnd! > verseStart
-    }
-    
-    // Custom equality based on content, not raw text
-    public static func == (lhs: ScriptureReference, rhs: ScriptureReference) -> Bool {
-        return lhs.book == rhs.book &&
-               lhs.chapter == rhs.chapter &&
-               lhs.verseStart == rhs.verseStart &&
-               lhs.verseEnd == rhs.verseEnd
-    }
-    
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(book)
-        hasher.combine(chapter)
-        hasher.combine(verseStart)
-        hasher.combine(verseEnd)
-    }
-}
-
 // MARK: - Bible API Models
 struct BibleAPIResponse<T: Codable>: Codable {
     let data: T
@@ -117,7 +75,7 @@ struct AudioBible: Codable {
 // MARK: - Bible API Service
 class BibleAPIService: ObservableObject {
     private var defaultBibleId: String {
-        return BibleAPIConfig.preferredBibleTranslation.id
+        return "de4e12af7f28f599-02" // ESV
     }
     
     private var cancellables = Set<AnyCancellable>()
@@ -150,7 +108,7 @@ class BibleAPIService: ObservableObject {
     // MARK: - Public Methods
     
     /// Fetch a specific verse or range of verses
-    func fetchVerse(reference: ScriptureReference, bibleId: String? = nil) async throws -> BibleVerse {
+    func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
         let useBibleId = bibleId ?? defaultBibleId
         let verseReference = formatReferenceForAPI(reference)
         
@@ -161,10 +119,10 @@ class BibleAPIService: ObservableObject {
         let placeholderVerse = BibleVerse(
             id: "\(useBibleId):\(verseReference)",
             orgId: useBibleId,
-            bookId: reference.book.uppercased(),
-            chapterId: "\(reference.chapter)",
+            bookId: "UNK",
+            chapterId: "1",
             content: "This verse is currently unavailable. Please check your internet connection or try again later.",
-            reference: reference.displayText,
+            reference: reference,
             verseCount: 1,
             copyright: nil
         )
@@ -173,7 +131,7 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Fetch a passage (multiple verses)
-    func fetchPassage(reference: ScriptureReference, bibleId: String? = nil) async throws -> BiblePassage {
+    func fetchPassage(reference: String, bibleId: String? = nil) async throws -> BiblePassage {
         let useBibleId = bibleId ?? defaultBibleId
         let passageReference = formatReferenceForAPI(reference)
         
@@ -185,8 +143,8 @@ class BibleAPIService: ObservableObject {
             id: "\(useBibleId):\(passageReference)",
             orgId: useBibleId,
             content: "This passage is currently unavailable. Please check your internet connection or try again later.",
-            reference: reference.displayText,
-            verseCount: reference.isRange ? (reference.verseEnd! - reference.verseStart + 1) : 1,
+            reference: reference,
+            verseCount: 1,
             copyright: nil
         )
         
@@ -344,17 +302,10 @@ class BibleAPIService: ObservableObject {
         ]
     }
     
-    private func formatReferenceForAPI(_ reference: ScriptureReference) -> String {
-        // Convert book name to Bible API format
-        let bookAbbreviation = convertBookNameToAbbreviation(reference.book)
-        
-        if let verseEnd = reference.verseEnd {
-            // Range of verses: e.g., "JHN.3.16-JHN.3.18"
-            return "\(bookAbbreviation).\(reference.chapter).\(reference.verseStart)-\(bookAbbreviation).\(reference.chapter).\(verseEnd)"
-        } else {
-            // Single verse: e.g., "JHN.3.16"
-            return "\(bookAbbreviation).\(reference.chapter).\(reference.verseStart)"
-        }
+    private func formatReferenceForAPI(_ reference: String) -> String {
+        // For now, just return the reference as-is since we're using placeholder data
+        // TODO: Parse the reference string and format for actual API calls
+        return reference
     }
     
     private func convertBookNameToAbbreviation(_ bookName: String) -> String {
