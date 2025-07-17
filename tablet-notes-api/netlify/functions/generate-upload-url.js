@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const { randomUUID } = require('crypto');
 const { createRateLimitMiddleware } = require('./utils/rateLimiter');
-const { Validator } = require('./utils/validator');
+const { Validator, LIMITS, ALLOWED_AUDIO_TYPES } = require('./utils/validator');
 const { 
   handleCORS, 
   createAuthMiddleware, 
@@ -136,8 +136,8 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
         originalFileName: fileName,
         contentType,
         fileSize,
-        maxFileSize: Validator.LIMITS.AUDIO_FILE_SIZE,
-        allowedTypes: Validator.ALLOWED_AUDIO_TYPES
+        maxFileSize: LIMITS.AUDIO_FILE_SIZE,
+        allowedTypes: ALLOWED_AUDIO_TYPES
       }
     };
     
