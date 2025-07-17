@@ -87,10 +87,7 @@ struct AudioBible: Codable {
 
 // MARK: - Bible API Service
 class BibleAPIService: ObservableObject {
-    private let netlifyAPIService = BibleNetlifyAPIService()
-    private var defaultBibleId: String {
-        return BibleAPIConfig.preferredBibleTranslation.id
-    }
+    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -104,10 +101,36 @@ class BibleAPIService: ObservableObject {
     
     // MARK: - Private Methods
     
+    private func makeRequest(endpoint: String) async throws -> [String: Any] {
+        guard let url = URL(string: "\(apiBaseUrl)/api/bible-api?endpoint=\(endpoint.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") else {
+            throw NSError(domain: "BibleAPI", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        
+        // Add authentication header if available (you'll need to implement this)
+        // request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw NSError(domain: "BibleAPI", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "HTTP error"])
+        }
+        let json = try JSONSerialization.jsonObject(with: data)
+        guard let dict = json as? [String: Any] else {
+            throw NSError(domain: "BibleAPI", code: 500, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON"])
+        }
+        
+        // Your Netlify function wraps the response in a data field
+        if let wrappedData = dict["data"] as? [String: Any] {
+            return wrappedData
+        }
+        return dict
+    }
+    
     private func loadAvailableBibles() {
         Task {
             do {
-                let response = try await netlifyAPIService.makeRequest(endpoint: "bibles")
+                let response = try await makeRequest(endpoint: "bibles")
                 print("[BibleAPIService] Raw bibles response: \(response)")
                 
                 // Check if the response has a different structure
@@ -158,7 +181,7 @@ class BibleAPIService: ObservableObject {
     
     /// Fetch a specific verse or range of verses
     func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
-        let useBibleId = bibleId ?? defaultBibleId
+        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
         
         // Try different Bible IDs to see if the issue is Bible-specific
         let testBibleIds = [
@@ -189,7 +212,7 @@ class BibleAPIService: ObservableObject {
                 print("[BibleAPIService] Testing format \(index + 1)/\(testFormats.count): \(testEndpoint)")
                 
                 do {
-                    let response = try await netlifyAPIService.makeRequest(endpoint: testEndpoint)
+                    let response = try await makeRequest(endpoint: testEndpoint)
                     print("[BibleAPIService] Response: \(response)")
                     
                     if let json = response as? [String: Any],
@@ -243,7 +266,7 @@ class BibleAPIService: ObservableObject {
                     let endpoint = "bibles/\(finalBibleId)/verses/\(format)"
                     
                     do {
-                        let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+                        let response = try await makeRequest(endpoint: endpoint)
                         print("[BibleAPIService] Raw response: \(response)")
                         
                         // Check if we got actual verse data
@@ -287,14 +310,14 @@ class BibleAPIService: ObservableObject {
     
     /// Fetch a passage (multiple verses)
     func fetchPassage(reference: String, bibleId: String? = nil) async throws -> BiblePassage {
-        let useBibleId = bibleId ?? defaultBibleId
+        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
         let passageReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
         print("[BibleAPIService] Fetching passage: \(passageReference) from Bible: \(useBibleId)")
         
         do {
-            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let response = try await makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
             
             // Check if data field exists and is not null
@@ -328,14 +351,14 @@ class BibleAPIService: ObservableObject {
     
     /// Search for verses containing specific text
     func searchVerses(query: String, bibleId: String? = nil, limit: Int = 10) async throws -> [BibleVerse] {
-        let useBibleId = bibleId ?? defaultBibleId
+        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let endpoint = "bibles/\(useBibleId)/search?query=\(encodedQuery)&limit=\(limit)"
         
         print("[BibleAPIService] Searching for verses with query: \(query) in Bible: \(useBibleId)")
         
         do {
-            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let response = try await makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
             
             // Check if data field exists and is not null
@@ -355,13 +378,13 @@ class BibleAPIService: ObservableObject {
     
     /// Get list of books for a specific Bible
     func fetchBooks(bibleId: String? = nil) async throws -> [BibleBook] {
-        let useBibleId = bibleId ?? defaultBibleId
+        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
         let endpoint = "bibles/\(useBibleId)/books"
         
         print("[BibleAPIService] Fetching books for Bible: \(useBibleId)")
         
         do {
-            let response = try await netlifyAPIService.makeRequest(endpoint: endpoint)
+            let response = try await makeRequest(endpoint: endpoint)
             let jsonData = try JSONSerialization.data(withJSONObject: response)
             
             // Check if data field exists and is not null
@@ -396,11 +419,11 @@ class BibleAPIService: ObservableObject {
             Bible(
                 id: "06125adad2d5898a-01",
                 dblId: "06125adad2d5898a",
-                abbreviation: "ESV",
-                abbreviationLocal: "ESV",
-                name: "English Standard Version",
-                nameLocal: "English Standard Version",
-                description: "The English Standard Version (ESV) is an English translation of the Bible.",
+                abbreviation: "KJV",
+                abbreviationLocal: "KJV",
+                name: "King James Version",
+                nameLocal: "King James Version",
+                description: "The King James Version (KJV) is an English translation of the Bible.",
                 relatedDbl: nil,
                 language: BibleLanguage(
                     id: "eng",
@@ -417,13 +440,128 @@ class BibleAPIService: ObservableObject {
                 audioBibles: nil
             ),
             Bible(
-                id: "de4e12af7f28f599-02",
-                dblId: "de4e12af7f28f599",
-                abbreviation: "NIV",
-                abbreviationLocal: "NIV",
-                name: "New International Version",
-                nameLocal: "New International Version",
-                description: "The New International Version (NIV) is an English translation of the Bible.",
+                id: "bba9f40183526463-01",
+                dblId: "bba9f40183526463",
+                abbreviation: "NASB",
+                abbreviationLocal: "NASB",
+                name: "New American Standard Bible",
+                nameLocal: "New American Standard Bible",
+                description: "The New American Standard Bible (NASB) is a modern English translation.",
+                relatedDbl: nil,
+                language: BibleLanguage(
+                    id: "eng",
+                    name: "English",
+                    nameLocal: "English",
+                    script: "Latn",
+                    scriptDirection: "LTR"
+                ),
+                countries: [
+                    BibleCountry(id: "US", name: "United States", nameLocal: "United States")
+                ],
+                type: "text",
+                updatedAt: "2021-11-01T00:00:00.000Z",
+                audioBibles: nil
+            ),
+            Bible(
+                id: "65eec8e0b60e656b-01",
+                dblId: "65eec8e0b60e656b",
+                abbreviation: "NKJV",
+                abbreviationLocal: "NKJV",
+                name: "New King James Version",
+                nameLocal: "New King James Version",
+                description: "The New King James Version (NKJV) is a modern English translation.",
+                relatedDbl: nil,
+                language: BibleLanguage(
+                    id: "eng",
+                    name: "English",
+                    nameLocal: "English",
+                    script: "Latn",
+                    scriptDirection: "LTR"
+                ),
+                countries: [
+                    BibleCountry(id: "US", name: "United States", nameLocal: "United States")
+                ],
+                type: "text",
+                updatedAt: "2021-11-01T00:00:00.000Z",
+                audioBibles: nil
+            ),
+            Bible(
+                id: "fae2bcaf7bfea3b1-01",
+                dblId: "fae2bcaf7bfea3b1",
+                abbreviation: "NLT",
+                abbreviationLocal: "NLT",
+                name: "New Living Translation",
+                nameLocal: "New Living Translation",
+                description: "The New Living Translation (NLT) is a modern English translation.",
+                relatedDbl: nil,
+                language: BibleLanguage(
+                    id: "eng",
+                    name: "English",
+                    nameLocal: "English",
+                    script: "Latn",
+                    scriptDirection: "LTR"
+                ),
+                countries: [
+                    BibleCountry(id: "US", name: "United States", nameLocal: "United States")
+                ],
+                type: "text",
+                updatedAt: "2021-11-01T00:00:00.000Z",
+                audioBibles: nil
+            ),
+            Bible(
+                id: "85eae2b6f4d35b2c-01",
+                dblId: "85eae2b6f4d35b2c",
+                abbreviation: "GNT",
+                abbreviationLocal: "GNT",
+                name: "Good News Translation",
+                nameLocal: "Good News Translation",
+                description: "The Good News Translation (GNT) is a simple, readable English translation.",
+                relatedDbl: nil,
+                language: BibleLanguage(
+                    id: "eng",
+                    name: "English",
+                    nameLocal: "English",
+                    script: "Latn",
+                    scriptDirection: "LTR"
+                ),
+                countries: [
+                    BibleCountry(id: "US", name: "United States", nameLocal: "United States")
+                ],
+                type: "text",
+                updatedAt: "2021-11-01T00:00:00.000Z",
+                audioBibles: nil
+            ),
+            Bible(
+                id: "e442e6e6b1d04c96-01",
+                dblId: "e442e6e6b1d04c96",
+                abbreviation: "CEV",
+                abbreviationLocal: "CEV",
+                name: "Contemporary English Version",
+                nameLocal: "Contemporary English Version",
+                description: "The Contemporary English Version (CEV) is a clear and simple English translation.",
+                relatedDbl: nil,
+                language: BibleLanguage(
+                    id: "eng",
+                    name: "English",
+                    nameLocal: "English",
+                    script: "Latn",
+                    scriptDirection: "LTR"
+                ),
+                countries: [
+                    BibleCountry(id: "US", name: "United States", nameLocal: "United States")
+                ],
+                type: "text",
+                updatedAt: "2021-11-01T00:00:00.000Z",
+                audioBibles: nil
+            ),
+            Bible(
+                id: "9879dbb7cfe39e4d-01",
+                dblId: "9879dbb7cfe39e4d",
+                abbreviation: "WEB",
+                abbreviationLocal: "WEB",
+                name: "World English Bible",
+                nameLocal: "World English Bible",
+                description: "The World English Bible (WEB) is a public domain modern English translation.",
                 relatedDbl: nil,
                 language: BibleLanguage(
                     id: "eng",
@@ -446,74 +584,74 @@ class BibleAPIService: ObservableObject {
         // Return standard 66 Bible books
         return [
             // Old Testament
-            BibleBook(id: "GEN", bibleId: defaultBibleId, abbreviation: "Gen", name: "Genesis", nameLong: "Genesis"),
-            BibleBook(id: "EXO", bibleId: defaultBibleId, abbreviation: "Exo", name: "Exodus", nameLong: "Exodus"),
-            BibleBook(id: "LEV", bibleId: defaultBibleId, abbreviation: "Lev", name: "Leviticus", nameLong: "Leviticus"),
-            BibleBook(id: "NUM", bibleId: defaultBibleId, abbreviation: "Num", name: "Numbers", nameLong: "Numbers"),
-            BibleBook(id: "DEU", bibleId: defaultBibleId, abbreviation: "Deu", name: "Deuteronomy", nameLong: "Deuteronomy"),
-            BibleBook(id: "JOS", bibleId: defaultBibleId, abbreviation: "Jos", name: "Joshua", nameLong: "Joshua"),
-            BibleBook(id: "JDG", bibleId: defaultBibleId, abbreviation: "Jdg", name: "Judges", nameLong: "Judges"),
-            BibleBook(id: "RUT", bibleId: defaultBibleId, abbreviation: "Rut", name: "Ruth", nameLong: "Ruth"),
-            BibleBook(id: "1SA", bibleId: defaultBibleId, abbreviation: "1Sa", name: "1 Samuel", nameLong: "1 Samuel"),
-            BibleBook(id: "2SA", bibleId: defaultBibleId, abbreviation: "2Sa", name: "2 Samuel", nameLong: "2 Samuel"),
-            BibleBook(id: "1KI", bibleId: defaultBibleId, abbreviation: "1Ki", name: "1 Kings", nameLong: "1 Kings"),
-            BibleBook(id: "2KI", bibleId: defaultBibleId, abbreviation: "2Ki", name: "2 Kings", nameLong: "2 Kings"),
-            BibleBook(id: "1CH", bibleId: defaultBibleId, abbreviation: "1Ch", name: "1 Chronicles", nameLong: "1 Chronicles"),
-            BibleBook(id: "2CH", bibleId: defaultBibleId, abbreviation: "2Ch", name: "2 Chronicles", nameLong: "2 Chronicles"),
-            BibleBook(id: "EZR", bibleId: defaultBibleId, abbreviation: "Ezr", name: "Ezra", nameLong: "Ezra"),
-            BibleBook(id: "NEH", bibleId: defaultBibleId, abbreviation: "Neh", name: "Nehemiah", nameLong: "Nehemiah"),
-            BibleBook(id: "EST", bibleId: defaultBibleId, abbreviation: "Est", name: "Esther", nameLong: "Esther"),
-            BibleBook(id: "JOB", bibleId: defaultBibleId, abbreviation: "Job", name: "Job", nameLong: "Job"),
-            BibleBook(id: "PSA", bibleId: defaultBibleId, abbreviation: "Psa", name: "Psalms", nameLong: "Psalms"),
-            BibleBook(id: "PRO", bibleId: defaultBibleId, abbreviation: "Pro", name: "Proverbs", nameLong: "Proverbs"),
-            BibleBook(id: "ECC", bibleId: defaultBibleId, abbreviation: "Ecc", name: "Ecclesiastes", nameLong: "Ecclesiastes"),
-            BibleBook(id: "SNG", bibleId: defaultBibleId, abbreviation: "Sng", name: "Song of Songs", nameLong: "Song of Songs"),
-            BibleBook(id: "ISA", bibleId: defaultBibleId, abbreviation: "Isa", name: "Isaiah", nameLong: "Isaiah"),
-            BibleBook(id: "JER", bibleId: defaultBibleId, abbreviation: "Jer", name: "Jeremiah", nameLong: "Jeremiah"),
-            BibleBook(id: "LAM", bibleId: defaultBibleId, abbreviation: "Lam", name: "Lamentations", nameLong: "Lamentations"),
-            BibleBook(id: "EZK", bibleId: defaultBibleId, abbreviation: "Ezk", name: "Ezekiel", nameLong: "Ezekiel"),
-            BibleBook(id: "DAN", bibleId: defaultBibleId, abbreviation: "Dan", name: "Daniel", nameLong: "Daniel"),
-            BibleBook(id: "HOS", bibleId: defaultBibleId, abbreviation: "Hos", name: "Hosea", nameLong: "Hosea"),
-            BibleBook(id: "JOL", bibleId: defaultBibleId, abbreviation: "Jol", name: "Joel", nameLong: "Joel"),
-            BibleBook(id: "AMO", bibleId: defaultBibleId, abbreviation: "Amo", name: "Amos", nameLong: "Amos"),
-            BibleBook(id: "OBA", bibleId: defaultBibleId, abbreviation: "Oba", name: "Obadiah", nameLong: "Obadiah"),
-            BibleBook(id: "JON", bibleId: defaultBibleId, abbreviation: "Jon", name: "Jonah", nameLong: "Jonah"),
-            BibleBook(id: "MIC", bibleId: defaultBibleId, abbreviation: "Mic", name: "Micah", nameLong: "Micah"),
-            BibleBook(id: "NAM", bibleId: defaultBibleId, abbreviation: "Nam", name: "Nahum", nameLong: "Nahum"),
-            BibleBook(id: "HAB", bibleId: defaultBibleId, abbreviation: "Hab", name: "Habakkuk", nameLong: "Habakkuk"),
-            BibleBook(id: "ZEP", bibleId: defaultBibleId, abbreviation: "Zep", name: "Zephaniah", nameLong: "Zephaniah"),
-            BibleBook(id: "HAG", bibleId: defaultBibleId, abbreviation: "Hag", name: "Haggai", nameLong: "Haggai"),
-            BibleBook(id: "ZEC", bibleId: defaultBibleId, abbreviation: "Zec", name: "Zechariah", nameLong: "Zechariah"),
-            BibleBook(id: "MAL", bibleId: defaultBibleId, abbreviation: "Mal", name: "Malachi", nameLong: "Malachi"),
+            BibleBook(id: "GEN", bibleId: "06125adad2d5898a-01", abbreviation: "Gen", name: "Genesis", nameLong: "Genesis"),
+            BibleBook(id: "EXO", bibleId: "06125adad2d5898a-01", abbreviation: "Exo", name: "Exodus", nameLong: "Exodus"),
+            BibleBook(id: "LEV", bibleId: "06125adad2d5898a-01", abbreviation: "Lev", name: "Leviticus", nameLong: "Leviticus"),
+            BibleBook(id: "NUM", bibleId: "06125adad2d5898a-01", abbreviation: "Num", name: "Numbers", nameLong: "Numbers"),
+            BibleBook(id: "DEU", bibleId: "06125adad2d5898a-01", abbreviation: "Deu", name: "Deuteronomy", nameLong: "Deuteronomy"),
+            BibleBook(id: "JOS", bibleId: "06125adad2d5898a-01", abbreviation: "Jos", name: "Joshua", nameLong: "Joshua"),
+            BibleBook(id: "JDG", bibleId: "06125adad2d5898a-01", abbreviation: "Jdg", name: "Judges", nameLong: "Judges"),
+            BibleBook(id: "RUT", bibleId: "06125adad2d5898a-01", abbreviation: "Rut", name: "Ruth", nameLong: "Ruth"),
+            BibleBook(id: "1SA", bibleId: "06125adad2d5898a-01", abbreviation: "1Sa", name: "1 Samuel", nameLong: "1 Samuel"),
+            BibleBook(id: "2SA", bibleId: "06125adad2d5898a-01", abbreviation: "2Sa", name: "2 Samuel", nameLong: "2 Samuel"),
+            BibleBook(id: "1KI", bibleId: "06125adad2d5898a-01", abbreviation: "1Ki", name: "1 Kings", nameLong: "1 Kings"),
+            BibleBook(id: "2KI", bibleId: "06125adad2d5898a-01", abbreviation: "2Ki", name: "2 Kings", nameLong: "2 Kings"),
+            BibleBook(id: "1CH", bibleId: "06125adad2d5898a-01", abbreviation: "1Ch", name: "1 Chronicles", nameLong: "1 Chronicles"),
+            BibleBook(id: "2CH", bibleId: "06125adad2d5898a-01", abbreviation: "2Ch", name: "2 Chronicles", nameLong: "2 Chronicles"),
+            BibleBook(id: "EZR", bibleId: "06125adad2d5898a-01", abbreviation: "Ezr", name: "Ezra", nameLong: "Ezra"),
+            BibleBook(id: "NEH", bibleId: "06125adad2d5898a-01", abbreviation: "Neh", name: "Nehemiah", nameLong: "Nehemiah"),
+            BibleBook(id: "EST", bibleId: "06125adad2d5898a-01", abbreviation: "Est", name: "Esther", nameLong: "Esther"),
+            BibleBook(id: "JOB", bibleId: "06125adad2d5898a-01", abbreviation: "Job", name: "Job", nameLong: "Job"),
+            BibleBook(id: "PSA", bibleId: "06125adad2d5898a-01", abbreviation: "Psa", name: "Psalms", nameLong: "Psalms"),
+            BibleBook(id: "PRO", bibleId: "06125adad2d5898a-01", abbreviation: "Pro", name: "Proverbs", nameLong: "Proverbs"),
+            BibleBook(id: "ECC", bibleId: "06125adad2d5898a-01", abbreviation: "Ecc", name: "Ecclesiastes", nameLong: "Ecclesiastes"),
+            BibleBook(id: "SNG", bibleId: "06125adad2d5898a-01", abbreviation: "Sng", name: "Song of Songs", nameLong: "Song of Songs"),
+            BibleBook(id: "ISA", bibleId: "06125adad2d5898a-01", abbreviation: "Isa", name: "Isaiah", nameLong: "Isaiah"),
+            BibleBook(id: "JER", bibleId: "06125adad2d5898a-01", abbreviation: "Jer", name: "Jeremiah", nameLong: "Jeremiah"),
+            BibleBook(id: "LAM", bibleId: "06125adad2d5898a-01", abbreviation: "Lam", name: "Lamentations", nameLong: "Lamentations"),
+            BibleBook(id: "EZK", bibleId: "06125adad2d5898a-01", abbreviation: "Ezk", name: "Ezekiel", nameLong: "Ezekiel"),
+            BibleBook(id: "DAN", bibleId: "06125adad2d5898a-01", abbreviation: "Dan", name: "Daniel", nameLong: "Daniel"),
+            BibleBook(id: "HOS", bibleId: "06125adad2d5898a-01", abbreviation: "Hos", name: "Hosea", nameLong: "Hosea"),
+            BibleBook(id: "JOL", bibleId: "06125adad2d5898a-01", abbreviation: "Jol", name: "Joel", nameLong: "Joel"),
+            BibleBook(id: "AMO", bibleId: "06125adad2d5898a-01", abbreviation: "Amo", name: "Amos", nameLong: "Amos"),
+            BibleBook(id: "OBA", bibleId: "06125adad2d5898a-01", abbreviation: "Oba", name: "Obadiah", nameLong: "Obadiah"),
+            BibleBook(id: "JON", bibleId: "06125adad2d5898a-01", abbreviation: "Jon", name: "Jonah", nameLong: "Jonah"),
+            BibleBook(id: "MIC", bibleId: "06125adad2d5898a-01", abbreviation: "Mic", name: "Micah", nameLong: "Micah"),
+            BibleBook(id: "NAM", bibleId: "06125adad2d5898a-01", abbreviation: "Nam", name: "Nahum", nameLong: "Nahum"),
+            BibleBook(id: "HAB", bibleId: "06125adad2d5898a-01", abbreviation: "Hab", name: "Habakkuk", nameLong: "Habakkuk"),
+            BibleBook(id: "ZEP", bibleId: "06125adad2d5898a-01", abbreviation: "Zep", name: "Zephaniah", nameLong: "Zephaniah"),
+            BibleBook(id: "HAG", bibleId: "06125adad2d5898a-01", abbreviation: "Hag", name: "Haggai", nameLong: "Haggai"),
+            BibleBook(id: "ZEC", bibleId: "06125adad2d5898a-01", abbreviation: "Zec", name: "Zechariah", nameLong: "Zechariah"),
+            BibleBook(id: "MAL", bibleId: "06125adad2d5898a-01", abbreviation: "Mal", name: "Malachi", nameLong: "Malachi"),
             
             // New Testament
-            BibleBook(id: "MAT", bibleId: defaultBibleId, abbreviation: "Mat", name: "Matthew", nameLong: "Matthew"),
-            BibleBook(id: "MRK", bibleId: defaultBibleId, abbreviation: "Mrk", name: "Mark", nameLong: "Mark"),
-            BibleBook(id: "LUK", bibleId: defaultBibleId, abbreviation: "Luk", name: "Luke", nameLong: "Luke"),
-            BibleBook(id: "JHN", bibleId: defaultBibleId, abbreviation: "Jhn", name: "John", nameLong: "John"),
-            BibleBook(id: "ACT", bibleId: defaultBibleId, abbreviation: "Act", name: "Acts", nameLong: "Acts"),
-            BibleBook(id: "ROM", bibleId: defaultBibleId, abbreviation: "Rom", name: "Romans", nameLong: "Romans"),
-            BibleBook(id: "1CO", bibleId: defaultBibleId, abbreviation: "1Co", name: "1 Corinthians", nameLong: "1 Corinthians"),
-            BibleBook(id: "2CO", bibleId: defaultBibleId, abbreviation: "2Co", name: "2 Corinthians", nameLong: "2 Corinthians"),
-            BibleBook(id: "GAL", bibleId: defaultBibleId, abbreviation: "Gal", name: "Galatians", nameLong: "Galatians"),
-            BibleBook(id: "EPH", bibleId: defaultBibleId, abbreviation: "Eph", name: "Ephesians", nameLong: "Ephesians"),
-            BibleBook(id: "PHP", bibleId: defaultBibleId, abbreviation: "Php", name: "Philippians", nameLong: "Philippians"),
-            BibleBook(id: "COL", bibleId: defaultBibleId, abbreviation: "Col", name: "Colossians", nameLong: "Colossians"),
-            BibleBook(id: "1TH", bibleId: defaultBibleId, abbreviation: "1Th", name: "1 Thessalonians", nameLong: "1 Thessalonians"),
-            BibleBook(id: "2TH", bibleId: defaultBibleId, abbreviation: "2Th", name: "2 Thessalonians", nameLong: "2 Thessalonians"),
-            BibleBook(id: "1TI", bibleId: defaultBibleId, abbreviation: "1Ti", name: "1 Timothy", nameLong: "1 Timothy"),
-            BibleBook(id: "2TI", bibleId: defaultBibleId, abbreviation: "2Ti", name: "2 Timothy", nameLong: "2 Timothy"),
-            BibleBook(id: "TIT", bibleId: defaultBibleId, abbreviation: "Tit", name: "Titus", nameLong: "Titus"),
-            BibleBook(id: "PHM", bibleId: defaultBibleId, abbreviation: "Phm", name: "Philemon", nameLong: "Philemon"),
-            BibleBook(id: "HEB", bibleId: defaultBibleId, abbreviation: "Heb", name: "Hebrews", nameLong: "Hebrews"),
-            BibleBook(id: "JAS", bibleId: defaultBibleId, abbreviation: "Jas", name: "James", nameLong: "James"),
-            BibleBook(id: "1PE", bibleId: defaultBibleId, abbreviation: "1Pe", name: "1 Peter", nameLong: "1 Peter"),
-            BibleBook(id: "2PE", bibleId: defaultBibleId, abbreviation: "2Pe", name: "2 Peter", nameLong: "2 Peter"),
-            BibleBook(id: "1JN", bibleId: defaultBibleId, abbreviation: "1Jn", name: "1 John", nameLong: "1 John"),
-            BibleBook(id: "2JN", bibleId: defaultBibleId, abbreviation: "2Jn", name: "2 John", nameLong: "2 John"),
-            BibleBook(id: "3JN", bibleId: defaultBibleId, abbreviation: "3Jn", name: "3 John", nameLong: "3 John"),
-            BibleBook(id: "JUD", bibleId: defaultBibleId, abbreviation: "Jud", name: "Jude", nameLong: "Jude"),
-            BibleBook(id: "REV", bibleId: defaultBibleId, abbreviation: "Rev", name: "Revelation", nameLong: "Revelation")
+            BibleBook(id: "MAT", bibleId: "06125adad2d5898a-01", abbreviation: "Mat", name: "Matthew", nameLong: "Matthew"),
+            BibleBook(id: "MRK", bibleId: "06125adad2d5898a-01", abbreviation: "Mrk", name: "Mark", nameLong: "Mark"),
+            BibleBook(id: "LUK", bibleId: "06125adad2d5898a-01", abbreviation: "Luk", name: "Luke", nameLong: "Luke"),
+            BibleBook(id: "JHN", bibleId: "06125adad2d5898a-01", abbreviation: "Jhn", name: "John", nameLong: "John"),
+            BibleBook(id: "ACT", bibleId: "06125adad2d5898a-01", abbreviation: "Act", name: "Acts", nameLong: "Acts"),
+            BibleBook(id: "ROM", bibleId: "06125adad2d5898a-01", abbreviation: "Rom", name: "Romans", nameLong: "Romans"),
+            BibleBook(id: "1CO", bibleId: "06125adad2d5898a-01", abbreviation: "1Co", name: "1 Corinthians", nameLong: "1 Corinthians"),
+            BibleBook(id: "2CO", bibleId: "06125adad2d5898a-01", abbreviation: "2Co", name: "2 Corinthians", nameLong: "2 Corinthians"),
+            BibleBook(id: "GAL", bibleId: "06125adad2d5898a-01", abbreviation: "Gal", name: "Galatians", nameLong: "Galatians"),
+            BibleBook(id: "EPH", bibleId: "06125adad2d5898a-01", abbreviation: "Eph", name: "Ephesians", nameLong: "Ephesians"),
+            BibleBook(id: "PHP", bibleId: "06125adad2d5898a-01", abbreviation: "Php", name: "Philippians", nameLong: "Philippians"),
+            BibleBook(id: "COL", bibleId: "06125adad2d5898a-01", abbreviation: "Col", name: "Colossians", nameLong: "Colossians"),
+            BibleBook(id: "1TH", bibleId: "06125adad2d5898a-01", abbreviation: "1Th", name: "1 Thessalonians", nameLong: "1 Thessalonians"),
+            BibleBook(id: "2TH", bibleId: "06125adad2d5898a-01", abbreviation: "2Th", name: "2 Thessalonians", nameLong: "2 Thessalonians"),
+            BibleBook(id: "1TI", bibleId: "06125adad2d5898a-01", abbreviation: "1Ti", name: "1 Timothy", nameLong: "1 Timothy"),
+            BibleBook(id: "2TI", bibleId: "06125adad2d5898a-01", abbreviation: "2Ti", name: "2 Timothy", nameLong: "2 Timothy"),
+            BibleBook(id: "TIT", bibleId: "06125adad2d5898a-01", abbreviation: "Tit", name: "Titus", nameLong: "Titus"),
+            BibleBook(id: "PHM", bibleId: "06125adad2d5898a-01", abbreviation: "Phm", name: "Philemon", nameLong: "Philemon"),
+            BibleBook(id: "HEB", bibleId: "06125adad2d5898a-01", abbreviation: "Heb", name: "Hebrews", nameLong: "Hebrews"),
+            BibleBook(id: "JAS", bibleId: "06125adad2d5898a-01", abbreviation: "Jas", name: "James", nameLong: "James"),
+            BibleBook(id: "1PE", bibleId: "06125adad2d5898a-01", abbreviation: "1Pe", name: "1 Peter", nameLong: "1 Peter"),
+            BibleBook(id: "2PE", bibleId: "06125adad2d5898a-01", abbreviation: "2Pe", name: "2 Peter", nameLong: "2 Peter"),
+            BibleBook(id: "1JN", bibleId: "06125adad2d5898a-01", abbreviation: "1Jn", name: "1 John", nameLong: "1 John"),
+            BibleBook(id: "2JN", bibleId: "06125adad2d5898a-01", abbreviation: "2Jn", name: "2 John", nameLong: "2 John"),
+            BibleBook(id: "3JN", bibleId: "06125adad2d5898a-01", abbreviation: "3Jn", name: "3 John", nameLong: "3 John"),
+            BibleBook(id: "JUD", bibleId: "06125adad2d5898a-01", abbreviation: "Jud", name: "Jude", nameLong: "Jude"),
+            BibleBook(id: "REV", bibleId: "06125adad2d5898a-01", abbreviation: "Rev", name: "Revelation", nameLong: "Revelation")
         ]
     }
     
