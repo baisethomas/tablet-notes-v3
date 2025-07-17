@@ -64,7 +64,7 @@ class AssemblyAITranscriptionService: ObservableObject {
     }
 
     // 1. Get Upload URL from backend
-    private func getUploadURL(fileName: String, completion: @escaping (Result<GenerateUploadURLResponse, Error>) -> Void) {
+    private func getUploadURL(fileName: String, contentType: String, fileSize: Int, completion: @escaping (Result<GenerateUploadURLResponse, Error>) -> Void) {
         print("[API] Getting upload URL for \(fileName)")
         
         Task {
@@ -81,8 +81,12 @@ class AssemblyAITranscriptionService: ObservableObject {
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-                let body = ["fileName": fileName]
-                request.httpBody = try? JSONEncoder().encode(body)
+                let body = [
+                    "fileName": fileName,
+                    "contentType": contentType,
+                    "fileSize": fileSize
+                ] as [String : Any]
+                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
                 URLSession.shared.dataTask(with: request) { data, response, error in
                     if let error = error {
@@ -302,24 +306,49 @@ class AssemblyAITranscriptionService: ObservableObject {
     func transcribeAudioFile(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         let fileName = url.lastPathComponent
         
-        getUploadURL(fileName: fileName) { result in
-            switch result {
-            case .success(let uploadInfo):
-                self.uploadFile(to: uploadInfo.uploadUrl, fileURL: url) { uploadResult in
-                    switch uploadResult {
-                    case .success:
-                        self.startTranscription(filePath: uploadInfo.path) { transcriptionResult in
-                            completion(transcriptionResult)
-                        }
-                    case .failure(let error):
-                        print("[API] Upload failed: \(error.localizedDescription)")
-                        completion(.failure(error))
-                    }
-                }
-            case .failure(let error):
-                print("[API] GetUploadURL failed: \(error.localizedDescription)")
-                completion(.failure(error))
+        // Get file information
+        do {
+            let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
+            let fileSize = resourceValues.fileSize ?? 0
+            
+            // Determine content type from file extension
+            let pathExtension = url.pathExtension.lowercased()
+            let contentType: String
+            switch pathExtension {
+            case "m4a":
+                contentType = "audio/m4a"
+            case "mp3":
+                contentType = "audio/mpeg"
+            case "wav":
+                contentType = "audio/wav"
+            case "mp4":
+                contentType = "audio/mp4"
+            default:
+                contentType = "audio/m4a" // Default fallback
             }
+            
+            getUploadURL(fileName: fileName, contentType: contentType, fileSize: fileSize) { result in
+                switch result {
+                case .success(let uploadInfo):
+                    self.uploadFile(to: uploadInfo.uploadUrl, fileURL: url) { uploadResult in
+                        switch uploadResult {
+                        case .success:
+                            self.startTranscription(filePath: uploadInfo.path) { transcriptionResult in
+                                completion(transcriptionResult)
+                            }
+                        case .failure(let error):
+                            print("[API] Upload failed: \(error.localizedDescription)")
+                            completion(.failure(error))
+                        }
+                    }
+                case .failure(let error):
+                    print("[API] GetUploadURL failed: \(error.localizedDescription)")
+                    completion(.failure(error))
+                }
+            }
+        } catch {
+            print("[API] Failed to get file information: \(error.localizedDescription)")
+            completion(.failure(error))
         }
     }
 } 

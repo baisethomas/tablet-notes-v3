@@ -30,9 +30,12 @@ class SupabaseService: SupabaseServiceProtocol {
     }
 
     /// Fetches a secure, one-time URL for uploading a file.
-    /// - Parameter fileName: The name of the file to be uploaded (e.g., "recording.m4a").
+    /// - Parameters:
+    ///   - fileName: The name of the file to be uploaded (e.g., "recording.m4a").
+    ///   - contentType: The MIME type of the file (e.g., "audio/m4a").
+    ///   - fileSize: The size of the file in bytes.
     /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
-    func getSignedUploadURL(for fileName: String) async throws -> (uploadUrl: URL, path: String) {
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
         // Get authentication token
         let session = try await supabase.auth.session
         
@@ -42,8 +45,12 @@ class SupabaseService: SupabaseServiceProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
 
-        let body = ["fileName": fileName]
-        request.httpBody = try JSONEncoder().encode(body)
+        let body = [
+            "fileName": fileName,
+            "contentType": contentType,
+            "fileSize": fileSize
+        ] as [String : Any]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -64,6 +71,39 @@ class SupabaseService: SupabaseServiceProtocol {
         }
         
         return (uploadUrl, decodedResponse.path)
+    }
+    
+    /// Convenience method that gets file information and requests an upload URL
+    /// - Parameter fileURL: The local URL of the file to be uploaded
+    /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
+    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
+        // Get file attributes
+        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+        let fileSize = resourceValues.fileSize ?? 0
+        
+        // Determine content type from file extension if not available
+        let fileName = fileURL.lastPathComponent
+        let contentType: String
+        if let resourceContentType = resourceValues.contentType?.identifier {
+            contentType = resourceContentType
+        } else {
+            // Fallback based on file extension
+            let pathExtension = fileURL.pathExtension.lowercased()
+            switch pathExtension {
+            case "m4a":
+                contentType = "audio/m4a"
+            case "mp3":
+                contentType = "audio/mpeg"
+            case "wav":
+                contentType = "audio/wav"
+            case "mp4":
+                contentType = "audio/mp4"
+            default:
+                contentType = "audio/m4a" // Default fallback
+            }
+        }
+        
+        return try await getSignedUploadURL(for: fileName, contentType: contentType, fileSize: fileSize)
     }
 
     /// Uploads the audio file from a local URL to the provided signed URL.

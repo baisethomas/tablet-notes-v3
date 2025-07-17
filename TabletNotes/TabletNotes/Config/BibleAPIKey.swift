@@ -1,5 +1,4 @@
 import Foundation
-import Supabase
 
 // MARK: - Bible Translation
 struct BibleTranslation: Identifiable, Hashable, Codable {
@@ -9,136 +8,81 @@ struct BibleTranslation: Identifiable, Hashable, Codable {
     let description: String
     let language: String
     
-    static let esv = BibleTranslation(
-        id: "06125adad2d5898a-01",
-        name: "English Standard Version",
-        abbreviation: "ESV",
-        description: "Literal translation emphasizing word-for-word accuracy",
-        language: "English"
-    )
-    
     static let kjv = BibleTranslation(
-        id: "de4e12af7f28f599-02",
+        id: "06125adad2d5898a-01",
         name: "King James Version",
         abbreviation: "KJV",
         description: "Classic English translation from 1611",
         language: "English"
     )
-    
-    static let niv = BibleTranslation(
-        id: "78a9f6124f344018-01",
-        name: "New International Version",
-        abbreviation: "NIV",
-        description: "Balanced approach between word-for-word and thought-for-thought",
-        language: "English"
-    )
-    
-    static let nlt = BibleTranslation(
-        id: "116f9b6a252c0c0e-01",
-        name: "New Living Translation",
-        abbreviation: "NLT",
-        description: "Thought-for-thought translation for modern readers",
-        language: "English"
-    )
-    
     static let nasb = BibleTranslation(
-        id: "f72b840c855f362c-04",
+        id: "bba9f40183526463-01",
         name: "New American Standard Bible",
         abbreviation: "NASB",
         description: "Literal translation with updated language",
         language: "English"
     )
-    
+    static let nkjv = BibleTranslation(
+        id: "65eec8e0b60e656b-01",
+        name: "New King James Version",
+        abbreviation: "NKJV",
+        description: "Modern update of the classic KJV",
+        language: "English"
+    )
+    static let nlt = BibleTranslation(
+        id: "fae2bcaf7bfea3b1-01",
+        name: "New Living Translation",
+        abbreviation: "NLT",
+        description: "Thought-for-thought translation for modern readers",
+        language: "English"
+    )
+    static let gnt = BibleTranslation(
+        id: "85eae2b6f4d35b2c-01",
+        name: "Good News Translation",
+        abbreviation: "GNT",
+        description: "Simple, readable English translation",
+        language: "English"
+    )
+    static let cev = BibleTranslation(
+        id: "e442e6e6b1d04c96-01",
+        name: "Contemporary English Version",
+        abbreviation: "CEV",
+        description: "Clear and simple English translation",
+        language: "English"
+    )
+    static let web = BibleTranslation(
+        id: "9879dbb7cfe39e4d-01",
+        name: "World English Bible",
+        abbreviation: "WEB",
+        description: "Public domain modern English translation",
+        language: "English"
+    )
     static let allTranslations: [BibleTranslation] = [
-        .esv, .niv, .nlt, .kjv, .nasb
+        .kjv, .nasb, .nkjv, .nlt, .gnt, .cev, .web
     ]
 }
 
 // MARK: - Bible API Configuration
 struct BibleAPIConfig {
     static let netlifyBaseURL = "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions"
-    
-    // Default Bible version - English Standard Version
-    static let defaultBibleId = BibleTranslation.esv.id
-    
+    // Default Bible version - King James Version
+    static let defaultBibleId = BibleTranslation.kjv.id
     // Get user's preferred Bible translation from UserDefaults
     static var preferredBibleTranslation: BibleTranslation {
         let savedId = UserDefaults.standard.string(forKey: "preferredBibleTranslationId") ?? defaultBibleId
-        return BibleTranslation.allTranslations.first { $0.id == savedId } ?? BibleTranslation.esv
+        return BibleTranslation.allTranslations.first { $0.id == savedId } ?? BibleTranslation.kjv
     }
-    
-    // Save user's preferred Bible translation to UserDefaults
     static func setPreferredBibleTranslation(_ translation: BibleTranslation) {
         UserDefaults.standard.set(translation.id, forKey: "preferredBibleTranslationId")
     }
-    
-    // Alternative Bible versions (legacy support)
     struct BibleVersions {
-        static let esv = BibleTranslation.esv.id
         static let kjv = BibleTranslation.kjv.id
-        static let niv = BibleTranslation.niv.id
-        static let nlt = BibleTranslation.nlt.id
         static let nasb = BibleTranslation.nasb.id
-    }
-}
-
-// MARK: - Bible API Service
-class BibleNetlifyAPIService {
-    private let netlifyBaseURL = BibleAPIConfig.netlifyBaseURL
-    private let supabase: SupabaseClient
-    
-    init() {
-        guard let url = URL(string: SupabaseConfig.url) else {
-            fatalError("Invalid Supabase URL")
-        }
-        self.supabase = SupabaseClient(supabaseURL: url, supabaseKey: SupabaseConfig.anonKey)
-    }
-    
-    func makeRequest(endpoint: String, method: String = "GET") async throws -> [String: Any] {
-        guard let url = URL(string: "\(netlifyBaseURL)/bible-api") else {
-            throw NSError(domain: "BibleAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Add authorization header using Supabase session
-        let session = try await supabase.auth.session
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        
-        let requestBody = [
-            "endpoint": endpoint,
-            "method": method
-        ]
-        
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "BibleAPI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            throw NSError(domain: "BibleAPI", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
-        }
-        
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NSError(domain: "BibleAPI", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
-        }
-        
-        // Check if this is an error response from our Netlify function
-        if let error = json["error"] as? String {
-            let statusCode = json["status"] as? Int ?? 500
-            throw NSError(domain: "BibleAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: error])
-        }
-        
-        guard let apiData = json["data"] as? [String: Any] else {
-            throw NSError(domain: "BibleAPI", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing data in response"])
-        }
-        
-        return apiData
+        static let nkjv = BibleTranslation.nkjv.id
+        static let nlt = BibleTranslation.nlt.id
+        static let gnt = BibleTranslation.gnt.id
+        static let cev = BibleTranslation.cev.id
+        static let web = BibleTranslation.web.id
     }
 }
 

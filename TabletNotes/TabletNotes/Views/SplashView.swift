@@ -7,15 +7,13 @@ struct SplashView: View {
     @State private var textOpacity: Double = 0.0
     
     let onComplete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         ZStack {
-            // Background gradient (adaptive for dark mode)
+            // Adaptive background gradient for dark/light mode
             LinearGradient(
-                gradient: Gradient(colors: [
-                    Color.adaptiveBackground,
-                    Color.adaptiveSecondaryBackground
-                ]),
+                gradient: Gradient(colors: colorScheme == .dark ? [Color.navyDarkPrimary, Color.navyDarkSecondary] : [Color.adaptiveBackground, Color.adaptiveSecondaryBackground]),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -111,10 +109,11 @@ struct MinimalSplashView: View {
     @State private var logoOpacity: Double = 0.0
     
     let onComplete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         ZStack {
-            Color.adaptiveBackground
+            (colorScheme == .dark ? Color.navyDarkPrimary : Color.adaptiveBackground)
                 .ignoresSafeArea()
             
             VStack(spacing: 24) {
@@ -165,13 +164,9 @@ struct BrandSplashView: View {
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         ZStack {
-            // Animated background (adaptive radial gradient)
+            // Adaptive radial gradient for dark/light mode
             RadialGradient(
-                gradient: Gradient(colors: [
-                    colorScheme == .dark ? Color.navyDarkPrimary.opacity(0.9) : Color.navyDarkPrimary.opacity(0.2),
-                    colorScheme == .dark ? Color.navyDarkSecondary.opacity(0.7) : Color.navyDarkSecondary.opacity(0.05),
-                    Color.adaptiveBackground
-                ]),
+                gradient: Gradient(colors: colorScheme == .dark ? [Color.navyDarkPrimary.opacity(0.9), Color.navyDarkSecondary.opacity(0.7), Color.navyDarkPrimary] : [Color.adaptiveBackground, Color.adaptiveSecondaryBackground, Color.adaptiveBackground]),
                 center: .center,
                 startRadius: 50,
                 endRadius: 300
