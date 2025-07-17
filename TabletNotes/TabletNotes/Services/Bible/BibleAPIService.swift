@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Supabase
 
 // Import ScriptureReference from ScriptureAnalysisServiceProtocol file
 // Since they're in the same module, no explicit import needed, but ensuring visibility
@@ -88,6 +89,7 @@ struct AudioBible: Codable {
 // MARK: - Bible API Service
 class BibleAPIService: ObservableObject {
     private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
+    private let supabase = SupabaseService.shared.client
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -108,8 +110,9 @@ class BibleAPIService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         
-        // Add authentication header if available (you'll need to implement this)
-        // request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        // Add authentication header
+        let session = try await supabase.auth.session
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
