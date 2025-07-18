@@ -1,0 +1,157 @@
+# Xcode
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.app
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xcuserstate
+*.xcodeproj/project.xcworkspace/xcshareddata/
+*.xcodeproj/xcuserdata/
+
+# Swift Package Manager
+/.build/
+/Packages/
+/SourcePackages/
+Package.resolved
+
+# Cocoapods
+/Pods/
+
+# Carthage
+/Carthage/
+
+# Fastlane
+/fastlane/report.xml
+/fastlane/Preview.html
+/fastlane/screenshots/
+/fastlane/test_output/
+*.dSYM/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+secrets.yml
+secrets.json
+*.pem
+*.key
+credentials.json
+# TabletNotes specific - These should be handled by environment variables, but ignoring just in case
+TabletNotes/TabletNotes/Resources/AssemblyAIKey.swift
+TabletNotes/TabletNotes/Resources/Config.plist
+
+# Binaries
+*.ipa
+*.zip
+*.tar.gz
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+# Thumbnails
+._*
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# tablet-notes-api
+tablet-notes-api/node_modules/
+tablet-notes-api/.env
+
+# Task Master
+.taskmaster/reports/
+.taskmaster/logs/
+tasks/
+!tasks/.gitkeep
+
+# Ignore user-specific Xcode project settings
+*.xcodeproj/project.xcworkspace/xcshareddata/
+*.xcodeproj/xcuserdata/
+
+# Xcode schemes and shared data
+*.xcscheme
+*.xcshareddata
+
+# SwiftPM
+.swiftpm/
+.build/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Environment files
+.env
+
+# Other
+.DS_Store
+
+TabletNotes.xcodeproj/xcshareddata/xcschemes/TabletNotes.xcscheme
+
+TabletNotes/Resources/AssemblyAIKey.swift
+
+# Added by Task Master AI
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+# Task files
+tasks.json
+tasks/
+
+# Task Master
+.taskmaster/
+tasks/
+
+#Cursor
+.cursor/
+
+# Config
+TabletNotes/TabletNotes/Resources/Config.plist 
+# Local Netlify folder
+.netlify
