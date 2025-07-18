@@ -32,12 +32,6 @@ struct GenerateUploadURLResponse: Codable {
     let token: String
 }
 
-private struct NetlifyResponse<T: Codable>: Codable {
-    let success: Bool
-    let data: T
-    let timestamp: String?
-}
-
 // For /api/transcribe
 // Based on transcribe.js, it returns a transcript-like object.
 // The `segments` are actually words from AssemblyAI.
@@ -112,12 +106,8 @@ class AssemblyAITranscriptionService: ObservableObject {
                     }
                     
                     do {
-                        let netlifyResponse = try JSONDecoder().decode(NetlifyResponse<GenerateUploadURLResponse>.self, from: data)
-                        guard netlifyResponse.success else {
-                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API request failed"])))
-                            return
-                        }
-                        completion(.success(netlifyResponse.data))
+                        let decodedResponse = try JSONDecoder().decode(GenerateUploadURLResponse.self, from: data)
+                        completion(.success(decodedResponse))
                     } catch {
                         if let responseString = String(data: data, encoding: .utf8) {
                             print("[API] Failed to decode JSON. Raw response: \(responseString)")
@@ -206,13 +196,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                     }
                     
                     do {
-                        let netlifyResponse = try JSONDecoder().decode(NetlifyResponse<TranscribeResponse>.self, from: data)
-                        guard netlifyResponse.success else {
-                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API request failed"])))
-                            return
-                        }
-                        
-                        let decodedResponse = netlifyResponse.data
+                        let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                         if decodedResponse.status == "completed" || decodedResponse.status == "success" {
                             let text = decodedResponse.text ?? ""
                             let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
@@ -264,13 +248,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                         return
                     }
                     do {
-                        let netlifyResponse = try JSONDecoder().decode(NetlifyResponse<TranscribeResponse>.self, from: data)
-                        guard netlifyResponse.success else {
-                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API request failed"])))
-                            return
-                        }
-                        
-                        let decodedResponse = netlifyResponse.data
+                        let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                         if decodedResponse.status == "completed" || decodedResponse.status == "success" {
                             let text = decodedResponse.text ?? ""
                             let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)

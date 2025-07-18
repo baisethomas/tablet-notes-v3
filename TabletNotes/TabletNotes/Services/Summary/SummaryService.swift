@@ -2,24 +2,6 @@ import Foundation
 import Combine
 import Supabase
 
-private struct NetlifyResponse<T: Codable>: Codable {
-    let success: Bool
-    let data: T
-    let timestamp: String?
-}
-
-struct SummaryResponse: Codable {
-    let summary: String
-    let usage: UsageInfo?
-    let userId: String?
-}
-
-struct UsageInfo: Codable {
-    let prompt_tokens: Int?
-    let completion_tokens: Int?
-    let total_tokens: Int?
-}
-
 class SummaryService: ObservableObject {
     private let summarySubject = CurrentValueSubject<String?, Never>(nil)
     let statusSubject = CurrentValueSubject<String, Never>("idle") // idle, pending, complete, failed
@@ -34,19 +16,6 @@ class SummaryService: ObservableObject {
         self.supabase = supabase
     }
     
-    private func mapServiceTypeToAPIType(_ serviceType: String) -> String {
-        switch serviceType.lowercased() {
-        case "sunday service", "sermon":
-            return "sermon"
-        case "bible study":
-            return "general"
-        case "notes":
-            return "notes"
-        default:
-            return "sermon" // Default fallback
-        }
-    }
-    
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
         statusSubject.send("pending")
@@ -57,12 +26,9 @@ class SummaryService: ObservableObject {
                 // Get authentication token
                 let session = try await supabase.auth.session
                 
-                let mappedType = mapServiceTypeToAPIType(type)
-                print("[SummaryService] Mapped '\(type)' to '\(mappedType)' for API")
-                
                 let requestBody: [String: Any] = [
                     "text": transcript,
-                    "type": mappedType
+                    "serviceType": type
                 ]
                 guard let url = URL(string: endpoint),
                       let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -125,42 +91,14 @@ class SummaryService: ObservableObject {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("[SummaryService] Netlify summarize response: \(jsonString.prefix(500))...")
             }
-            let summary: String
-            do {
-                // First try to decode as wrapped response (success case)
-                let netlifyResponse = try JSONDecoder().decode(NetlifyResponse<SummaryResponse>.self, from: data)
-                guard netlifyResponse.success else {
-                    print("[SummaryService] ERROR: API request failed")
-                    DispatchQueue.main.async {
-                        self.statusSubject.send("failed")
-                        self.summarySubject.send("[Error] API request failed.")
-                    }
-                    return
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let summary = json["summary"] as? String else {
+                print("[SummaryService] ERROR: Invalid response from Netlify summarize endpoint")
+                DispatchQueue.main.async {
+                    self.statusSubject.send("failed")
+                    self.summarySubject.send("[Error] Invalid response from Netlify summarize endpoint.")
                 }
-                summary = netlifyResponse.data.summary
-            } catch {
-                // If wrapped format fails, try to decode error response
-                do {
-                    if let errorJson = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let errorMessage = errorJson["message"] as? String {
-                        print("[SummaryService] ERROR: API validation error: \(errorMessage)")
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] \(errorMessage)")
-                        }
-                        return
-                    } else {
-                        throw error // Re-throw original error if error parsing fails
-                    }
-                } catch {
-                    // If both fail, use original error
-                    print("[SummaryService] ERROR: Invalid response from Netlify summarize endpoint: \(error)")
-                    DispatchQueue.main.async {
-                        self.statusSubject.send("failed")
-                        self.summarySubject.send("[Error] Invalid response from Netlify summarize endpoint.")
-                    }
-                    return
-                }
+                return
             }
             print("[SummaryService] Summary content received (first 200 chars): \(summary.prefix(200))...")
             DispatchQueue.main.async {

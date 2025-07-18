@@ -28,12 +28,6 @@ class SupabaseService: SupabaseServiceProtocol {
         let path: String
         let token: String
     }
-    
-    private struct NetlifyResponse<T: Codable>: Codable {
-        let success: Bool
-        let data: T
-        let timestamp: String?
-    }
 
     /// Fetches a secure, one-time URL for uploading a file.
     /// - Parameters:
@@ -72,12 +66,7 @@ class SupabaseService: SupabaseServiceProtocol {
             throw URLError(.badServerResponse)
         }
 
-        let netlifyResponse = try JSONDecoder().decode(NetlifyResponse<SignedUploadURLResponse>.self, from: data)
-        guard netlifyResponse.success else {
-            throw URLError(.badServerResponse)
-        }
-        
-        let decodedResponse = netlifyResponse.data
+        let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
         guard let uploadUrl = URL(string: decodedResponse.uploadUrl) else {
             throw URLError(.badURL)
         }
