@@ -27,19 +27,42 @@ struct TranscriptSegment: Identifiable {
 
 // For /api/generate-upload-url
 struct GenerateUploadURLResponse: Codable {
+    let success: Bool
+    let data: UploadURLData
+    let timestamp: String
+}
+
+struct UploadURLData: Codable {
     let uploadUrl: String
     let path: String
     let token: String
+    let userId: String
+    let metadata: UploadMetadata?
+}
+
+struct UploadMetadata: Codable {
+    let originalFileName: String
+    let contentType: String
+    let fileSize: Int
+    let maxFileSize: Int
+    let allowedTypes: [String]
 }
 
 // For /api/transcribe
 // Based on transcribe.js, it returns a transcript-like object.
 // The `segments` are actually words from AssemblyAI.
 struct TranscribeResponse: Codable {
+    let success: Bool
+    let data: TranscribeData
+    let timestamp: String
+}
+
+struct TranscribeData: Codable {
     let id: String
     let text: String?
     let segments: [AssemblyAIWord]? // 'segments' in my Vercel API is 'words' from AssemblyAI
     let status: String
+    let userId: String?
 }
 
 struct AssemblyAIWord: Codable {
@@ -107,6 +130,12 @@ class AssemblyAITranscriptionService: ObservableObject {
                     
                     do {
                         let decodedResponse = try JSONDecoder().decode(GenerateUploadURLResponse.self, from: data)
+                        
+                        guard decodedResponse.success else {
+                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API returned failure"])))
+                            return
+                        }
+                        
                         completion(.success(decodedResponse))
                     } catch {
                         if let responseString = String(data: data, encoding: .utf8) {
@@ -197,15 +226,20 @@ class AssemblyAITranscriptionService: ObservableObject {
                     
                     do {
                         let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-                        if decodedResponse.status == "completed" || decodedResponse.status == "success" {
-                            let text = decodedResponse.text ?? ""
-                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
+                        guard decodedResponse.success else {
+                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API returned failure"])))
+                            return
+                        }
+                        
+                        if decodedResponse.data.status == "completed" || decodedResponse.data.status == "success" {
+                            let text = decodedResponse.data.text ?? ""
+                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.data.segments)
                             completion(.success((text, segments)))
-                        } else if decodedResponse.status == "queued" || decodedResponse.status == "processing" {
+                        } else if decodedResponse.data.status == "queued" || decodedResponse.data.status == "processing" {
                             // Start polling
-                            self.pollTranscriptionStatus(jobId: decodedResponse.id, attempt: 0, completion: completion)
+                            self.pollTranscriptionStatus(jobId: decodedResponse.data.id, attempt: 0, completion: completion)
                         } else {
-                            completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.status)"])))
+                            completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.data.status)"])))
                         }
                     } catch {
                         let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
@@ -249,11 +283,16 @@ class AssemblyAITranscriptionService: ObservableObject {
                     }
                     do {
                         let decodedResponse = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-                        if decodedResponse.status == "completed" || decodedResponse.status == "success" {
-                            let text = decodedResponse.text ?? ""
-                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.segments)
+                        guard decodedResponse.success else {
+                            completion(.failure(NSError(domain: "APIError", code: 0, userInfo: [NSLocalizedDescriptionKey: "API returned failure"])))
+                            return
+                        }
+                        
+                        if decodedResponse.data.status == "completed" || decodedResponse.data.status == "success" {
+                            let text = decodedResponse.data.text ?? ""
+                            let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.data.segments)
                             completion(.success((text, segments)))
-                        } else if decodedResponse.status == "failed" {
+                        } else if decodedResponse.data.status == "failed" {
                             completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed."])))
                         } else if attempt < maxAttempts {
                             DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
@@ -331,10 +370,10 @@ class AssemblyAITranscriptionService: ObservableObject {
             getUploadURL(fileName: fileName, contentType: contentType, fileSize: fileSize) { result in
                 switch result {
                 case .success(let uploadInfo):
-                    self.uploadFile(to: uploadInfo.uploadUrl, fileURL: url) { uploadResult in
+                    self.uploadFile(to: uploadInfo.data.uploadUrl, fileURL: url) { uploadResult in
                         switch uploadResult {
                         case .success:
-                            self.startTranscription(filePath: uploadInfo.path) { transcriptionResult in
+                            self.startTranscription(filePath: uploadInfo.data.path) { transcriptionResult in
                                 completion(transcriptionResult)
                             }
                         case .failure(let error):

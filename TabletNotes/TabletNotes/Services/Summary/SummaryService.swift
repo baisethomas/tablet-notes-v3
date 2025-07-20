@@ -91,12 +91,29 @@ class SummaryService: ObservableObject {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("[SummaryService] Netlify summarize response: \(jsonString.prefix(500))...")
             }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let summary = json["summary"] as? String else {
-                print("[SummaryService] ERROR: Invalid response from Netlify summarize endpoint")
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("[SummaryService] ERROR: Failed to parse JSON response")
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
-                    self.summarySubject.send("[Error] Invalid response from Netlify summarize endpoint.")
+                    self.summarySubject.send("[Error] Failed to parse response from summarize endpoint.")
+                }
+                return
+            }
+            
+            // Check if response has nested structure with success/data
+            let summary: String
+            if let success = json["success"] as? Bool, success,
+               let data = json["data"] as? [String: Any],
+               let summaryText = data["summary"] as? String {
+                summary = summaryText
+            } else if let summaryText = json["summary"] as? String {
+                // Fallback to flat structure
+                summary = summaryText
+            } else {
+                print("[SummaryService] ERROR: No summary found in response structure")
+                DispatchQueue.main.async {
+                    self.statusSubject.send("failed")
+                    self.summarySubject.send("[Error] Invalid response format from summarize endpoint.")
                 }
                 return
             }

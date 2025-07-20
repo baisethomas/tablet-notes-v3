@@ -24,9 +24,25 @@ class SupabaseService: SupabaseServiceProtocol {
     private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
 
     struct SignedUploadURLResponse: Codable {
+        let success: Bool
+        let data: UploadURLData
+        let timestamp: String
+    }
+    
+    struct UploadURLData: Codable {
         let uploadUrl: String
         let path: String
         let token: String
+        let userId: String
+        let metadata: UploadMetadata?
+    }
+    
+    struct UploadMetadata: Codable {
+        let originalFileName: String
+        let contentType: String
+        let fileSize: Int
+        let maxFileSize: Int
+        let allowedTypes: [String]
     }
 
     /// Fetches a secure, one-time URL for uploading a file.
@@ -67,11 +83,16 @@ class SupabaseService: SupabaseServiceProtocol {
         }
 
         let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
-        guard let uploadUrl = URL(string: decodedResponse.uploadUrl) else {
+        
+        guard decodedResponse.success else {
+            throw URLError(.badServerResponse)
+        }
+        
+        guard let uploadUrl = URL(string: decodedResponse.data.uploadUrl) else {
             throw URLError(.badURL)
         }
         
-        return (uploadUrl, decodedResponse.path)
+        return (uploadUrl, decodedResponse.data.path)
     }
     
     /// Convenience method that gets file information and requests an upload URL
@@ -163,7 +184,12 @@ class SupabaseService: SupabaseServiceProtocol {
         }
 
         let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
-        guard let downloadUrl = URL(string: decodedResponse.uploadUrl) else {
+        
+        guard decodedResponse.success else {
+            throw URLError(.badServerResponse)
+        }
+        
+        guard let downloadUrl = URL(string: decodedResponse.data.uploadUrl) else {
             throw URLError(.badURL)
         }
         

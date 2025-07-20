@@ -86,9 +86,14 @@ class TranscriptionService: NSObject, ObservableObject {
                 self.transcriptSubject.send(self.fullTranscript + (self.lastPartial.isEmpty ? "" : (self.fullTranscript.isEmpty ? "" : " ") + self.lastPartial))
             }
             if let error = error {
-                print("[TranscriptionService] Transcription error: \(error)")
-                if !self.isRestarting {
-                    self.stopTranscription()
+                // Check if this is just a cancellation (which is expected when stopping)
+                if (error as NSError).code == 301 { // kLSRErrorDomain Code=301 is cancellation
+                    print("[TranscriptionService] Transcription task was canceled (expected)")
+                } else {
+                    print("[TranscriptionService] Transcription error: \(error)")
+                    if !self.isRestarting {
+                        self.stopTranscription()
+                    }
                 }
             }
         }
@@ -143,16 +148,43 @@ class TranscriptionService: NSObject, ObservableObject {
         case .assemblyAILive:
             assemblyAILiveService.stopLiveTranscription()
         case .appleSpeech, .assemblyAI:
-            stopAppleSpeechSession(clean: false)
-            // Append the last partial to the full transcript for Apple Speech
-            if !lastPartial.isEmpty {
-                if fullTranscript.isEmpty {
-                    fullTranscript = lastPartial
+            stopAppleSpeechSessionGracefully()
+        }
+    }
+    
+    private func stopAppleSpeechSessionGracefully() {
+        print("[TranscriptionService] Gracefully stopping Apple Speech session...")
+        
+        // First, stop the audio engine and timer
+        timer?.invalidate()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        
+        // Signal end of audio to allow final processing
+        recognitionRequest?.endAudio()
+        
+        // Give the recognition task a moment to process final results
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            
+            // Append the last partial to the full transcript
+            if !self.lastPartial.isEmpty {
+                if self.fullTranscript.isEmpty {
+                    self.fullTranscript = self.lastPartial
                 } else {
-                    fullTranscript += " " + lastPartial
+                    self.fullTranscript += " " + self.lastPartial
                 }
             }
-            transcriptSubject.send(fullTranscript)
+            
+            // Send the final transcript
+            self.transcriptSubject.send(self.fullTranscript)
+            
+            // Clean up recognition task
+            self.recognitionTask?.cancel()
+            self.recognitionRequest = nil
+            self.recognitionTask = nil
+            
+            print("[TranscriptionService] Apple Speech session stopped gracefully")
         }
     }
 
