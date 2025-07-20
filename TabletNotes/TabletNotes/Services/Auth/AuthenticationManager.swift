@@ -20,7 +20,11 @@ final class AuthenticationManager: ObservableObject {
     // MARK: - Initialization
     init() {
         self.authService = SupabaseAuthService()
+        print("[AuthenticationManager] Initializing AuthenticationManager: \(ObjectIdentifier(self))")
+        print("[AuthenticationManager] Using SupabaseAuthService instance: \(ObjectIdentifier(self.authService))")
+        print("[AuthenticationManager] Setting up bindings")
         setupBindings()
+        print("[AuthenticationManager] Initializing auth state")
         initializeAuth()
     }
     
@@ -31,6 +35,7 @@ final class AuthenticationManager: ObservableObject {
     }
     
     func signIn(email: String, password: String) async throws -> User {
+        print("[AuthenticationManager] signIn called on AuthManager: \(ObjectIdentifier(self)), using SupabaseAuthService: \(ObjectIdentifier(authService))")
         return try await authService.signIn(email: email, password: password)
     }
     
@@ -65,6 +70,7 @@ final class AuthenticationManager: ObservableObject {
         authService.authStatePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
+                print("[AuthenticationManager] Auth state changed to: \(state)")
                 self?.authState = state
             }
             .store(in: &cancellables)
@@ -73,6 +79,7 @@ final class AuthenticationManager: ObservableObject {
         authService.currentUserPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] user in
+                print("[AuthenticationManager] Current user changed to: \(user?.name ?? "nil")")
                 self?.currentUser = user
             }
             .store(in: &cancellables)
@@ -160,6 +167,9 @@ struct AuthenticationRequired: ViewModifier {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: authManager.authState)
+        .onChange(of: authManager.authState) { _, newState in
+            print("[AuthenticationRequired] Auth state changed to: \(newState), isAuthenticated: \(authManager.isAuthenticated)")
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             print("[AuthenticationRequired] App entering foreground - rechecking auth")
             recheckAuthState()

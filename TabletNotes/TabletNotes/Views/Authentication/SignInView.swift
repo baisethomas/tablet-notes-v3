@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct SignInView: View {
-    @ObservedObject var authService: SupabaseAuthService
+    @ObservedObject var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var email = ""
     @State private var password = ""
@@ -26,134 +27,146 @@ struct SignInView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header
-                    VStack(spacing: 16) {
-                        AppLogoView(size: 60, cornerRadius: 12)
-                        
-                        VStack(spacing: 8) {
-                            Text("Welcome Back")
-                                .font(.title2)
-                                .fontWeight(.bold)
+            ZStack {
+                // Background
+                Color(colorScheme == .dark ? Color(red: 0.07, green: 0.11, blue: 0.18) : Color.white)
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Header
+                        VStack(spacing: 16) {
+                            AppLogoView(size: 60, cornerRadius: 12)
                             
-                            Text("Sign in to access your sermons and notes")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
+                            VStack(spacing: 8) {
+                                Text("Welcome Back")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                                
+                                Text("Sign in to access your sermons and notes")
+                                    .font(.subheadline)
+                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
                         }
-                    }
-                    .padding(.top, 40)
-                    
-                    // Form
-                    VStack(spacing: 20) {
-                        // Email field
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Email Address")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            
-                            TextField("Enter your email", text: $email)
-                                .textFieldStyle(AuthTextFieldStyle())
-                                .textContentType(.emailAddress)
-                                .keyboardType(.emailAddress)
-                                .autocapitalization(.none)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .email)
-                                .onSubmit {
-                                    focusedField = .password
-                                }
-                        }
+                        .padding(.top, 40)
                         
-                        // Password field
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Password")
+                        // Form
+                        VStack(spacing: 20) {
+                            // Email field
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Email Address")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
                                 
-                                Spacer()
-                                
-                                Button("Forgot?") {
-                                    showingForgotPassword = true
-                                }
-                                .font(.caption)
-                                .foregroundColor(.accentColor)
+                                TextField("Enter your email", text: $email)
+                                    .textFieldStyle(AuthTextFieldStyle())
+                                    .textContentType(.emailAddress)
+                                    .keyboardType(.emailAddress)
+                                    .autocapitalization(.none)
+                                    .autocorrectionDisabled()
+                                    .focused($focusedField, equals: .email)
+                                    .onSubmit {
+                                        focusedField = .password
+                                    }
                             }
                             
-                            SecureField("Enter your password", text: $password)
-                                .textFieldStyle(AuthTextFieldStyle())
-                                .textContentType(.password)
-                                .focused($focusedField, equals: .password)
-                                .onSubmit {
-                                    if isFormValid {
-                                        signIn()
+                            // Password field
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Password")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                                    
+                                    Spacer()
+                                    
+                                    Button("Forgot?") {
+                                        showingForgotPassword = true
                                     }
+                                    .font(.caption)
+                                    .foregroundColor(Color.accentColor)
                                 }
-                        }
-                    }
-                    
-                    // Sign in button
-                    Button(action: signIn) {
-                        HStack {
-                            if isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "person.fill")
-                                Text("Sign In")
+                                
+                                SecureField("Enter your password", text: $password)
+                                    .textFieldStyle(AuthTextFieldStyle())
+                                    .textContentType(.password)
+                                    .focused($focusedField, equals: .password)
+                                    .onSubmit {
+                                        if isFormValid {
+                                            signIn()
+                                        }
+                                    }
                             }
                         }
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(isFormValid && !isLoading ? Color.accentColor : Color.gray)
-                        .cornerRadius(12)
-                    }
-                    .disabled(!isFormValid || isLoading)
-                    .padding(.top, 8)
-                    
-                    // Divider
-                    HStack {
-                        Rectangle()
-                            .fill(Color(.systemGray4))
-                            .frame(height: 1)
                         
-                        Text("or")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 16)
-                        
-                        Rectangle()
-                            .fill(Color(.systemGray4))
-                            .frame(height: 1)
-                    }
-                    .padding(.vertical, 8)
-                    
-                    // Create account button
-                    Button(action: {
-                        dismiss()
-                        // Navigate to sign up
-                    }) {
-                        HStack {
-                            Image(systemName: "person.badge.plus")
-                            Text("Create New Account")
+                        // Sign in button
+                        Button(action: signIn) {
+                            HStack {
+                                if isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "person.fill")
+                                    Text("Sign In")
+                                }
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(isFormValid && !isLoading ? Color.accentColor : Color.gray)
+                            .cornerRadius(12)
                         }
-                        .font(.headline)
-                        .foregroundColor(.accentColor)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.accentColor.opacity(0.1))
-                        .cornerRadius(12)
+                        .disabled(!isFormValid || isLoading)
+                        .padding(.top, 8)
+                        .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                        
+                        // Divider
+                        HStack {
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                            
+                            Text("or")
+                                .font(.subheadline)
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                .padding(.horizontal, 16)
+                            
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                        }
+                        .padding(.vertical, 8)
+                        
+                        // Create account button
+                        Button(action: {
+                            dismiss()
+                            // Navigate to sign up
+                        }) {
+                            HStack {
+                                Image(systemName: "person.badge.plus")
+                                Text("Create New Account")
+                            }
+                            .font(.headline)
+                            .foregroundColor(Color.accentColor)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.accentColor.opacity(0.1))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        
+                        Spacer(minLength: 20)
                     }
-                    
-                    Spacer(minLength: 20)
+                    .padding(.horizontal, 32)
                 }
-                .padding(.horizontal, 32)
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
@@ -162,7 +175,7 @@ struct SignInView: View {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(Color.accentColor)
                 }
             }
         }
@@ -172,7 +185,7 @@ struct SignInView: View {
             Text(errorMessage)
         }
         .sheet(isPresented: $showingForgotPassword) {
-            ForgotPasswordView(authService: authService)
+            ForgotPasswordView(authManager: authManager)
         }
         .alert("Password Reset Sent", isPresented: $showingResetSuccess) {
             Button("OK") { }
@@ -189,7 +202,7 @@ struct SignInView: View {
         
         Task {
             do {
-                _ = try await authService.signIn(
+                _ = try await authManager.signIn(
                     email: email.trimmingCharacters(in: .whitespacesAndNewlines),
                     password: password
                 )
@@ -217,8 +230,9 @@ struct SignInView: View {
 
 // MARK: - Forgot Password View
 struct ForgotPasswordView: View {
-    @ObservedObject var authService: SupabaseAuthService
+    @ObservedObject var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var email = ""
     @State private var isLoading = false
@@ -233,62 +247,70 @@ struct ForgotPasswordView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                VStack(spacing: 16) {
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.accentColor)
-                    
-                    VStack(spacing: 8) {
-                        Text("Reset Password")
-                            .font(.title2)
-                            .fontWeight(.bold)
+            ZStack {
+                // Background
+                Color(colorScheme == .dark ? Color(red: 0.07, green: 0.11, blue: 0.18) : Color.white)
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 24) {
+                    VStack(spacing: 16) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(Color.accentColor)
                         
-                        Text("Enter your email address and we'll send you instructions to reset your password.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-                .padding(.top, 40)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Email Address")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                    
-                    TextField("Enter your email", text: $email)
-                        .textFieldStyle(AuthTextFieldStyle())
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
-                        .autocorrectionDisabled()
-                }
-                
-                Button(action: resetPassword) {
-                    HStack {
-                        if isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "paperplane.fill")
-                            Text("Send Reset Link")
+                        VStack(spacing: 8) {
+                            Text("Reset Password")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                            
+                            Text("Enter your email address and we'll send you instructions to reset your password.")
+                                .font(.subheadline)
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                .multilineTextAlignment(.center)
                         }
                     }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(isEmailValid && !isLoading ? Color.accentColor : Color.gray)
-                    .cornerRadius(12)
+                    .padding(.top, 40)
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Email Address")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                        
+                        TextField("Enter your email", text: $email)
+                            .textFieldStyle(AuthTextFieldStyle())
+                            .textContentType(.emailAddress)
+                            .keyboardType(.emailAddress)
+                            .autocapitalization(.none)
+                            .autocorrectionDisabled()
+                    }
+                    
+                    Button(action: resetPassword) {
+                        HStack {
+                            if isLoading {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "paperplane.fill")
+                                Text("Send Reset Link")
+                            }
+                        }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(isEmailValid && !isLoading ? Color.accentColor : Color.gray)
+                        .cornerRadius(12)
+                    }
+                    .disabled(!isEmailValid || isLoading)
+                    .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                    
+                    Spacer()
                 }
-                .disabled(!isEmailValid || isLoading)
-                
-                Spacer()
+                .padding(.horizontal, 32)
             }
-            .padding(.horizontal, 32)
             .navigationTitle("Reset Password")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -296,6 +318,7 @@ struct ForgotPasswordView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(Color.accentColor)
                 }
             }
         }
@@ -320,7 +343,7 @@ struct ForgotPasswordView: View {
         
         Task {
             do {
-                try await authService.resetPassword(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+                try await authManager.resetPassword(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
                 
                 await MainActor.run {
                     isLoading = false
@@ -344,9 +367,9 @@ struct ForgotPasswordView: View {
 }
 
 #Preview("Sign In") {
-    SignInView(authService: SupabaseAuthService())
+    SignInView(authManager: AuthenticationManager.shared)
 }
 
 #Preview("Forgot Password") {
-    ForgotPasswordView(authService: SupabaseAuthService())
+    ForgotPasswordView(authManager: AuthenticationManager.shared)
 }

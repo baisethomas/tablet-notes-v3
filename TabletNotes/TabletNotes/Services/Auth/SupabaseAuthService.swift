@@ -38,6 +38,8 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             supabaseKey: supabaseKey
         )
         
+        print("[SupabaseAuthService] Creating new SupabaseAuthService instance: \(ObjectIdentifier(self))")
+        
         // Test connection
         Task {
             await testConnection()
@@ -114,7 +116,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
     }
     
     func signIn(email: String, password: String) async throws -> User {
-        print("[SupabaseAuthService] Starting sign in for email: \(email)")
+        print("[SupabaseAuthService] Starting sign in for email: \(email) on instance: \(ObjectIdentifier(self))")
         
         guard !email.isEmpty && !password.isEmpty else {
             throw AuthError.invalidCredentials
@@ -133,7 +135,9 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             let user = try await ensureProfileComplete(authUser.id.uuidString)
             
             // Update local state
+            print("[SupabaseAuthService] Setting currentUser to: \(user.name)")
             self.currentUser = user
+            print("[SupabaseAuthService] Setting authState to authenticated")
             self.authState = .authenticated(user)
             
             print("[SupabaseAuthService] Sign in successful")

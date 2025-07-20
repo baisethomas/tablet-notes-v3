@@ -1,9 +1,10 @@
 import SwiftUI
 
 struct AuthenticationView: View {
-    @StateObject private var authService = SupabaseAuthService()
+    @Environment(\.authManager) private var authManager
     @State private var showingSignUp = false
     @State private var showingSignIn = false
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         NavigationView {
@@ -11,10 +12,14 @@ struct AuthenticationView: View {
                 ZStack {
                     // Background gradient
                     LinearGradient(
-                        gradient: Gradient(colors: [
-                            Color.accentColor.opacity(0.1),
+                        gradient: Gradient(colors: colorScheme == .dark ? [
+                            Color(red: 0.07, green: 0.11, blue: 0.18), // Navy dark primary
+                            Color(red: 0.10, green: 0.15, blue: 0.24), // Navy dark secondary
+                            Color(red: 0.07, green: 0.11, blue: 0.18)  // Navy dark primary
+                        ] : [
                             Color.white,
-                            Color.accentColor.opacity(0.05)
+                            Color.gray.opacity(0.1),
+                            Color.white
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -30,12 +35,12 @@ struct AuthenticationView: View {
                                 // App Logo
                                 ZStack {
                                     Circle()
-                                        .fill(Color.white)
+                                        .fill(colorScheme == .dark ? Color(red: 0.14, green: 0.22, blue: 0.33) : Color.white)
                                         .frame(width: 120, height: 120)
                                         .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
                                     
                                     Circle()
-                                        .fill(Color.accentColor.opacity(0.05))
+                                        .fill(Color.accentColor.opacity(0.1))
                                         .frame(width: 110, height: 110)
                                     
                                     AppLogoView(size: 90, cornerRadius: 18)
@@ -44,12 +49,12 @@ struct AuthenticationView: View {
                                 VStack(spacing: 12) {
                                     Text("Welcome to Tablet Notes")
                                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                                        .foregroundColor(.primary)
+                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
                                         .multilineTextAlignment(.center)
                                     
                                     Text("Record, transcribe, and summarize your sermons with AI-powered insights")
                                         .font(.body)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
                                         .multilineTextAlignment(.center)
                                         .padding(.horizontal, 20)
                                 }
@@ -98,6 +103,7 @@ struct AuthenticationView: View {
                                     .background(Color.accentColor)
                                     .cornerRadius(12)
                                 }
+                                .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                                 
                                 Button(action: {
                                     showingSignIn = true
@@ -107,35 +113,39 @@ struct AuthenticationView: View {
                                         Text("Sign In")
                                     }
                                     .font(.headline)
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(Color.accentColor)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 16)
                                     .background(Color.accentColor.opacity(0.1))
                                     .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                                    )
                                 }
                                 
                                 // Terms and privacy
                                 VStack(spacing: 8) {
                                     Text("By continuing, you agree to our")
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
                                     
                                     HStack(spacing: 4) {
                                         Button("Terms of Service") {
                                             // Show terms
                                         }
                                         .font(.caption)
-                                        .foregroundColor(.accentColor)
+                                        .foregroundColor(Color.accentColor)
                                         
                                         Text("and")
                                             .font(.caption)
-                                            .foregroundColor(.secondary)
+                                            .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
                                         
                                         Button("Privacy Policy") {
                                             // Show privacy policy
                                         }
                                         .font(.caption)
-                                        .foregroundColor(.accentColor)
+                                        .foregroundColor(Color.accentColor)
                                     }
                                 }
                                 .padding(.top, 8)
@@ -150,10 +160,10 @@ struct AuthenticationView: View {
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showingSignUp) {
-            SignUpView(authService: authService)
+            SignUpView(authManager: authManager)
         }
         .sheet(isPresented: $showingSignIn) {
-            SignInView(authService: authService)
+            SignInView(authManager: authManager)
         }
     }
 }
@@ -163,23 +173,24 @@ struct FeatureHighlight: View {
     let icon: String
     let title: String
     let description: String
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.system(size: 24))
-                .foregroundColor(.accentColor)
+                .foregroundColor(Color.accentColor)
                 .frame(width: 32, height: 32)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
                     .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
                 
                 Text(description)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             
