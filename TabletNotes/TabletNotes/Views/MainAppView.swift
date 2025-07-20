@@ -30,6 +30,7 @@ struct MainAppView: View {
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @StateObject private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
+    @StateObject private var recordingService = RecordingService()
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -88,7 +89,8 @@ struct MainAppView: View {
                             lastCreatedSermon = sermon
                             currentScreen = .sermons // Go to the list after recording
                         },
-                        sermonService: sermonService
+                        sermonService: sermonService,
+                        recordingService: recordingService
                     ))
                 case .sermonDetail(let sermon):
                     AnyView(SermonDetailView(
@@ -154,6 +156,15 @@ struct MainAppView: View {
                         Button(type) {
                             selectedServiceType = type
                             showServiceTypeModal = false
+                            
+                            // Start recording immediately
+                            do {
+                                try recordingService.startRecording(serviceType: type)
+                                print("[MainAppView] Recording started immediately for \(type)")
+                            } catch {
+                                print("[MainAppView] Failed to start recording: \(error)")
+                            }
+                            
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                 currentScreen = .recording(serviceType: type)
                             }

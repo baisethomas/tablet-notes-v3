@@ -28,6 +28,7 @@ class AppCoordinator: ObservableObject {
     private let authManager: AuthenticationManager
     private let backgroundSyncManager: BackgroundSyncManager
     private let subscriptionService: SubscriptionService
+    private let recordingService = RecordingService()
     @Published private var hasSeenOnboarding = false
     private var onboardingReturnScreen: Screen = .home // Track where to return after onboarding
 
@@ -97,7 +98,7 @@ class AppCoordinator: ObservableObject {
         case .recording(let serviceType):
             RecordingView(serviceType: serviceType, noteService: NoteService(sessionId: UUID().uuidString), onNext: { sermon in
                 self.screen = .sermonDetail(sermon: sermon)
-            }, sermonService: sermonService)
+            }, sermonService: sermonService, recordingService: recordingService)
         case .notes:
             NotesView(noteService: noteService, onNext: {
                 let transcript = self.lastTranscript

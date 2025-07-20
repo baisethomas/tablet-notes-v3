@@ -156,11 +156,11 @@ struct RecordingView: View {
     @ObservedObject var noteService: NoteService
     var onNext: ((Sermon) -> Void)?
     @ObservedObject var sermonService: SermonService
+    @ObservedObject var recordingService: RecordingService
     private let recordingSessionId = UUID().uuidString
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
     #if canImport(AVFoundation) && os(iOS)
-    @StateObject private var recordingService = RecordingService()
     @StateObject private var transcriptionService = TranscriptionService()
     @StateObject private var scriptureAnalysisService = ScriptureAnalysisService()
     @State private var timer: Timer? = nil
@@ -585,6 +585,15 @@ struct RecordingView: View {
                 }
             }
         }
+        .onAppear {
+            // Check if recording is already in progress from MainAppView
+            if recordingService.isRecording {
+                print("[RecordingView] Recording already in progress, setting up UI state")
+                isRecordingStarted = true
+                try? transcriptionService.startTranscription()
+                startTimer()
+            }
+        }
         #else
         VStack {
             Text("Recording is not available on this platform")
@@ -686,6 +695,15 @@ struct RecordingView: View {
             }
         } catch {
             print("[RecordingView] Failed to resume recording: \(error)")
+        }
+    }
+    
+    private func startTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            // Only increment time if recording and not paused
+            if isRecordingStarted && !isPaused {
+                elapsedTime += 1
+            }
         }
     }
     
@@ -856,5 +874,5 @@ struct RecordingView: View {
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared))
+    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService())
 }
