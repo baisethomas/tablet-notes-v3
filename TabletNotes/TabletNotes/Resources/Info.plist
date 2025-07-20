@@ -2,19 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Identity -->
 	<key>CFBundleDisplayName</key>
-	<string>TabletNotes</string>
+	<string>Tablet Notes</string>
 	<key>CFBundleName</key>
-	<string>TabletNotes</string>
+	<string>Tablet Notes</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	
-	<!-- App Metadata -->
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>CFBundlePackageType</key>
@@ -25,8 +22,6 @@
 	<string>6.0</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	
-	<!-- iOS Deployment -->
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -35,8 +30,6 @@
 		<string>microphone</string>
 		<string>wifi</string>
 	</array>
-	
-	<!-- Supported Device Families -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -50,25 +43,19 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	
-	<!-- Privacy Usage Descriptions -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>TabletNotes needs microphone access to record sermons and create audio notes. This allows you to capture and transcribe spiritual content for later reference and study.</string>
+	<string>Tablet Notes needs microphone access to record sermons and create audio notes. This allows you to capture and transcribe spiritual content for later reference and study.</string>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>TabletNotes can send notifications to remind you about transcription completion and other important updates about your recordings.</string>
+	<string>Tablet Notes can send notifications to remind you about transcription completion and other important updates about your recordings.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>TabletNotes may access your photo library to allow you to attach images to your sermon notes and summaries.</string>
+	<string>Tablet Notes may access your photo library to allow you to attach images to your sermon notes and summaries.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>TabletNotes may access your camera to capture images for your sermon notes and documentation.</string>
-	
-	<!-- Background Capabilities -->
+	<string>Tablet Notes may access your camera to capture images for your sermon notes and documentation.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>remote-notification</string>
 	</array>
-	
-	<!-- App Transport Security -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -118,8 +105,6 @@
 			</dict>
 		</dict>
 	</dict>
-	
-	<!-- App Scene Configuration -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -137,8 +122,6 @@
 			</array>
 		</dict>
 	</dict>
-	
-	<!-- Launch Screen -->
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIImageName</key>
@@ -146,14 +129,12 @@
 		<key>UIColorName</key>
 		<string>AccentColor</string>
 	</dict>
-	
-	<!-- Status Bar -->
 	<key>UIStatusBarStyle</key>
 	<string>UIStatusBarStyleDefault</string>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
-	
-	<!-- Document Types (for potential future features) -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -169,8 +150,6 @@
 			<string>Alternate</string>
 		</dict>
 	</array>
-	
-	<!-- URL Schemes for Deep Linking -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -182,8 +161,6 @@
 			</array>
 		</dict>
 	</array>
-
-	<!-- Exported Type Identifiers -->
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
