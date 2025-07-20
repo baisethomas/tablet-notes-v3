@@ -152,11 +152,11 @@ struct MinimalSplashView: View {
     }
 }
 
-// MARK: - Brand-Focused Splash View
+// MARK: - Brand-Focused Splash View (Smaller Logo)
 struct BrandSplashView: View {
-    @State private var logoOffset: CGFloat = -100
+    @State private var logoOffset: CGFloat = -50
     @State private var logoOpacity: Double = 0.0
-    @State private var textOffset: CGFloat = 50
+    @State private var textOffset: CGFloat = 30
     @State private var textOpacity: Double = 0.0
     @State private var backgroundOpacity: Double = 0.0
     
@@ -174,48 +174,48 @@ struct BrandSplashView: View {
             .opacity(backgroundOpacity)
             .ignoresSafeArea()
             
-            VStack(spacing: 32) {
-                // Logo with slide-in animation
+            VStack(spacing: 24) {
+                // Logo with slide-in animation - Much smaller and proportional
                 ZStack {
-                    // Fallback background circle if image doesn't load
+                    // Subtle background circle if image doesn't load
                     Circle()
                         .fill(Color.adaptiveCardBackground)
-                        .frame(width: 120, height: 120)
+                        .frame(width: 70, height: 70)
                         .overlay(
                             Circle()
-                                .stroke(Color.adaptiveAccent.opacity(0.3), lineWidth: 2)
+                                .stroke(Color.adaptiveAccent.opacity(0.2), lineWidth: 1)
                         )
                     
-                    // App Logo
+                    // App Logo - Reduced from 100x100 to 60x60
                     Image("AppLogo")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 100, height: 100)
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .frame(maxWidth: 120, maxHeight: 120) // Prevent stretching
+                .frame(maxWidth: 70, maxHeight: 70) // Prevent stretching
                 .offset(y: logoOffset)
                 .opacity(logoOpacity)
-                .shadow(color: .adaptiveAccent.opacity(0.4), radius: 20, x: 0, y: 10)
+                .shadow(color: .adaptiveAccent.opacity(0.2), radius: 8, x: 0, y: 4)
                 
                 // Brand text
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     Text("TabletNotes")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
                         .foregroundColor(.adaptivePrimaryText)
                         .offset(y: textOffset)
                         .opacity(textOpacity)
                     
                     Rectangle()
                         .fill(Color.adaptiveAccent)
-                        .frame(width: 60, height: 3)
-                        .cornerRadius(1.5)
+                        .frame(width: 40, height: 2)
+                        .cornerRadius(1)
                         .opacity(textOpacity)
                     
                     Text("Record • Transcribe • Summarize")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.adaptiveSecondaryText)
-                        .tracking(1.2)
+                        .tracking(1)
                         .offset(y: textOffset)
                         .opacity(textOpacity)
                 }
@@ -251,6 +251,54 @@ struct BrandSplashView: View {
     }
 }
 
+// MARK: - Clean Spinner-Only Splash View
+struct SpinnerSplashView: View {
+    @State private var spinnerOpacity: Double = 0.0
+    @State private var textOpacity: Double = 0.0
+    
+    let onComplete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        ZStack {
+            // Clean background
+            (colorScheme == .dark ? Color.navyDarkPrimary : Color.adaptiveBackground)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                // App name only
+                Text("TabletNotes")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundColor(.adaptivePrimaryText)
+                    .opacity(textOpacity)
+                
+                // Clean loading spinner
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
+                    .scaleEffect(1.3)
+                    .opacity(spinnerOpacity)
+                
+                Text("Loading...")
+                    .font(.subheadline)
+                    .foregroundColor(.adaptiveSecondaryText)
+                    .opacity(textOpacity)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeIn(duration: 0.4)) {
+                textOpacity = 1.0
+            }
+            withAnimation(.easeIn(duration: 0.6).delay(0.2)) {
+                spinnerOpacity = 1.0
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                onComplete()
+            }
+        }
+    }
+}
+
 #Preview("Default Splash") {
     SplashView(onComplete: {})
 }
@@ -261,6 +309,10 @@ struct BrandSplashView: View {
 
 #Preview("Brand Splash") {
     BrandSplashView(onComplete: {})
+}
+
+#Preview("Spinner Splash") {
+    SpinnerSplashView(onComplete: {})
 }
 
 // Debug version to check logo loading

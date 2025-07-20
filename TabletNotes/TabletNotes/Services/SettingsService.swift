@@ -221,6 +221,49 @@ class SettingsService: ObservableObject {
         self.autoBackupEnabled = UserDefaults.standard.object(forKey: "autoBackupEnabled") as? Bool ?? false
     }
     
+    // MARK: - Subscription-Aware Properties
+    
+    /// Returns the effective transcription provider based on user's subscription tier
+    var effectiveTranscriptionProvider: TranscriptionProvider {
+        // Check if user has access to the selected provider
+        guard let currentUser = AuthenticationManager.shared.currentUser else {
+            return .appleSpeech
+        }
+        
+        switch transcriptionProvider {
+        case .assemblyAILive:
+            // Only Pro/Premium users can use AssemblyAI Live
+            return currentUser.canUsePriorityTranscription ? .assemblyAILive : .appleSpeech
+        case .assemblyAI:
+            // AssemblyAI post-recording is available to all tiers
+            return .assemblyAI
+        case .appleSpeech:
+            // Apple Speech is always available
+            return .appleSpeech
+        }
+    }
+    
+    /// Updates transcription provider to a subscription-appropriate default if current one is not accessible
+    func validateTranscriptionProvider() {
+        guard let currentUser = AuthenticationManager.shared.currentUser else {
+            transcriptionProvider = .appleSpeech
+            return
+        }
+        
+        // If user doesn't have priority transcription but is set to AssemblyAI Live, change to Apple Speech
+        if transcriptionProvider == .assemblyAILive && !currentUser.canUsePriorityTranscription {
+            print("[SettingsService] User lost Pro/Premium tier, switching from AssemblyAI Live to Apple Speech")
+            transcriptionProvider = .appleSpeech
+        }
+        
+        // If user has priority transcription and is using Apple Speech, offer to upgrade
+        if transcriptionProvider == .appleSpeech && currentUser.canUsePriorityTranscription {
+            print("[SettingsService] User has Pro/Premium tier, could upgrade to AssemblyAI Live")
+            // Note: We don't auto-switch here to avoid surprising users
+            // Instead, this could trigger a one-time notification about the upgrade option
+        }
+    }
+    
     // MARK: - Helper Methods
     func resetToDefaults() {
         let defaults = UserDefaults.standard

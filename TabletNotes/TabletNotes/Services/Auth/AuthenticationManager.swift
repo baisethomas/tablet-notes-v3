@@ -81,6 +81,11 @@ final class AuthenticationManager: ObservableObject {
             .sink { [weak self] user in
                 print("[AuthenticationManager] Current user changed to: \(user?.name ?? "nil")")
                 self?.currentUser = user
+                
+                // Validate transcription provider when user changes
+                if user != nil {
+                    SettingsService.shared.validateTranscriptionProvider()
+                }
             }
             .store(in: &cancellables)
     }

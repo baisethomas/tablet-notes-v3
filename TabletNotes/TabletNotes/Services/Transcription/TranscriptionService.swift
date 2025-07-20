@@ -23,6 +23,7 @@ class TranscriptionService: NSObject, ObservableObject {
     private let assemblyAITranscriptionService = AssemblyAITranscriptionService()
     private let assemblyAILiveService = AssemblyAILiveTranscriptionService()
     private let settingsService = SettingsService.shared
+    private let authManager = AuthenticationManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     override init() {
@@ -39,12 +40,32 @@ class TranscriptionService: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
     }
+    
+    /// Gets the effective transcription provider from SettingsService
+    private func getEffectiveTranscriptionProvider() -> TranscriptionProvider {
+        let effectiveProvider = settingsService.effectiveTranscriptionProvider
+        let requestedProvider = settingsService.transcriptionProvider
+        
+        if let currentUser = authManager.currentUser {
+            print("[TranscriptionService] User subscription tier: \(currentUser.subscriptionTier)")
+            print("[TranscriptionService] Has priority transcription: \(currentUser.canUsePriorityTranscription)")
+        }
+        print("[TranscriptionService] Requested provider: \(requestedProvider.rawValue)")
+        print("[TranscriptionService] Effective provider: \(effectiveProvider.rawValue)")
+        
+        if effectiveProvider != requestedProvider {
+            print("[TranscriptionService] Provider downgraded due to subscription tier limitations")
+        }
+        
+        return effectiveProvider
+    }
 
     func startTranscription() throws {
         fullTranscript = ""
         lastPartial = ""
         
-        let provider = settingsService.transcriptionProvider
+        let provider = getEffectiveTranscriptionProvider()
+        print("[TranscriptionService] Using transcription provider: \(provider.rawValue)")
         
         switch provider {
         case .assemblyAILive:
@@ -142,7 +163,7 @@ class TranscriptionService: NSObject, ObservableObject {
     func stopTranscription() {
         print("[TranscriptionService] Stopping transcription...")
         
-        let provider = settingsService.transcriptionProvider
+        let provider = getEffectiveTranscriptionProvider()
         
         switch provider {
         case .assemblyAILive:
