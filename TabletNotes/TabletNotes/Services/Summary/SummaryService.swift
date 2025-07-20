@@ -18,6 +18,16 @@ class SummaryService: ObservableObject {
     
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
+        
+        // Validate transcript content
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTranscript.count < 50 {
+            print("[SummaryService] ERROR: Transcript too short (\(trimmedTranscript.count) chars)")
+            statusSubject.send("failed")
+            summarySubject.send("[Error] Transcript is too short for meaningful summarization. Please ensure the recording captured audio properly.")
+            return
+        }
+        
         statusSubject.send("pending")
         summarySubject.send(nil)
         
@@ -30,6 +40,15 @@ class SummaryService: ObservableObject {
                     "text": transcript,
                     "serviceType": type
                 ]
+                
+                // Debug logging
+                print("[SummaryService] Request details:")
+                print("- Transcript length: \(transcript.count) characters")
+                print("- Service type: \(type)")
+                print("- First 200 chars: \(String(transcript.prefix(200)))")
+                if transcript.count > 200 {
+                    print("- Last 200 chars: \(String(transcript.suffix(200)))")
+                }
                 guard let url = URL(string: endpoint),
                       let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
                     print("[SummaryService] ERROR: Failed to create request body or URL")

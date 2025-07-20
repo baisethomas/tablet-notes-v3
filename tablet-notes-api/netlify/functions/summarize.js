@@ -68,7 +68,24 @@ exports.handler = withLogging('summarize', async (event, context) => {
       return validationResponse;
     }
     
-    const { text, type = 'sermon', length = 'medium', includeScripture = true, tone = 'conversational' } = event.validatedData;
+    const { text, type = 'sermon', serviceType, length = 'medium', includeScripture = true, tone = 'conversational' } = event.validatedData;
+    
+    // Use serviceType if provided, otherwise fall back to type
+    const actualServiceType = serviceType || type;
+    
+    // Debug logging for received text
+    logger.info('Received text for summarization', {
+      userId: user.id,
+      textLength: text ? text.length : 0,
+      textPreview: text ? text.substring(0, 200) + '...' : 'null',
+      textSuffix: text && text.length > 200 ? '...' + text.substring(text.length - 100) : '',
+      type,
+      serviceType,
+      actualServiceType,
+      length,
+      includeScripture,
+      tone
+    });
     
     // Sanitize input text
     const sanitizedText = Validator.sanitizeText(text, {
@@ -77,14 +94,28 @@ exports.handler = withLogging('summarize', async (event, context) => {
       allowNewlines: true
     });
     
+    // Debug logging after sanitization
+    logger.info('Text after sanitization', {
+      userId: user.id,
+      originalLength: text ? text.length : 0,
+      sanitizedLength: sanitizedText.length,
+      sanitizedPreview: sanitizedText.substring(0, 200) + '...',
+      sanitizedSuffix: sanitizedText.length > 200 ? '...' + sanitizedText.substring(sanitizedText.length - 100) : ''
+    });
+    
     if (sanitizedText.length < 50) {
+      logger.warn('Text too short after sanitization', {
+        userId: user.id,
+        originalLength: text ? text.length : 0,
+        sanitizedLength: sanitizedText.length
+      });
       return createErrorResponse(new Error('Text is too short for meaningful summarization'), 400);
     }
     
     logger.info('Processing summarization request', { 
       userId: user.id,
       textLength: sanitizedText.length,
-      type,
+      type: actualServiceType,
       length,
       includeScripture,
       tone
@@ -97,7 +128,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
     logger.apiCall('OpenAI', 'chat.completions.create', {
       model: 'gpt-3.5-turbo',
       textLength: sanitizedText.length,
-      type,
+      type: actualServiceType,
       userId: user.id
     });
 
@@ -106,7 +137,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
     logger.info('Processing summary request', {
       userId: user.id,
       detectedTier: userTier,
-      serviceType: type,
+      serviceType: actualServiceType,
       transcriptLength: text.length
     });
 
@@ -120,7 +151,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
             content: `You are an advanced theological assistant that creates intelligent summaries tailored to user subscription tiers and service types. Maintain deep respect for biblical accuracy and spiritual formation while adapting output complexity based on user tier and context.
 
 **User Tier: ${user.user_metadata?.subscription_tier || 'basic'}**
-**Service Type: ${type}**
+**Service Type: ${actualServiceType}**
 
 **Core Principles:**
 - Maintain absolute faithfulness to the original content - never add interpretations not present
@@ -232,7 +263,7 @@ Capture the sermon's central thesis, primary biblical text(s), and theological s
           },
           {
             role: "user",
-            content: `Please summarize this ${type} text: ${sanitizedText}`
+            content: `Please summarize this ${actualServiceType} text: ${sanitizedText}`
           }
         ],
         max_tokens: length === 'short' ? 500 : length === 'long' ? 1500 : 1000,
@@ -257,7 +288,7 @@ Capture the sermon's central thesis, primary biblical text(s), and theological s
       usage: completion.usage,
       userId: user.id,
       metadata: {
-        type,
+        type: actualServiceType,
         length,
         includeScripture,
         tone,
