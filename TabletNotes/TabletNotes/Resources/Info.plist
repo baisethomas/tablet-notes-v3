@@ -65,7 +65,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
-		<string>background-processing</string>
 		<string>remote-notification</string>
 	</array>
 	
