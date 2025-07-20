@@ -130,8 +130,8 @@ struct MainAppView: View {
                     ))
                 }
                 
-                // Only show footer when not in onboarding
-                if !isOnboardingScreen(currentScreen) {
+                // Only show footer when not in onboarding, settings, or account
+                if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
                     FooterView(
                         selectedTab: tabForScreen(currentScreen),
                         onHome: { currentScreen = .home },
@@ -191,6 +191,15 @@ struct MainAppView: View {
             return true
         }
         return false
+    }
+    
+    private func isSettingsOrAccountScreen(_ screen: AppScreen) -> Bool {
+        switch screen {
+        case .settings, .account:
+            return true
+        default:
+            return false
+        }
     }
 }
 

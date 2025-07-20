@@ -321,22 +321,10 @@ struct AccountView: View {
                             .buttonStyle(PlainButtonStyle())
                             .disabled(isSigningOut)
                         }
-                        
-                        // App Version Footer
-                        VStack(spacing: 8) {
-                            Text("TabletNotes")
-                                .font(.caption)
-                                .foregroundColor(.adaptiveSecondaryText)
-                            
-                            Text(AppVersion.shortVersion)
-                                .font(.caption2)
-                                .foregroundColor(.adaptiveSecondaryText)
-                        }
-                        .padding(.top, 20)
-                        .padding(.bottom, 100) // Extra padding for footer
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
+                    .padding(.bottom, 20) // Reduced padding since footer is removed
                 }
                 .background(Color.adaptiveBackground)
             }
