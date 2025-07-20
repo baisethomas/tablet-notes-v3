@@ -1,0 +1,10 @@
+# Vercel
+.vercel
+.output
+
+# Node
+node_modules
+
+# Environment
+.env.local
+.env

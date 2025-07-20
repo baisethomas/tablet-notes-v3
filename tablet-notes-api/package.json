@@ -1,0 +1,23 @@
+{
+    "name": "tablet-notes-api",
+    "version": "1.0.0",
+    "description": "Backend API for TabletNotes app",
+    "main": "index.js",
+    "scripts": {
+        "start": "netlify dev"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.44.1",
+        "@upstash/redis": "^1.35.1",
+        "assemblyai": "^4.5.0",
+        "joi": "^17.13.3",
+        "openai": "^4.0.0"
+    },
+    "keywords": [
+        "api",
+        "transcription",
+        "summarization"
+    ],
+    "author": "Your Name",
+    "license": "MIT"
+}
