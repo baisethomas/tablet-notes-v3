@@ -57,35 +57,34 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         }
         
         do {
-            // Create auth user with metadata
+            // Create auth user with metadata and redirect URL
             let authResponse = try await supabase.auth.signUp(
                 email: data.email,
                 password: data.password,
-                data: ["name": .string(data.name)]
+                data: ["name": .string(data.name)],
+                redirectTo: URL(string: "tabletnotes://auth/callback")
             )
             
             let authUser = authResponse.user
             
-            // Wait a moment for database trigger to create profile
-            try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-            
-            // Try to fetch the profile created by the database trigger
+            // Wait a bit for the database trigger to complete, then ensure profile exists
             let newUser: User
             do {
+                // Give the trigger time to complete
+                try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
                 newUser = try await fetchUserProfile(authUser.id.uuidString)
                 print("[SupabaseAuthService] Successfully fetched profile created by trigger")
             } catch {
-                print("[SupabaseAuthService] Profile not found, creating manually: \(error.localizedDescription)")
-                // Fallback: Create profile manually if trigger failed
-                let manualUser = User(
-                    id: UUID(uuidString: authUser.id.uuidString) ?? UUID(),
-                    email: data.email,
-                    name: data.name,
-                    isEmailVerified: authUser.emailConfirmedAt != nil
-                )
-                try await saveUserProfile(manualUser)
-                newUser = manualUser
-                print("[SupabaseAuthService] Manually created profile for: \(manualUser.name)")
+                print("[SupabaseAuthService] Profile not found, ensuring completion: \(error.localizedDescription)")
+                // Fallback: Ensure profile is complete using the database function
+                try await supabase
+                    .rpc("ensure_profile_complete", params: ["user_uuid": authUser.id.uuidString])
+                    .execute()
+                
+                // Wait a bit more and try again
+                try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                newUser = try await fetchUserProfile(authUser.id.uuidString)
+                print("[SupabaseAuthService] Ensured profile completion for: \(newUser.name)")
             }
             
             // Update local state
@@ -130,8 +129,8 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             
             let authUser = authResponse.user
             
-            // Fetch user profile
-            let user = try await fetchUserProfile(authUser.id.uuidString)
+            // Fetch user profile with fallback to ensure completion
+            let user = try await ensureProfileComplete(authUser.id.uuidString)
             
             // Update local state
             self.currentUser = user
@@ -267,7 +266,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             let session = try await supabase.auth.refreshSession()
             
             let authUser = session.user
-            let user = try await fetchUserProfile(authUser.id.uuidString)
+            let user = try await ensureProfileComplete(authUser.id.uuidString)
             self.currentUser = user
             self.authState = .authenticated(user)
             
@@ -279,18 +278,45 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         }
     }
     
+    // MARK: - Profile Management Methods
+    
+    func ensureProfileComplete() async throws -> User {
+        print("[SupabaseAuthService] Ensuring profile completion")
+        
+        do {
+            // Call the database function to ensure profile is complete
+            try await supabase
+                .rpc("ensure_profile_complete")
+                .execute()
+            
+            // Get the current user ID from the session
+            let session = try await supabase.auth.session
+            let userId = session.user.id.uuidString
+            
+            // Fetch the updated profile
+            return try await fetchUserProfile(userId)
+        } catch {
+            print("[SupabaseAuthService] Profile completion failed: \(error.localizedDescription)")
+            throw mapSupabaseError(error)
+        }
+    }
     
     // MARK: - Testing Methods
     
     private func testConnection() async {
         do {
             print("[SupabaseAuthService] Testing connection...")
-            // Try to get the current session (this is a simple test)
-            let session = try await supabase.auth.session
-            print("[SupabaseAuthService] Connection test successful. Session: \(session != nil ? "exists" : "none")")
+            // Test connection with a simple query
+            try await supabase
+                .from("profiles")
+                .select("id")
+                .limit(1)
+                .execute()
+            print("[SupabaseAuthService] Connection test successful.")
         } catch {
             print("[SupabaseAuthService] Connection test failed: \(error)")
             print("[SupabaseAuthService] Error details: \(error.localizedDescription)")
+            // Don't fail app startup if connection test fails
         }
     }
     
@@ -305,7 +331,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
                         if let user = session?.user {
                             Task {
                                 do {
-                                    let userProfile = try await self.fetchUserProfile(user.id.uuidString)
+                                    let userProfile = try await self.ensureProfileComplete(user.id.uuidString)
                                     await MainActor.run {
                                         self.currentUser = userProfile
                                         self.authState = .authenticated(userProfile)
@@ -334,6 +360,23 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
     nonisolated func isAuthenticated() -> Bool {
         // TODO: Implement proper nonisolated authentication check
         return false
+    }
+    
+    private func ensureProfileComplete(_ userId: String) async throws -> User {
+        print("[SupabaseAuthService] Ensuring profile completion for: \(userId)")
+        
+        do {
+            // First try to fetch the profile
+            return try await fetchUserProfile(userId)
+        } catch {
+            print("[SupabaseAuthService] Profile not found, ensuring completion: \(error.localizedDescription)")
+            // If profile not found, ensure it's complete using the database function
+            try await supabase
+                .rpc("ensure_profile_complete", params: ["user_uuid": userId])
+                .execute()
+            
+            return try await fetchUserProfile(userId)
+        }
     }
     
     private func fetchUserProfile(_ userId: String) async throws -> User {
@@ -416,6 +459,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         // Map Supabase errors to our AuthError types
         let errorString = error.localizedDescription.lowercased()
         
+        // Fallback to string-based error mapping
         if errorString.contains("invalid") || errorString.contains("unauthorized") {
             return .invalidCredentials
         } else if errorString.contains("network") || errorString.contains("connection") {
@@ -426,6 +470,8 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             return .emailAlreadyExists
         } else if errorString.contains("password") && errorString.contains("weak") {
             return .weakPassword
+        } else if errorString.contains("session") && errorString.contains("expired") {
+            return .sessionExpired
         } else {
             return .unknownError(error.localizedDescription)
         }

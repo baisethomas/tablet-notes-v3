@@ -12,6 +12,7 @@ import SwiftData
 @main
 struct TabletNotesApp: App {
     let container: ModelContainer
+    @StateObject private var deepLinkHandler = DeepLinkHandler()
     
     init() {
         do {
@@ -54,6 +55,34 @@ struct TabletNotesApp: App {
             MainAppView(modelContext: modelContext)
                 .requiresAuthentication()
                 .environment(\.authManager, AuthenticationManager.shared)
+                .environmentObject(deepLinkHandler)
+                .onOpenURL { url in
+                    deepLinkHandler.handleURL(url)
+                }
+                .overlay(
+                    // Show verification success message
+                    Group {
+                        if deepLinkHandler.shouldShowVerificationSuccess {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                    Text("Email verified successfully!")
+                                        .foregroundColor(.white)
+                                }
+                                .padding()
+                                .background(Color.green.opacity(0.9))
+                                .cornerRadius(10)
+                                .shadow(radius: 5)
+                                .transition(.move(edge: .bottom))
+                                .padding()
+                                Spacer().frame(height: 100)
+                            }
+                            .animation(.easeInOut, value: deepLinkHandler.shouldShowVerificationSuccess)
+                        }
+                    }
+                )
         }
     }
 }

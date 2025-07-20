@@ -167,9 +167,13 @@ struct AuthenticationRequired: ViewModifier {
     }
     
     private func startPeriodicRecheck() {
-        // Check every 2 seconds for auth state changes
-        recheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            recheckAuthState()
+        // Only start periodic check if we have a session to check
+        // Check every 30 seconds instead of 2 seconds to avoid spam
+        recheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
+            // Only recheck if we might have a session
+            if authManager.authState != .unauthenticated {
+                recheckAuthState()
+            }
         }
     }
     

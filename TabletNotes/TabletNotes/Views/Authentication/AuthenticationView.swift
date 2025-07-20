@@ -42,7 +42,7 @@ struct AuthenticationView: View {
                                 }
                                 
                                 VStack(spacing: 12) {
-                                    Text("Welcome to TabletNotes")
+                                    Text("Welcome to Tablet Notes")
                                         .font(.system(size: 28, weight: .bold, design: .rounded))
                                         .foregroundColor(.primary)
                                         .multilineTextAlignment(.center)

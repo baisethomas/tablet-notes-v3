@@ -46,7 +46,7 @@ struct SplashView: View {
                     .opacity(logoOpacity)
                     
                     // App Name
-                    Text("TabletNotes")
+                    Text("Tablet Notes")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.adaptivePrimaryText)
                         .opacity(textOpacity)
