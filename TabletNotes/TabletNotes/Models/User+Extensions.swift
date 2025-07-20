@@ -90,6 +90,15 @@ extension User {
         return monthlyRecordingMinutes + minutes <= maxMinutes
     }
     
+    func canRecordForDuration(_ minutes: Int) -> Bool {
+        guard let maxDuration = usageLimits.maxRecordingDurationMinutes else { return true }
+        return minutes <= maxDuration
+    }
+    
+    func maxRecordingDuration() -> Int? {
+        return usageLimits.maxRecordingDurationMinutes
+    }
+    
     func canUseStorageGB(_ additionalGB: Double) -> Bool {
         guard let maxStorage = usageLimits.maxStorageGB else { return true }
         return currentStorageUsedGB + additionalGB <= maxStorage

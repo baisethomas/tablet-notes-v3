@@ -243,10 +243,18 @@ struct RecordingView: View {
                     
                     Spacer()
                     
-                    // Timer
-                    Text(timeString(from: elapsedTime))
-                        .font(.system(size: 18, weight: .medium, design: .monospaced))
-                        .foregroundColor(isRecordingStarted ? .recordingRed : .adaptivePrimaryText)
+                    // Timer with remaining time
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(timeString(from: elapsedTime))
+                            .font(.system(size: 18, weight: .medium, design: .monospaced))
+                            .foregroundColor(isRecordingStarted ? .recordingRed : .adaptivePrimaryText)
+                        
+                        if let remainingTime = recordingService.remainingTime {
+                            Text("(\(timeString(from: remainingTime)) left)")
+                                .font(.caption)
+                                .foregroundColor(remainingTime < 300 ? .warningOrange : .adaptiveSecondaryText) // Warning when < 5 min
+                        }
+                    }
                     
                     // Stop button (when recording)
                     if isRecordingStarted {
@@ -654,6 +662,15 @@ struct RecordingView: View {
     private func startRecording() {
         print("[RecordingView] startRecording called")
         guard !recordingService.isRecording else { print("[RecordingView] Already recording"); return }
+        
+        // Check if user can start recording based on limits
+        let (canStart, reason) = recordingService.canStartRecording()
+        if !canStart {
+            permissionMessage = reason ?? "Recording limit exceeded"
+            showPermissionAlert = true
+            return
+        }
+        
         do {
             try recordingService.startRecording(serviceType: serviceType)
             try transcriptionService.startTranscription()
@@ -668,9 +685,22 @@ struct RecordingView: View {
                     elapsedTime += 1
                 }
             })
-            print("[RecordingView] Recording started")
+            
+            // Log duration limit info
+            if let maxDuration = recordingService.getMaxRecordingDuration() {
+                let maxMinutes = Int(maxDuration / 60)
+                print("[RecordingView] Recording started with \(maxMinutes) minute limit")
+            } else {
+                print("[RecordingView] Recording started with no duration limit")
+            }
         } catch {
-            permissionMessage = "Failed to start recording: \(error.localizedDescription)"
+            let errorMessage: String
+            if let recordingError = error as? RecordingError {
+                errorMessage = recordingError.localizedDescription
+            } else {
+                errorMessage = "Failed to start recording: \(error.localizedDescription)"
+            }
+            permissionMessage = errorMessage
             showPermissionAlert = true
             print("[RecordingView] Failed to start recording: \(error)")
         }

@@ -11,12 +11,21 @@ class RecordingService: NSObject, ObservableObject {
     private var recordingURL: URL?
     @Published var isRecording: Bool = false
     @Published var isPaused: Bool = false
+    @Published var recordingDuration: TimeInterval = 0
+    @Published var remainingTime: TimeInterval? = nil
+    
+    // Publishers
     let isRecordingPublisher: AnyPublisher<Bool, Never>
     let audioFileURLPublisher: AnyPublisher<URL?, Never>
     let isPausedPublisher: AnyPublisher<Bool, Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
+    
+    // Duration tracking
+    private var durationTimer: Timer?
+    private var recordingStartTime: Date?
+    private let authManager = AuthenticationManager.shared
 
     override init() {
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
@@ -32,6 +41,7 @@ class RecordingService: NSObject, ObservableObject {
     }
     
     deinit {
+        stopDurationTimer()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -87,8 +97,58 @@ class RecordingService: NSObject, ObservableObject {
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsPath.appendingPathComponent("AudioRecordings")
     }
+    
+    // MARK: - Duration Limit Checking
+    
+    /// Check if user can start a new recording based on subscription limits
+    func canStartRecording() -> (canStart: Bool, reason: String?) {
+        guard let currentUser = authManager.currentUser else {
+            return (false, "User not authenticated")
+        }
+        
+        // Check if user can create new recordings (monthly limit)
+        if !currentUser.canCreateNewRecording() {
+            let remaining = currentUser.remainingRecordings() ?? 0
+            return (false, "Monthly recording limit reached. \(remaining) recordings remaining this month.")
+        }
+        
+        return (true, nil)
+    }
+    
+    /// Get the maximum recording duration for the current user
+    func getMaxRecordingDuration() -> TimeInterval? {
+        guard let currentUser = authManager.currentUser,
+              let maxMinutes = currentUser.maxRecordingDuration() else {
+            return nil // Unlimited
+        }
+        return TimeInterval(maxMinutes * 60) // Convert to seconds
+    }
+    
+    /// Check if current recording duration exceeds limit
+    private func checkDurationLimit() {
+        guard let maxDuration = getMaxRecordingDuration() else {
+            // No limit, update remaining time to nil
+            remainingTime = nil
+            return
+        }
+        
+        let remaining = maxDuration - recordingDuration
+        remainingTime = max(0, remaining)
+        
+        // Auto-stop if limit reached
+        if recordingDuration >= maxDuration {
+            print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
+            stopRecording()
+        }
+    }
 
     func startRecording(serviceType: String) throws {
+        // Check if user can start recording
+        let (canStart, reason) = canStartRecording()
+        if !canStart {
+            throw RecordingError.limitExceeded(reason ?? "Recording limit exceeded")
+        }
+        
         try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
         try recordingSession.setActive(true)
         
@@ -106,22 +166,44 @@ class RecordingService: NSObject, ObservableObject {
         audioRecorder?.delegate = self
         audioRecorder?.record()
         recordingURL = url
+        
+        // Start duration tracking
+        recordingDuration = 0
+        recordingStartTime = Date()
+        startDurationTimer()
+        
         isRecording = true
         isRecordingSubject.send(true)
         audioFileURLSubject.send(url)
+        
+        // Log the duration limit for this recording
+        if let maxDuration = getMaxRecordingDuration() {
+            let maxMinutes = Int(maxDuration / 60)
+            print("[RecordingService] Started recording with \(maxMinutes) minute limit")
+        } else {
+            print("[RecordingService] Started recording with no duration limit")
+        }
     }
 
     func stopRecording() {
         audioRecorder?.stop()
+        stopDurationTimer()
+        
         isRecording = false
         isPaused = false
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
+        
+        // Reset duration tracking
+        recordingDuration = 0
+        remainingTime = nil
+        recordingStartTime = nil
     }
     
     func pauseRecording() throws {
         guard isRecording, !isPaused else { return }
         audioRecorder?.pause()
+        stopDurationTimer()
         isPaused = true
         isPausedSubject.send(true)
     }
@@ -129,8 +211,31 @@ class RecordingService: NSObject, ObservableObject {
     func resumeRecording() throws {
         guard isRecording, isPaused else { return }
         audioRecorder?.record()
+        startDurationTimer()
         isPaused = false
         isPausedSubject.send(false)
+    }
+    
+    // MARK: - Duration Timer Management
+    
+    private func startDurationTimer() {
+        stopDurationTimer() // Ensure no duplicate timers
+        
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateDuration()
+        }
+    }
+    
+    private func stopDurationTimer() {
+        durationTimer?.invalidate()
+        durationTimer = nil
+    }
+    
+    private func updateDuration() {
+        guard let startTime = recordingStartTime else { return }
+        
+        recordingDuration = Date().timeIntervalSince(startTime)
+        checkDurationLimit()
     }
     
     // MARK: - File Management
@@ -163,6 +268,27 @@ class RecordingService: NSObject, ObservableObject {
             print("[RecordingService] Deleted audio file: \(url)")
         } catch {
             print("[RecordingService] Failed to delete audio file: \(error)")
+        }
+    }
+}
+
+// MARK: - Recording Errors
+enum RecordingError: LocalizedError {
+    case limitExceeded(String)
+    case permissionDenied
+    case audioSessionFailed
+    case recordingFailed
+    
+    var errorDescription: String? {
+        switch self {
+        case .limitExceeded(let reason):
+            return reason
+        case .permissionDenied:
+            return "Microphone permission denied"
+        case .audioSessionFailed:
+            return "Failed to setup audio session"
+        case .recordingFailed:
+            return "Recording failed"
         }
     }
 }

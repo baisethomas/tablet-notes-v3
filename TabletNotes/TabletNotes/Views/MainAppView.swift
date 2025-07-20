@@ -157,12 +157,28 @@ struct MainAppView: View {
                             selectedServiceType = type
                             showServiceTypeModal = false
                             
+                            // Check if user can start recording before navigating
+                            let (canStart, reason) = recordingService.canStartRecording()
+                            if !canStart {
+                                print("[MainAppView] Cannot start recording: \(reason ?? "Unknown limit")")
+                                // TODO: Show alert with reason
+                                return
+                            }
+                            
                             // Start recording immediately
                             do {
                                 try recordingService.startRecording(serviceType: type)
                                 print("[MainAppView] Recording started immediately for \(type)")
+                                
+                                // Log duration limit
+                                if let maxDuration = recordingService.getMaxRecordingDuration() {
+                                    let maxMinutes = Int(maxDuration / 60)
+                                    print("[MainAppView] Recording limit: \(maxMinutes) minutes")
+                                }
                             } catch {
                                 print("[MainAppView] Failed to start recording: \(error)")
+                                // TODO: Show alert with error
+                                return
                             }
                             
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

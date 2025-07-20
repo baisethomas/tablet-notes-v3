@@ -159,14 +159,16 @@ enum SubscriptionFeature: String, CaseIterable {
 // MARK: - Usage Limits
 struct UsageLimits {
     let maxRecordings: Int?        // nil = unlimited
-    let maxRecordingMinutes: Int?  // nil = unlimited
+    let maxRecordingMinutes: Int?  // nil = unlimited (monthly total)
+    let maxRecordingDurationMinutes: Int? // nil = unlimited (per recording)
     let maxStorageGB: Double?      // nil = unlimited
     let maxNotesPerRecording: Int? // nil = unlimited
     let maxExportsPerMonth: Int?   // nil = unlimited
     
     static let free = UsageLimits(
         maxRecordings: 5,
-        maxRecordingMinutes: 60,
+        maxRecordingMinutes: 180, // 3 hours total per month (6 x 30min recordings)
+        maxRecordingDurationMinutes: 30, // 30 minutes per recording
         maxStorageGB: 1.0,
         maxNotesPerRecording: 20,
         maxExportsPerMonth: 3
@@ -174,7 +176,8 @@ struct UsageLimits {
     
     static let pro = UsageLimits(
         maxRecordings: nil,
-        maxRecordingMinutes: nil,
+        maxRecordingMinutes: nil, // unlimited monthly total
+        maxRecordingDurationMinutes: 120, // 2 hours per recording
         maxStorageGB: nil,
         maxNotesPerRecording: nil,
         maxExportsPerMonth: nil
@@ -182,7 +185,8 @@ struct UsageLimits {
     
     static let premium = UsageLimits(
         maxRecordings: nil,
-        maxRecordingMinutes: nil,
+        maxRecordingMinutes: nil, // unlimited monthly total
+        maxRecordingDurationMinutes: 120, // 2 hours per recording
         maxStorageGB: nil,
         maxNotesPerRecording: nil,
         maxExportsPerMonth: nil
