@@ -101,6 +101,7 @@ class RecordingService: NSObject, ObservableObject {
     // MARK: - Duration Limit Checking
     
     /// Check if user can start a new recording based on subscription limits
+    @MainActor
     func canStartRecording() -> (canStart: Bool, reason: String?) {
         guard let currentUser = authManager.currentUser else {
             return (false, "User not authenticated")
@@ -116,6 +117,7 @@ class RecordingService: NSObject, ObservableObject {
     }
     
     /// Get the maximum recording duration for the current user
+    @MainActor
     func getMaxRecordingDuration() -> TimeInterval? {
         guard let currentUser = authManager.currentUser,
               let maxMinutes = currentUser.maxRecordingDuration() else {
@@ -126,25 +128,27 @@ class RecordingService: NSObject, ObservableObject {
     
     /// Check if current recording duration exceeds limit
     private func checkDurationLimit() {
-        guard let maxDuration = getMaxRecordingDuration() else {
-            // No limit, update remaining time to nil
-            remainingTime = nil
-            return
-        }
-        
-        let remaining = maxDuration - recordingDuration
-        remainingTime = max(0, remaining)
-        
-        // Auto-stop if limit reached
-        if recordingDuration >= maxDuration {
-            print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
-            stopRecording()
+        Task { @MainActor in
+            guard let maxDuration = getMaxRecordingDuration() else {
+                // No limit, update remaining time to nil
+                remainingTime = nil
+                return
+            }
+            
+            let remaining = maxDuration - recordingDuration
+            remainingTime = max(0, remaining)
+            
+            // Auto-stop if limit reached
+            if recordingDuration >= maxDuration {
+                print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
+                stopRecording()
+            }
         }
     }
 
-    func startRecording(serviceType: String) throws {
+    func startRecording(serviceType: String) async throws {
         // Check if user can start recording
-        let (canStart, reason) = canStartRecording()
+        let (canStart, reason) = await canStartRecording()
         if !canStart {
             throw RecordingError.limitExceeded(reason ?? "Recording limit exceeded")
         }
@@ -177,11 +181,13 @@ class RecordingService: NSObject, ObservableObject {
         audioFileURLSubject.send(url)
         
         // Log the duration limit for this recording
-        if let maxDuration = getMaxRecordingDuration() {
-            let maxMinutes = Int(maxDuration / 60)
-            print("[RecordingService] Started recording with \(maxMinutes) minute limit")
-        } else {
-            print("[RecordingService] Started recording with no duration limit")
+        Task { @MainActor in
+            if let maxDuration = getMaxRecordingDuration() {
+                let maxMinutes = Int(maxDuration / 60)
+                print("[RecordingService] Started recording with \(maxMinutes) minute limit")
+            } else {
+                print("[RecordingService] Started recording with no duration limit")
+            }
         }
     }
 
