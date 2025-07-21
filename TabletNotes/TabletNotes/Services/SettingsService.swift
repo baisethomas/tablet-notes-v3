@@ -224,7 +224,7 @@ class SettingsService: ObservableObject {
     // MARK: - Subscription-Aware Properties
     
     /// Returns the effective transcription provider based on user's subscription tier
-    var effectiveTranscriptionProvider: TranscriptionProvider {
+    @MainActor var effectiveTranscriptionProvider: TranscriptionProvider {
         // Check if user has access to the selected provider
         guard let currentUser = AuthenticationManager.shared.currentUser else {
             return .appleSpeech
@@ -244,7 +244,7 @@ class SettingsService: ObservableObject {
     }
     
     /// Updates transcription provider to a subscription-appropriate default if current one is not accessible
-    func validateTranscriptionProvider() {
+    @MainActor func validateTranscriptionProvider() {
         guard let currentUser = AuthenticationManager.shared.currentUser else {
             transcriptionProvider = .appleSpeech
             return

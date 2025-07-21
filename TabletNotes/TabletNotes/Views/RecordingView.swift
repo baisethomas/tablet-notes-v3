@@ -799,7 +799,16 @@ struct RecordingView: View {
             let transcriptModel = Transcript(text: text, segments: segments)
             let summaryModel = Summary(text: "", type: serviceType, status: "processing")
             let sermonId = UUID()
+            
+            // Get the latest notes from the service to ensure we have all notes
+            let latestNotes = noteService.currentNotes
             print("[DEBUG] handleTranscriptionResult: creating sermon with transcriptionStatus = complete")
+            print("[DEBUG] handleTranscriptionResult: Current notes array has \(notes.count) notes")
+            print("[DEBUG] handleTranscriptionResult: NoteService has \(latestNotes.count) notes")
+            print("[DEBUG] handleTranscriptionResult: Using latest notes from service")
+            for (index, note) in latestNotes.enumerated() {
+                print("[DEBUG] RecordingView Note \(index): '\(note.text)' at \(note.timestamp)s")
+            }
             sermonService.saveSermon(
                 title: title,
                 audioFileURL: url,
@@ -807,7 +816,7 @@ struct RecordingView: View {
                 serviceType: serviceType,
                 speaker: nil, // Default nil speaker for new recordings
                 transcript: transcriptModel,
-                notes: notes,
+                notes: latestNotes, // Use latest notes from service
                 summary: summaryModel,
                 transcriptionStatus: "complete",
                 summaryStatus: "processing",
@@ -834,7 +843,7 @@ struct RecordingView: View {
                             serviceType: serviceType,
                             speaker: nil,
                             transcript: transcriptModel,
-                            notes: notes,
+                            notes: latestNotes,
                             summary: updatedSummary,
                             transcriptionStatus: "complete",
                             summaryStatus: "complete",
@@ -850,7 +859,7 @@ struct RecordingView: View {
                             serviceType: serviceType,
                             speaker: nil,
                             transcript: transcriptModel,
-                            notes: notes,
+                            notes: latestNotes,
                             summary: failedSummary,
                             transcriptionStatus: "complete",
                             summaryStatus: "failed",
@@ -872,7 +881,7 @@ struct RecordingView: View {
                         serviceType: serviceType,
                         speaker: nil,
                         transcript: transcriptModel,
-                        notes: notes,
+                        notes: latestNotes,
                         summary: summaryModel,
                         transcriptionStatus: "complete",
                         summaryStatus: "processing",

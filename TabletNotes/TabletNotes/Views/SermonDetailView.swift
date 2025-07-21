@@ -757,6 +757,7 @@ struct SermonDetailView: View {
     var notesTabView: some View {
         Group {
             if let sermon = sermon, !sermon.notes.isEmpty {
+                let _ = print("[DEBUG] SermonDetailView: Found \(sermon.notes.count) notes for sermon \(sermon.title)")
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(sermon.notes.sorted(by: { $0.timestamp < $1.timestamp })) { note in
@@ -787,6 +788,7 @@ struct SermonDetailView: View {
                     .padding(.bottom, 100)
                 }
             } else {
+                let _ = print("[DEBUG] SermonDetailView: No notes found for sermon \(sermon?.title ?? "unknown"). Notes count: \(sermon?.notes.count ?? 0)")
                 VStack(spacing: 16) {
                     Image(systemName: "note.text")
                         .font(.system(size: 48))

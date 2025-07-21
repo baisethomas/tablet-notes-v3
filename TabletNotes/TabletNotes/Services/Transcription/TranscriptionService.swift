@@ -42,6 +42,7 @@ class TranscriptionService: NSObject, ObservableObject {
     }
     
     /// Gets the effective transcription provider from SettingsService
+    @MainActor
     private func getEffectiveTranscriptionProvider() -> TranscriptionProvider {
         let effectiveProvider = settingsService.effectiveTranscriptionProvider
         let requestedProvider = settingsService.transcriptionProvider
@@ -64,8 +65,15 @@ class TranscriptionService: NSObject, ObservableObject {
         fullTranscript = ""
         lastPartial = ""
         
-        let provider = getEffectiveTranscriptionProvider()
-        print("[TranscriptionService] Using transcription provider: \(provider.rawValue)")
+        Task { @MainActor in
+            let provider = getEffectiveTranscriptionProvider()
+            print("[TranscriptionService] Using transcription provider: \(provider.rawValue)")
+            
+            await self.startTranscriptionWithProvider(provider)
+        }
+    }
+    
+    private func startTranscriptionWithProvider(_ provider: TranscriptionProvider) async {
         
         switch provider {
         case .assemblyAILive:
@@ -85,11 +93,19 @@ class TranscriptionService: NSObject, ObservableObject {
                 }
             }
         case .appleSpeech:
-            try startAppleSpeechSession()
+            do {
+                try startAppleSpeechSession()
+            } catch {
+                print("[TranscriptionService] Failed to start Apple Speech: \(error)")
+            }
         case .assemblyAI:
             // AssemblyAI provider uses post-recording transcription only
             // Fall back to Apple Speech for live transcription
-            try startAppleSpeechSession()
+            do {
+                try startAppleSpeechSession()
+            } catch {
+                print("[TranscriptionService] Failed to start Apple Speech fallback: \(error)")
+            }
         }
     }
 
@@ -163,8 +179,14 @@ class TranscriptionService: NSObject, ObservableObject {
     func stopTranscription() {
         print("[TranscriptionService] Stopping transcription...")
         
-        let provider = getEffectiveTranscriptionProvider()
-        
+        Task { @MainActor in
+            let provider = getEffectiveTranscriptionProvider()
+            
+            await self.stopTranscriptionWithProvider(provider)
+        }
+    }
+    
+    private func stopTranscriptionWithProvider(_ provider: TranscriptionProvider) async {
         switch provider {
         case .assemblyAILive:
             assemblyAILiveService.stopLiveTranscription()

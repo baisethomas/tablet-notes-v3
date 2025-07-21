@@ -94,6 +94,17 @@ class SermonService: ObservableObject {
             
             print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
             
+            // First, ensure all notes are inserted into the context
+            for note in notes {
+                modelContext.insert(note)
+            }
+            
+            // Add debugging for notes
+            print("[DEBUG] saveSermon: Processing \(notes.count) notes")
+            for (index, note) in notes.enumerated() {
+                print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s")
+            }
+            
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
                 existing.title = title
@@ -109,7 +120,7 @@ class SermonService: ObservableObject {
                 existing.isArchived = isArchived
                 // Update userId to current user (in case of user changes)
                 existing.userId = currentUser.id
-                print("[DEBUG] saveSermon: updated existing sermon \(existing.id) for user \(currentUser.id)")
+                print("[DEBUG] saveSermon: updated existing sermon \(existing.id) with \(notes.count) notes for user \(currentUser.id)")
             } else {
                 // Insert new sermon
                 let sermon = Sermon(
@@ -129,7 +140,7 @@ class SermonService: ObservableObject {
                     userId: currentUser.id
                 )
                 modelContext.insert(sermon)
-                print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) for user \(currentUser.id)")
+                print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) with \(notes.count) notes for user \(currentUser.id)")
             }
             try? modelContext.save()
             print("[SermonService] Sermon inserted/updated and modelContext saved.")

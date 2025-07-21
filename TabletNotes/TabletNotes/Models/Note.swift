@@ -6,7 +6,7 @@ final class Note: Codable {
     @Attribute(.unique) var id: UUID
     var text: String
     var timestamp: TimeInterval // seconds into audio
-    // Relationship to Sermon omitted for now due to cross-file reference issues
+    @Relationship(inverse: \Sermon.notes) var sermon: Sermon?
     
     // Sync metadata
     var remoteId: String?

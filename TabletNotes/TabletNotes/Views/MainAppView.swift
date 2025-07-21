@@ -28,6 +28,7 @@ struct MainAppView: View {
     @State private var lastCreatedSermon: Sermon? = nil
     @State private var showSplash = true
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
+    @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
     @StateObject private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
@@ -83,10 +84,15 @@ struct MainAppView: View {
                 case .recording(let serviceType):
                     AnyView(RecordingView(
                         serviceType: serviceType ?? "Sermon",
-                        noteService: NoteService(sessionId: UUID().uuidString),
+                        noteService: NoteService(sessionId: currentRecordingSessionId),
                         onNext: { sermon in
                             sermonService.fetchSermons() // Refresh the list
                             lastCreatedSermon = sermon
+                            // Clear the recording session notes after successful save
+                            let noteService = NoteService(sessionId: currentRecordingSessionId)
+                            noteService.clearSession()
+                            // Generate new session ID for next recording
+                            currentRecordingSessionId = UUID().uuidString
                             currentScreen = .sermons // Go to the list after recording
                         },
                         sermonService: sermonService,
