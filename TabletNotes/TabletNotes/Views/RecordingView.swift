@@ -674,49 +674,48 @@ struct RecordingView: View {
                 return
             }
             
-                do {
-                    try await recordingService.startRecording(serviceType: serviceType)
-                    
-                    await MainActor.run {
-                        do {
-                            try transcriptionService.startTranscription()
-                            
-                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                isRecordingStarted = true
+            do {
+                try await recordingService.startRecording(serviceType: serviceType)
+                
+                await MainActor.run {
+                    do {
+                        try transcriptionService.startTranscription()
+                        
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                            isRecordingStarted = true
+                        }
+                        elapsedTime = 0
+                        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
+                            // Only increment time if recording and not paused
+                            if isRecordingStarted && !isPaused {
+                                elapsedTime += 1
                             }
-                            elapsedTime = 0
-                            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
-                                // Only increment time if recording and not paused
-                                if isRecordingStarted && !isPaused {
-                                    elapsedTime += 1
-                                }
-                            })
-                        } catch {
-                            permissionMessage = "Failed to start transcription: \(error.localizedDescription)"
-                            showPermissionAlert = true
-                        }
-                    }
-                    
-                    // Log duration limit info
-                    let maxDuration = await recordingService.getMaxRecordingDuration()
-                    if let maxDuration = maxDuration {
-                        let maxMinutes = Int(maxDuration / 60)
-                        print("[RecordingView] Recording started with \(maxMinutes) minute limit")
-                    } else {
-                        print("[RecordingView] Recording started with no duration limit")
-                    }
-                } catch {
-                    await MainActor.run {
-                        let errorMessage: String
-                        if let recordingError = error as? RecordingError {
-                            errorMessage = recordingError.localizedDescription
-                        } else {
-                            errorMessage = "Failed to start recording: \(error.localizedDescription)"
-                        }
-                        permissionMessage = errorMessage
+                        })
+                    } catch {
+                        permissionMessage = "Failed to start transcription: \(error.localizedDescription)"
                         showPermissionAlert = true
-                        print("[RecordingView] Failed to start recording: \(error)")
                     }
+                }
+                
+                // Log duration limit info
+                let maxDuration = await recordingService.getMaxRecordingDuration()
+                if let maxDuration = maxDuration {
+                    let maxMinutes = Int(maxDuration / 60)
+                    print("[RecordingView] Recording started with \(maxMinutes) minute limit")
+                } else {
+                    print("[RecordingView] Recording started with no duration limit")
+                }
+            } catch {
+                await MainActor.run {
+                    let errorMessage: String
+                    if let recordingError = error as? RecordingError {
+                        errorMessage = recordingError.localizedDescription
+                    } else {
+                        errorMessage = "Failed to start recording: \(error.localizedDescription)"
+                    }
+                    permissionMessage = errorMessage
+                    showPermissionAlert = true
+                    print("[RecordingView] Failed to start recording: \(error)")
                 }
             }
         }
