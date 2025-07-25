@@ -25,9 +25,29 @@ extension User {
     
     var currentPlan: SubscriptionPlan {
         if isPaidUser {
-            return SubscriptionPlan.allPlans.first { plan in
-                plan.tier == subscriptionTierEnum && plan.productId == (subscriptionProductId ?? "")
-            } ?? SubscriptionPlan.free
+            // First try to match by both tier and product ID
+            if let productId = subscriptionProductId {
+                if let exactMatch = SubscriptionPlan.allPlans.first(where: { 
+                    $0.tier == subscriptionTierEnum && $0.productId == productId 
+                }) {
+                    return exactMatch
+                }
+            }
+            
+            // Fallback: match by tier only (for users with missing/invalid product IDs)
+            // Prefer the popular/annual plan for each tier
+            if let tierMatch = SubscriptionPlan.allPlans.first(where: { 
+                $0.tier == subscriptionTierEnum && $0.isPopular 
+            }) {
+                return tierMatch
+            }
+            
+            // Last resort: any plan with matching tier
+            if let anyTierMatch = SubscriptionPlan.allPlans.first(where: { 
+                $0.tier == subscriptionTierEnum 
+            }) {
+                return anyTierMatch
+            }
         }
         return SubscriptionPlan.free
     }
@@ -76,6 +96,35 @@ extension User {
     
     var canUseBulkOperations: Bool {
         return hasFeature(.bulkOperations)
+    }
+    
+    // MARK: - Data Consistency
+    
+    /// Fixes subscription data inconsistencies by assigning appropriate product IDs
+    /// Call this when a user has a valid subscription tier but missing product ID
+    func fixSubscriptionDataInconsistency() {
+        // Only fix if user has a valid paid tier but missing product ID
+        guard isPaidUser && subscriptionProductId == nil else { return }
+        
+        print("[User] Fixing subscription data inconsistency for user: \(email)")
+        print("[User] Current tier: \(subscriptionTier), missing product ID")
+        
+        // Assign the popular (annual) product ID for the user's tier
+        switch subscriptionTierEnum {
+        case .pro:
+            subscriptionProductId = SubscriptionPlan.proAnnual.productId
+            print("[User] Assigned Pro Annual product ID: \(SubscriptionPlan.proAnnual.productId)")
+            
+        case .premium:
+            subscriptionProductId = SubscriptionPlan.premiumAnnual.productId
+            print("[User] Assigned Premium Annual product ID: \(SubscriptionPlan.premiumAnnual.productId)")
+            
+        case .free:
+            // Free users shouldn't have inconsistent data, but just in case
+            subscriptionProductId = nil
+            subscriptionTier = "free"
+            subscriptionStatus = "free"
+        }
     }
     
     // MARK: - Usage Tracking

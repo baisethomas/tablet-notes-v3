@@ -80,6 +80,12 @@ final class AuthenticationManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] user in
                 print("[AuthenticationManager] Current user changed to: \(user?.name ?? "nil")")
+                
+                // Fix subscription data inconsistencies before setting the user
+                if let user = user {
+                    user.fixSubscriptionDataInconsistency()
+                }
+                
                 self?.currentUser = user
                 
                 // Validate transcription provider when user changes

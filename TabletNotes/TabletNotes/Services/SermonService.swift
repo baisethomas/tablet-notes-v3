@@ -312,6 +312,26 @@ class SermonService: ObservableObject {
         }
     }
     
+    func deleteAllSermons() {
+        // Delete all sermons from the model context
+        for sermon in sermons {
+            modelContext.delete(sermon)
+        }
+        
+        // Save the context to persist the deletions
+        do {
+            try modelContext.save()
+            
+            // Clear the local arrays
+            sermons.removeAll()
+            filteredSermons.removeAll()
+            
+            print("[SermonService] Successfully deleted all sermons")
+        } catch {
+            print("[SermonService] Failed to delete all sermons: \(error)")
+        }
+    }
+    
     // MARK: - Sync Methods
     
     private func markSermonForSync(_ sermonId: UUID) {

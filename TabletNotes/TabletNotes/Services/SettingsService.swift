@@ -159,6 +159,10 @@ class SettingsService: ObservableObject {
         didSet { UserDefaults.standard.set(dataSharingEnabled, forKey: "dataSharingEnabled") }
     }
     
+    @Published var crashReportingEnabled: Bool {
+        didSet { UserDefaults.standard.set(crashReportingEnabled, forKey: "crashReportingEnabled") }
+    }
+    
     // MARK: - Appearance Settings
     @Published var appTheme: AppTheme {
         didSet { UserDefaults.standard.set(appTheme.rawValue, forKey: "appTheme") }
@@ -210,6 +214,7 @@ class SettingsService: ObservableObject {
         self.analyticsEnabled = UserDefaults.standard.object(forKey: "analyticsEnabled") as? Bool ?? true
         self.locationTagging = UserDefaults.standard.object(forKey: "locationTagging") as? Bool ?? false
         self.dataSharingEnabled = UserDefaults.standard.object(forKey: "dataSharingEnabled") as? Bool ?? false
+        self.crashReportingEnabled = UserDefaults.standard.object(forKey: "crashReportingEnabled") as? Bool ?? true
         
         self.appTheme = AppTheme(rawValue: UserDefaults.standard.string(forKey: "appTheme") ?? "") ?? .system
         self.fontSize = FontSize(rawValue: UserDefaults.standard.string(forKey: "fontSize") ?? "") ?? .medium
@@ -225,43 +230,57 @@ class SettingsService: ObservableObject {
     
     /// Returns the effective transcription provider based on user's subscription tier
     @MainActor var effectiveTranscriptionProvider: TranscriptionProvider {
-        // Check if user has access to the selected provider
+        // Automatically determine the best transcription provider based on subscription tier
         guard let currentUser = AuthenticationManager.shared.currentUser else {
             return .appleSpeech
         }
         
-        switch transcriptionProvider {
-        case .assemblyAILive:
-            // Only Pro/Premium users can use AssemblyAI Live
-            return currentUser.canUsePriorityTranscription ? .assemblyAILive : .appleSpeech
-        case .assemblyAI:
-            // AssemblyAI post-recording is available to all tiers
+        // Premium users get AssemblyAI Live (real-time transcription)
+        if currentUser.subscriptionTier == "premium" {
+            return .assemblyAILive
+        }
+        
+        // Pro users get regular AssemblyAI (cloud-based, highly accurate)
+        if currentUser.subscriptionTier == "pro" {
             return .assemblyAI
-        case .appleSpeech:
-            // Apple Speech is always available
-            return .appleSpeech
+        }
+        
+        // Free/Basic users get Apple Speech
+        return .appleSpeech
+    }
+    
+    /// No longer needed - transcription provider is now automatically determined based on subscription tier
+    @MainActor func validateTranscriptionProvider() {
+        // Provider is now automatically determined by effectiveTranscriptionProvider
+        // This method is kept for compatibility but no longer performs validation
+        print("[SettingsService] Transcription provider is now automatically determined based on subscription tier")
+        
+        if let currentUser = AuthenticationManager.shared.currentUser {
+            let provider = effectiveTranscriptionProvider
+            print("[SettingsService] User tier: \(currentUser.subscriptionTier)")
+            print("[SettingsService] User subscription product ID: \(currentUser.subscriptionProductId ?? "nil")")
+            print("[SettingsService] User subscription tier enum: \(currentUser.subscriptionTierEnum)")
+            print("[SettingsService] User current plan: \(currentUser.currentPlan.productId)")
+            print("[SettingsService] Current plan features: \(currentUser.currentPlan.features.map { $0.rawValue })")
+            print("[SettingsService] Can use priority transcription: \(currentUser.canUsePriorityTranscription)")
+            print("[SettingsService] Auto-selected provider: \(provider.rawValue)")
         }
     }
     
-    /// Updates transcription provider to a subscription-appropriate default if current one is not accessible
-    @MainActor func validateTranscriptionProvider() {
-        guard let currentUser = AuthenticationManager.shared.currentUser else {
-            transcriptionProvider = .appleSpeech
-            return
+    // MARK: - Data Consistency Methods
+    
+    /// Manually trigger subscription data consistency fix for the current user
+    @MainActor func fixSubscriptionDataInconsistency() {
+        guard let currentUser = AuthenticationManager.shared.currentUser else { 
+            print("[SettingsService] No current user to fix")
+            return 
         }
         
-        // If user doesn't have priority transcription but is set to AssemblyAI Live, change to Apple Speech
-        if transcriptionProvider == .assemblyAILive && !currentUser.canUsePriorityTranscription {
-            print("[SettingsService] User lost Pro/Premium tier, switching from AssemblyAI Live to Apple Speech")
-            transcriptionProvider = .appleSpeech
-        }
+        print("[SettingsService] Manually fixing subscription data inconsistency")
+        currentUser.fixSubscriptionDataInconsistency()
         
-        // If user has priority transcription and is using Apple Speech, offer to upgrade
-        if transcriptionProvider == .appleSpeech && currentUser.canUsePriorityTranscription {
-            print("[SettingsService] User has Pro/Premium tier, could upgrade to AssemblyAI Live")
-            // Note: We don't auto-switch here to avoid surprising users
-            // Instead, this could trigger a one-time notification about the upgrade option
-        }
+        // Re-validate transcription provider after fix
+        validateTranscriptionProvider()
     }
     
     // MARK: - Helper Methods
@@ -271,7 +290,7 @@ class SettingsService: ObservableObject {
             "audioQuality", "autoTranscription", "defaultServiceType", "recordingFormat", "autoStopMinutes",
             "transcriptionProvider", "transcriptionLanguage", "autoPunctuation", "speakerDetection",
             "maxLocalStorageGB", "autoDeletePeriod", "cloudSyncEnabled", "offlineMode",
-            "analyticsEnabled", "locationTagging", "dataSharingEnabled",
+            "analyticsEnabled", "locationTagging", "dataSharingEnabled", "crashReportingEnabled",
             "appTheme", "fontSize", "reduceAnimations", "compactMode",
             "defaultExportFormat", "includeAudioInExport", "autoBackupEnabled"
         ]
@@ -295,6 +314,7 @@ class SettingsService: ObservableObject {
         analyticsEnabled = true
         locationTagging = false
         dataSharingEnabled = false
+        crashReportingEnabled = true
         appTheme = .system
         fontSize = .medium
         reduceAnimations = false
@@ -322,6 +342,7 @@ class SettingsService: ObservableObject {
             "analyticsEnabled": analyticsEnabled,
             "locationTagging": locationTagging,
             "dataSharingEnabled": dataSharingEnabled,
+            "crashReportingEnabled": crashReportingEnabled,
             "appTheme": appTheme.rawValue,
             "fontSize": fontSize.rawValue,
             "reduceAnimations": reduceAnimations,

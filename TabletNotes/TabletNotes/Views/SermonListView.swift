@@ -358,6 +358,7 @@ struct SermonListView: View {
     @ObservedObject var sermonService: SermonService
     var onSermonSelected: (Sermon) -> Void
     var onSettings: (() -> Void)? = nil
+    var onStartRecording: (() -> Void)? = nil
     
     @State private var isLoading = true
     @State private var showingDeleteAlert = false
@@ -520,10 +521,9 @@ struct SermonListView: View {
                         systemImage: "mic.circle",
                         actionTitle: "Start Recording",
                         action: {
-                            // This would navigate to recording view
-                            // For now, just provide haptic feedback
                             let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
                             impactFeedback.impactOccurred()
+                            onStartRecording?()
                         }
                     )
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
@@ -811,5 +811,5 @@ struct SermonListView: View {
 }
 
 #Preview {
-    SermonListView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)))) { _ in }
+    SermonListView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))), onSermonSelected: { _ in }, onStartRecording: { })
 }

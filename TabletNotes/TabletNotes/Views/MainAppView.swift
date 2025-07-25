@@ -79,6 +79,9 @@ struct MainAppView: View {
                         },
                         onSettings: {
                             currentScreen = .settings
+                        },
+                        onStartRecording: {
+                            showServiceTypeModal = true
                         }
                     ))
                 case .recording(let serviceType):
@@ -112,6 +115,9 @@ struct MainAppView: View {
                         },
                         onSettings: {
                             currentScreen = .settings
+                        },
+                        onStartRecording: {
+                            showServiceTypeModal = true
                         }
                     ))
                 case .settings:

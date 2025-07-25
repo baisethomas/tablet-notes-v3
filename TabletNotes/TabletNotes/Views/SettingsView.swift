@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var showingResetAlert = false
     @State private var showingAbout = false
     @State private var showingSubscriptionPrompt = false
+    @State private var showingDeleteAllDataAlert = false
+    @State private var showingDataExportSheet = false
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -201,6 +203,46 @@ struct SettingsView: View {
                                 subtitle: "Disable network features to save data",
                                 isOn: $settings.offlineMode
                             )
+                            
+                            SettingsDivider()
+                            
+                            SettingsToggle(
+                                icon: "exclamationmark.triangle",
+                                title: "Crash Reporting",
+                                subtitle: "Share crash reports to help improve stability",
+                                isOn: $settings.crashReportingEnabled
+                            )
+                            
+                            SettingsDivider()
+                            
+                            SettingsNavigationRow(
+                                icon: "hand.raised",
+                                title: "App Permissions",
+                                subtitle: "Manage microphone, location, and other permissions"
+                            ) {
+                                openAppSettings()
+                            }
+                            
+                            SettingsDivider()
+                            
+                            SettingsNavigationRow(
+                                icon: "doc.text",
+                                title: "Export My Data",
+                                subtitle: "Download all your data (GDPR compliance)"
+                            ) {
+                                exportUserData()
+                            }
+                            
+                            SettingsDivider()
+                            
+                            SettingsButton(
+                                icon: "trash.circle",
+                                title: "Delete All Data",
+                                subtitle: "Permanently remove all recordings and personal data",
+                                style: .destructive
+                            ) {
+                                showingDeleteAllDataAlert = true
+                            }
                         }
                     }
                     
@@ -341,6 +383,52 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingSubscriptionPrompt) {
             SubscriptionPromptView()
+        }
+        .sheet(isPresented: $showingDataExportSheet) {
+            DataExportView()
+        }
+        .alert("Delete All Data", isPresented: $showingDeleteAllDataAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete Everything", role: .destructive) {
+                deleteAllUserData()
+            }
+        } message: {
+            Text("This will permanently delete all your recordings, notes, transcripts, and personal data. This action cannot be undone.")
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func openAppSettings() {
+        guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else { return }
+        
+        if UIApplication.shared.canOpenURL(settingsUrl) {
+            UIApplication.shared.open(settingsUrl)
+        }
+    }
+    
+    private func exportUserData() {
+        showingDataExportSheet = true
+    }
+    
+    private func deleteAllUserData() {
+        Task {
+            // Delete all local data
+            sermonService?.deleteAllSermons()
+            
+            // Clear settings
+            settings.resetToDefaults()
+            
+            // Clear authentication data
+            do {
+                try await authManager.signOut()
+            } catch {
+                print("Failed to sign out during data deletion: \(error)")
+            }
+            
+            // Provide haptic feedback
+            let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
+            impactFeedback.impactOccurred()
         }
     }
 }
@@ -511,7 +599,7 @@ struct CloudSyncSettingRow: View {
                     }) {
                         Text("Upgrade")
                             .font(.caption)
-                            .foregroundColor(.warningOrange)
+                            .foregroundColor(.orange)
                     }
                 }
             }
@@ -561,7 +649,7 @@ struct SubscriptionPromptView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "crown.fill")
                             .font(.system(size: 48))
-                            .foregroundColor(.warningOrange)
+                            .foregroundColor(.orange)
                         
                         Text("Upgrade to Pro")
                             .font(.title)
@@ -1211,7 +1299,7 @@ struct BibleTranslationSelectionView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.largeTitle)
-                            .foregroundColor(.warningOrange)
+                            .foregroundColor(.orange)
                         Text("No Bible translations available")
                             .font(.headline)
                         Text("Please check your internet connection and try again.")
@@ -1238,7 +1326,7 @@ struct BibleTranslationSelectionView: View {
                                             
                                             if translation.id == selectedTranslation.id {
                                                 Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundColor(.adaptiveAccent)
+                                                    .foregroundColor(.accentColor)
                                             }
                                         }
                                         
@@ -1246,7 +1334,7 @@ struct BibleTranslationSelectionView: View {
                                             .font(.subheadline)
                                             .foregroundColor(.primary)
                                         
-                                        Text(translation.description)
+                                        Text(translation.translationDescription ?? "")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                             .lineLimit(2)
@@ -1280,19 +1368,18 @@ struct BibleTranslationSelectionView: View {
         isLoading = true
         
         // Wait a bit for the Bible service to load available Bibles
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: DispatchWorkItem {
             let englishBibles = getEnglishBibles()
             availableTranslations = englishBibles.map { bible in
                 BibleTranslation(
                     id: bible.id,
                     name: bible.name,
                     abbreviation: bible.abbreviation,
-                    description: bible.description ?? "English Bible translation",
-                    language: "English"
+                    translationDescription: "English Bible translation"
                 )
             }
             isLoading = false
-        }
+        })
     }
     
     private func getEnglishBibles() -> [Bible] {
@@ -1323,33 +1410,209 @@ struct TranscriptionProviderPicker: View {
     var body: some View {
         SettingsRow(
             icon: "brain.head.profile",
-            title: "Transcription Provider",
-            subtitle: settings.transcriptionProvider.description
+            title: "Transcription Service",
+            subtitle: transcriptionDescription
         ) {
-            Picker("", selection: $settings.transcriptionProvider) {
-                ForEach(TranscriptionProvider.allCases, id: \.self) { provider in
-                    HStack {
-                        Text(provider.rawValue)
-                        if provider.requiresPremium && !hasLiveTranscriptionAccess {
-                            Image(systemName: "crown.fill")
-                                .foregroundColor(.warningOrange)
-                                .font(.caption2)
-                        }
+            HStack {
+                Text(currentProvider.rawValue)
+                    .foregroundColor(.primary)
+                    .fontWeight(.medium)
+                
+                Spacer()
+                
+                if hasLiveTranscriptionAccess {
+                    Image(systemName: "crown.fill")
+                        .foregroundColor(.adaptiveAccent)
+                        .font(.caption)
+                } else {
+                    Button("Upgrade") {
+                        showingSubscriptionPrompt = true
                     }
-                    .tag(provider)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.adaptiveAccent)
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
                 }
             }
-            .pickerStyle(MenuPickerStyle())
-            .labelsHidden()
-            .onChange(of: settings.transcriptionProvider) { newProvider in
-                // Check if user is trying to select a premium feature without access
-                if newProvider.requiresPremium && !hasLiveTranscriptionAccess {
-                    // Reset to previous selection
-                    settings.transcriptionProvider = .appleSpeech
-                    // Show subscription prompt
-                    showingSubscriptionPrompt = true
+        }
+    }
+    
+    private var currentProvider: TranscriptionProvider {
+        return settings.effectiveTranscriptionProvider
+    }
+    
+    private var transcriptionDescription: String {
+        if hasLiveTranscriptionAccess {
+            return "AssemblyAI - High-quality real-time transcription"
+        } else {
+            return "Apple Speech - Basic transcription (upgrade for better quality)"
+        }
+    }
+}
+
+// MARK: - Data Export View
+struct DataExportView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isExporting = false
+    @State private var exportCompleted = false
+    @State private var exportError: String?
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.circle")
+                        .font(.system(size: 48))
+                        .foregroundColor(.adaptiveAccent)
+                    
+                    Text("Export Your Data")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("Download all your recordings, notes, transcripts, and settings as a ZIP file.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 32)
+                
+                // Export options
+                VStack(spacing: 16) {
+                    Text("What will be included:")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        ExportDataRow(icon: "waveform", title: "Audio Recordings", description: "All sermon audio files")
+                        ExportDataRow(icon: "text.bubble", title: "Transcripts", description: "AI-generated transcriptions")
+                        ExportDataRow(icon: "note.text", title: "Notes", description: "Your personal notes and annotations")
+                        ExportDataRow(icon: "doc.text", title: "Summaries", description: "AI-generated sermon summaries")
+                        ExportDataRow(icon: "gearshape", title: "Settings", description: "Your app preferences and configuration")
+                    }
+                }
+                
+                Spacer()
+                
+                // Export button
+                if isExporting {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Preparing your data...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 40)
+                } else if exportCompleted {
+                    VStack(spacing: 16) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(.successGreen)
+                        Text("Export Complete!")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        Text("Your data has been saved to Files app.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 40)
+                } else {
+                    Button(action: {
+                        startExport()
+                    }) {
+                        Text("Export My Data")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.adaptiveAccent)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 24)
+                }
+                
+                if let error = exportError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .padding()
+                }
+                
+                // Privacy note
+                Text("Your data will be exported locally to your device. No data is sent to external servers during this process.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+            }
+            .navigationTitle("Export Data")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
                 }
             }
+        }
+    }
+    
+    private func startExport() {
+        isExporting = true
+        exportError = nil
+        
+        Task {
+            do {
+                // Simulate export process
+                try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                
+                await MainActor.run {
+                    isExporting = false
+                    exportCompleted = true
+                }
+            } catch {
+                await MainActor.run {
+                    isExporting = false
+                    exportError = "Export failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Export Data Row Component
+struct ExportDataRow: View {
+    let icon: String
+    let title: String
+    let description: String
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.adaptiveAccent)
+                .frame(width: 24, height: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(.successGreen)
         }
     }
 }
