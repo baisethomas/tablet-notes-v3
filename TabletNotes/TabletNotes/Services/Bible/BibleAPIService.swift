@@ -87,7 +87,8 @@ struct AudioBible: Codable {
 }
 
 // MARK: - Bible API Service
-class BibleAPIService: ObservableObject {
+@MainActor
+class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
     private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
     private let supabase = SupabaseService.shared.client
     
@@ -183,8 +184,8 @@ class BibleAPIService: ObservableObject {
     // MARK: - Public Methods
     
     /// Fetch a specific verse or range of verses
-    func fetchVerse(reference: String, bibleId: String? = nil) async throws -> BibleVerse {
-        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
+    func fetchVerse(reference: String, bibleId: String) async throws -> BibleVerse {
+        let useBibleId = bibleId.isEmpty ? "06125adad2d5898a-01" : bibleId // Default to a known working ID
         
         // Try different Bible IDs to see if the issue is Bible-specific
         let testBibleIds = [
@@ -312,8 +313,8 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Fetch a passage (multiple verses)
-    func fetchPassage(reference: String, bibleId: String? = nil) async throws -> BiblePassage {
-        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
+    func fetchPassage(reference: String, bibleId: String) async throws -> BiblePassage {
+        let useBibleId = bibleId.isEmpty ? "06125adad2d5898a-01" : bibleId // Default to a known working ID
         let passageReference = formatReferenceForAPI(reference)
         let endpoint = "bibles/\(useBibleId)/passages/\(passageReference)"
         
@@ -353,8 +354,8 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Search for verses containing specific text
-    func searchVerses(query: String, bibleId: String? = nil, limit: Int = 10) async throws -> [BibleVerse] {
-        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
+    func searchVerses(query: String, bibleId: String, limit: Int = 10) async throws -> [BibleVerse] {
+        let useBibleId = bibleId.isEmpty ? "06125adad2d5898a-01" : bibleId // Default to a known working ID
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let endpoint = "bibles/\(useBibleId)/search?query=\(encodedQuery)&limit=\(limit)"
         
@@ -380,8 +381,8 @@ class BibleAPIService: ObservableObject {
     }
     
     /// Get list of books for a specific Bible
-    func fetchBooks(bibleId: String? = nil) async throws -> [BibleBook] {
-        let useBibleId = bibleId ?? "06125adad2d5898a-01" // Default to a known working ID
+    func fetchBooks(bibleId: String) async throws -> [BibleBook] {
+        let useBibleId = bibleId.isEmpty ? "06125adad2d5898a-01" : bibleId // Default to a known working ID
         let endpoint = "bibles/\(useBibleId)/books"
         
         print("[BibleAPIService] Fetching books for Bible: \(useBibleId)")

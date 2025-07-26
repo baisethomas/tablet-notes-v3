@@ -2,11 +2,11 @@ import SwiftUI
 
 struct ScriptureDetailView: View {
     let reference: ScriptureReference
-    @StateObject private var bibleService = BibleAPIService()
+    @StateObject private var bibleService = DirectBibleAPIService()
     @State private var scriptureContent: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var selectedBibleVersion = BibleAPIConfig.defaultBibleId
+    @State private var selectedBibleVersion = ApiBibleConfig.defaultBibleId
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -172,6 +172,15 @@ struct ScriptureDetailView: View {
         errorMessage = nil
         
         Task {
+            // Check if API key is configured
+            guard ApiBibleConfig.isConfigured else {
+                await MainActor.run {
+                    errorMessage = "API.Bible is not configured. Please add your API key."
+                    isLoading = false
+                }
+                return
+            }
+            
             do {
                 let content: String
                 if reference.isRange {
@@ -194,8 +203,11 @@ struct ScriptureDetailView: View {
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = error.localizedDescription
+                    errorMessage = "Unable to load scripture: \(error.localizedDescription)"
                     isLoading = false
+                    
+                    // For development, show a placeholder
+                    scriptureContent = "This scripture is currently unavailable. Please check your internet connection or try again later."
                 }
             }
         }
@@ -226,20 +238,12 @@ struct ScriptureDetailView: View {
         if let bible = getEnglishBibles().first(where: { $0.id == selectedBibleVersion }) {
             return bible.abbreviation
         }
-        return "ESV"
+        return "KJV"
     }
     
     private func getEnglishBibles() -> [Bible] {
-        // Filter available Bibles to only show English translations
-        return bibleService.availableBibles.filter { bible in
-            bible.language.name.lowercased().contains("english")
-        }.sorted { first, second in
-            // Prioritize common translations
-            let priority = ["ESV", "NIV", "NLT", "KJV", "NASB", "ASV"]
-            let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
-            let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
-            return firstPriority < secondPriority
-        }
+        // DirectBibleAPIService already filters to English translations
+        return bibleService.availableBibles
     }
     
     private func shareScripture() {
