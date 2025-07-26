@@ -45,18 +45,24 @@ class TranscriptionService: NSObject, ObservableObject {
     @MainActor
     private func getEffectiveTranscriptionProvider() -> TranscriptionProvider {
         let effectiveProvider = settingsService.effectiveTranscriptionProvider
-        let requestedProvider = settingsService.transcriptionProvider
+        // No longer need requestedProvider since it's automatically determined
         
         if let currentUser = authManager.currentUser {
             print("[TranscriptionService] User subscription tier: \(currentUser.subscriptionTier)")
+            print("[TranscriptionService] User subscription status: \(currentUser.subscriptionStatus)")
+            print("[TranscriptionService] Is paid user: \(currentUser.isPaidUser)")
+            print("[TranscriptionService] Current plan: \(currentUser.currentPlan.tier.rawValue)")
+            print("[TranscriptionService] Plan features: \(currentUser.currentPlan.features.map { $0.rawValue })")
             print("[TranscriptionService] Has priority transcription: \(currentUser.canUsePriorityTranscription)")
+            
+            if let expiry = currentUser.subscriptionExpiry {
+                print("[TranscriptionService] Subscription expires: \(expiry)")
+                print("[TranscriptionService] Is subscription expired: \(Date() >= expiry)")
+            } else {
+                print("[TranscriptionService] No subscription expiry date")
+            }
         }
-        print("[TranscriptionService] Requested provider: \(requestedProvider.rawValue)")
-        print("[TranscriptionService] Effective provider: \(effectiveProvider.rawValue)")
-        
-        if effectiveProvider != requestedProvider {
-            print("[TranscriptionService] Provider downgraded due to subscription tier limitations")
-        }
+        print("[TranscriptionService] Auto-selected provider: \(effectiveProvider.rawValue)")
         
         return effectiveProvider
     }

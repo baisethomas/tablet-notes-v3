@@ -161,6 +161,8 @@ class SupabaseService: SupabaseServiceProtocol {
     
     /// Gets a signed download URL for a file
     func getSignedDownloadURL(for path: String) async throws -> URL {
+        print("[SupabaseService] Requesting download URL for path: \(path)")
+        
         let url = URL(string: "\(apiBaseUrl)/api/generate-download-url")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -176,24 +178,42 @@ class SupabaseService: SupabaseServiceProtocol {
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("[SupabaseService] Invalid response type for download URL")
             throw URLError(.badServerResponse)
         }
         
-        guard httpResponse.statusCode == 200 else {
+        print("[SupabaseService] Download URL response status: \(httpResponse.statusCode)")
+        
+        if httpResponse.statusCode != 200 {
+            print("[SupabaseService] Download URL request failed with status: \(httpResponse.statusCode)")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("[SupabaseService] Error response: \(responseString)")
+            }
             throw URLError(.badServerResponse)
         }
 
-        let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
-        
-        guard decodedResponse.success else {
-            throw URLError(.badServerResponse)
+        do {
+            let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
+            
+            guard decodedResponse.success else {
+                print("[SupabaseService] Download URL API returned success: false")
+                throw URLError(.badServerResponse)
+            }
+            
+            guard let downloadUrl = URL(string: decodedResponse.data.uploadUrl) else {
+                print("[SupabaseService] Invalid download URL: \(decodedResponse.data.uploadUrl)")
+                throw URLError(.badURL)
+            }
+            
+            print("[SupabaseService] Generated download URL: \(downloadUrl)")
+            return downloadUrl
+        } catch {
+            print("[SupabaseService] Failed to decode download URL response: \(error)")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("[SupabaseService] Raw response: \(responseString)")
+            }
+            throw error
         }
-        
-        guard let downloadUrl = URL(string: decodedResponse.data.uploadUrl) else {
-            throw URLError(.badURL)
-        }
-        
-        return downloadUrl
     }
     
     /// Updates user profile in Supabase
@@ -234,6 +254,73 @@ class SupabaseService: SupabaseServiceProtocol {
         guard httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
+    }
+
+    /// Downloads an audio file from Supabase storage to a local URL
+    func downloadAudioFile(filename: String, localURL: URL, remotePath: String? = nil) async throws -> URL {
+        print("[SupabaseService] Downloading file directly from Supabase storage: \(filename)")
+        if let remotePath = remotePath {
+            print("[SupabaseService] Using stored remote path: \(remotePath)")
+        }
+        
+        // Try different bucket names and paths
+        let bucketOptions = ["audio-recordings", "audio-files", "recordings"]
+        
+        var pathOptions: [String] = []
+        
+        // If we have the remote path, try it first
+        if let remotePath = remotePath {
+            pathOptions.append(remotePath)
+        }
+        
+        
+        // Add fallback paths
+        pathOptions.append(contentsOf: [
+            filename,
+            "audio-files/\(filename)",
+            "recordings/\(filename)"
+        ])
+        
+        // Add user-specific path if we can get the current user
+        do {
+            let session = try await supabase.auth.session
+            let userId = session.user.id
+            pathOptions.append("\(userId)/\(filename)")
+            pathOptions.append("audio-files/\(userId)/\(filename)")
+        } catch {
+            print("[SupabaseService] Could not get user session for path construction: \(error)")
+        }
+        
+        for bucket in bucketOptions {
+            for path in pathOptions {
+                do {
+                    print("[SupabaseService] Trying bucket: \(bucket), path: \(path)")
+                    
+                    // Use Supabase SDK directly to download the file
+                    let data = try await supabase.storage
+                        .from(bucket)
+                        .download(path: path)
+                    
+                    print("[SupabaseService] Downloaded \(data.count) bytes from bucket: \(bucket), path: \(path)")
+                    
+                    // Ensure the directory exists
+                    let directory = localURL.deletingLastPathComponent()
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+                    
+                    // Write the file to local storage
+                    try data.write(to: localURL)
+                    
+                    print("[SupabaseService] Successfully downloaded audio file from \(bucket)/\(path) to \(localURL)")
+                    return localURL
+                } catch {
+                    print("[SupabaseService] Failed to download from bucket: \(bucket), path: \(path) - \(error)")
+                    // Continue to next option
+                }
+            }
+        }
+        
+        // If all options failed, throw the last error
+        throw URLError(.fileDoesNotExist)
     }
 
     /// Fetches all remote sermons for a user from the Netlify API

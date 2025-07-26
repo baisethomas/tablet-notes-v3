@@ -488,17 +488,40 @@ struct SermonDetailView: View {
         }
         .navigationBarHidden(true)
         .navigationViewStyle(StackNavigationViewStyle())
+        .onAppear {
+            if let sermon = sermon {
+                editableTitle = sermon.title
+                editableSpeaker = sermon.speaker ?? ""
+                setupAudioPlayer()
+            }
+        }
+        .onDisappear {
+            // Clean up audio player when leaving the view
+            stopPlayback()
+            audioPlayer = nil
+            timer?.invalidate()
+        }
     }
     
     // MARK: - Helper Methods
     private func setupAudioPlayer() {
-        guard let sermon = sermon, duration == 0 else { return }
+        guard let sermon = sermon else { return }
         
+        print("[AudioPlayer] Setting up audio player on view appear")
+        setupAudioPlayerForPlayback(sermon: sermon)
+        
+        // Reset audio session to playback mode after potential recording
+        setupAudioSessionForPlayback()
+    }
+    
+    private func setupAudioSessionForPlayback() {
         do {
-            let player = try AVAudioPlayer(contentsOf: sermon.audioFileURL)
-            duration = player.duration
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.allowBluetooth])
+            try audioSession.setActive(true)
+            print("[AudioPlayer] Audio session configured for playback")
         } catch {
-            print("Failed to load audio for duration: \(error)")
+            print("[AudioPlayer] Failed to configure audio session: \(error)")
         }
     }
     
@@ -820,10 +843,22 @@ struct SermonDetailView: View {
             isPlaying = false
             timer?.invalidate()
         } else {
+            // Ensure audio player is set up and ready
             if audioPlayer == nil {
+                print("[AudioPlayer] Audio player is nil, setting up for playback")
                 setupAudioPlayerForPlayback(sermon: sermon)
             }
-            audioPlayer?.play()
+            
+            // Verify audio player was successfully created
+            guard let player = audioPlayer else {
+                print("[AudioPlayer] Failed to create audio player, cannot play")
+                return
+            }
+            
+            // Ensure audio session is configured for playback
+            setupAudioSessionForPlayback()
+            
+            player.play()
             isPlaying = true
             startTimer()
         }
@@ -844,8 +879,17 @@ struct SermonDetailView: View {
             setupAudioPlayerForPlayback(sermon: sermon)
         }
         
-        audioPlayer?.currentTime = timestamp
-        audioPlayer?.play()
+        // Verify audio player was successfully created
+        guard let player = audioPlayer else {
+            print("[AudioPlayer] Failed to create audio player for timestamp playback")
+            return
+        }
+        
+        // Ensure audio session is configured for playback
+        setupAudioSessionForPlayback()
+        
+        player.currentTime = timestamp
+        player.play()
         isPlaying = true
         startTimer()
     }
@@ -857,17 +901,37 @@ struct SermonDetailView: View {
     
     private func setupAudioPlayerForPlayback(sermon: Sermon) {
         print("[AudioPlayer] Attempting to load audio from: \(sermon.audioFileURL)")
+        print("[AudioPlayer] Full URL: \(sermon.audioFileURL.absoluteString)")
         
-        // Check if file exists
+        // Check if file exists and is readable
         let fileExists = FileManager.default.fileExists(atPath: sermon.audioFileURL.path)
-        print("[AudioPlayer] File exists: \(fileExists)")
+        let isReadable = FileManager.default.isReadableFile(atPath: sermon.audioFileURL.path)
+        print("[AudioPlayer] File exists: \(fileExists), readable: \(isReadable)")
         
         if !fileExists {
             print("[AudioPlayer] ERROR: Audio file not found at path: \(sermon.audioFileURL.path)")
             return
         }
         
+        if !isReadable {
+            print("[AudioPlayer] ERROR: Audio file is not readable at path: \(sermon.audioFileURL.path)")
+            return
+        }
+        
+        // Get file attributes for debugging
         do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: sermon.audioFileURL.path)
+            let fileSize = attributes[.size] as? Int64 ?? 0
+            print("[AudioPlayer] File size: \(fileSize) bytes")
+        } catch {
+            print("[AudioPlayer] Could not get file attributes: \(error)")
+        }
+        
+        do {
+            // Clean up any existing player first
+            audioPlayer?.stop()
+            audioPlayer = nil
+            
             audioPlayer = try AVAudioPlayer(contentsOf: sermon.audioFileURL)
             duration = audioPlayer?.duration ?? 0
             audioPlayer?.prepareToPlay()
@@ -877,7 +941,9 @@ struct SermonDetailView: View {
             if let nsError = error as NSError? {
                 print("[AudioPlayer] Error domain: \(nsError.domain), code: \(nsError.code)")
                 print("[AudioPlayer] Error description: \(nsError.localizedDescription)")
+                print("[AudioPlayer] User info: \(nsError.userInfo)")
             }
+            audioPlayer = nil
         }
     }
     

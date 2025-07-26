@@ -178,6 +178,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                     completion(.failure(NSError(domain: "UploadFailed", code: statusCode, userInfo: nil)))
                     return
                 }
+                print("[API] Supabase upload successful!")
                 completion(.success(()))
             }.resume()
         } catch {

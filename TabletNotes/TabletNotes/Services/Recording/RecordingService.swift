@@ -172,11 +172,15 @@ class RecordingService: NSObject, ObservableObject {
         recordingURL = url
         
         // Start duration tracking
-        recordingDuration = 0
-        recordingStartTime = Date()
+        Task { @MainActor in
+            recordingDuration = 0
+            recordingStartTime = Date()
+        }
         startDurationTimer()
         
-        isRecording = true
+        Task { @MainActor in
+            isRecording = true
+        }
         isRecordingSubject.send(true)
         audioFileURLSubject.send(url)
         
@@ -195,14 +199,18 @@ class RecordingService: NSObject, ObservableObject {
         audioRecorder?.stop()
         stopDurationTimer()
         
-        isRecording = false
-        isPaused = false
+        Task { @MainActor in
+            isRecording = false
+            isPaused = false
+        }
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
         
         // Reset duration tracking
-        recordingDuration = 0
-        remainingTime = nil
+        Task { @MainActor in
+            recordingDuration = 0
+            remainingTime = nil
+        }
         recordingStartTime = nil
     }
     
@@ -210,7 +218,9 @@ class RecordingService: NSObject, ObservableObject {
         guard isRecording, !isPaused else { return }
         audioRecorder?.pause()
         stopDurationTimer()
-        isPaused = true
+        Task { @MainActor in
+            isPaused = true
+        }
         isPausedSubject.send(true)
     }
     
@@ -218,7 +228,9 @@ class RecordingService: NSObject, ObservableObject {
         guard isRecording, isPaused else { return }
         audioRecorder?.record()
         startDurationTimer()
-        isPaused = false
+        Task { @MainActor in
+            isPaused = false
+        }
         isPausedSubject.send(false)
     }
     
@@ -240,7 +252,9 @@ class RecordingService: NSObject, ObservableObject {
     private func updateDuration() {
         guard let startTime = recordingStartTime else { return }
         
-        recordingDuration = Date().timeIntervalSince(startTime)
+        Task { @MainActor in
+            recordingDuration = Date().timeIntervalSince(startTime)
+        }
         checkDurationLimit()
     }
     
@@ -266,6 +280,7 @@ class RecordingService: NSObject, ObservableObject {
     func audioFileExists(at url: URL) -> Bool {
         return fileManager.fileExists(atPath: url.path)
     }
+    
     
     /// Delete an audio file
     func deleteAudioFile(at url: URL) {
@@ -301,8 +316,10 @@ enum RecordingError: LocalizedError {
 
 extension RecordingService: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        isRecording = false
-        isPaused = false
+        Task { @MainActor in
+            isRecording = false
+            isPaused = false
+        }
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
         if flag {
