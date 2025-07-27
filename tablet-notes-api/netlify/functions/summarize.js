@@ -346,7 +346,7 @@ Before finalizing, ensure that everything in your summary can be directly traced
             content: `Please summarize this ${actualServiceType} text: ${sanitizedText}`
           }
         ],
-        max_tokens: length === 'short' ? 500 : length === 'long' ? 1500 : 1000,
+        max_tokens: length === 'short' ? 1000 : length === 'long' ? 3000 : 2000,
         temperature: tone === 'formal' ? 0.3 : tone === 'academic' ? 0.2 : 0.7
       })),
       120000 // 2 minute timeout
