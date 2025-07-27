@@ -30,6 +30,13 @@ const RATE_LIMITS = {
     keyPrefix: 'rate_limit:summarization:'
   },
   
+  // Summary refresh requests - per user per day
+  summary_refresh: {
+    windowMs: 24 * 60 * 60 * 1000, // 24 hours
+    maxRequests: 10, // Base limit - will be overridden per subscription tier
+    keyPrefix: 'rate_limit:summary_refresh:'
+  },
+  
   // Bible API requests - per user per minute
   bible: {
     windowMs: 60 * 1000, // 1 minute
@@ -58,13 +65,14 @@ class RateLimiter {
   }
 
   /**
-   * Check if a request should be rate limited
+   * Check if a request should be rate limited with subscription tier support
    * @param {string} identifier - User ID or IP address
    * @param {string} limitType - Type of rate limit to apply
    * @param {string} ip - Client IP address for additional protection
+   * @param {string} subscriptionTier - User's subscription tier (free, pro, premium)
    * @returns {Promise<{allowed: boolean, remaining: number, resetTime: number, error?: string}>}
    */
-  async checkLimit(identifier, limitType = 'general', ip = null) {
+  async checkLimit(identifier, limitType = 'general', ip = null, subscriptionTier = 'free') {
     try {
       // If Redis is not configured, allow all requests (fallback)
       if (!this.redis) {
@@ -72,9 +80,27 @@ class RateLimiter {
         return { allowed: true, remaining: Infinity, resetTime: Date.now() };
       }
 
-      const config = RATE_LIMITS[limitType];
+      let config = RATE_LIMITS[limitType];
       if (!config) {
         throw new Error(`Invalid rate limit type: ${limitType}`);
+      }
+
+      // Apply subscription tier limits for summary refresh
+      if (limitType === 'summary_refresh') {
+        config = { ...config }; // Create a copy to avoid modifying the original
+        switch (subscriptionTier) {
+          case 'free':
+            config.maxRequests = 3; // 3 refreshes per day for free tier
+            break;
+          case 'pro':
+            config.maxRequests = 10; // 10 refreshes per day for pro tier
+            break;
+          case 'premium':
+            config.maxRequests = 25; // 25 refreshes per day for premium tier
+            break;
+          default:
+            config.maxRequests = 3; // Default to free tier limits
+        }
       }
 
       const now = Date.now();
@@ -234,8 +260,21 @@ function createRateLimitMiddleware(limitType = 'general') {
                       event.headers['client-ip'] ||
                       'unknown';
 
+      // Extract subscription tier from user metadata if available
+      let subscriptionTier = 'free';
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const token = authHeader.substring(7);
+          const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+          subscriptionTier = payload.user_metadata?.subscription_tier || 'free';
+        } catch (e) {
+          // If parsing fails, default to free tier
+          subscriptionTier = 'free';
+        }
+      }
+
       // Check rate limit
-      const result = await rateLimiter.checkLimit(userId, limitType, clientIP);
+      const result = await rateLimiter.checkLimit(userId, limitType, clientIP, subscriptionTier);
 
       if (!result.allowed) {
         return {

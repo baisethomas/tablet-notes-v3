@@ -20,6 +20,9 @@ struct SummaryView: View {
     @State private var summary: String? = nil
     @State private var status: String = "idle"
     @State private var cancellables = Set<AnyCancellable>()
+    @State private var refreshCount: Int = 0
+    @State private var userTier: String = "free" // Default to free tier
+    @State private var showingRefreshLimit = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -37,6 +40,38 @@ struct SummaryView: View {
                                     serviceType: serviceType
                                 )
                                 .padding(.horizontal)
+                                
+                                // Refresh button section
+                                VStack(spacing: 8) {
+                                    HStack {
+                                        Button {
+                                            refreshSummary()
+                                        } label: {
+                                            HStack {
+                                                Image(systemName: "arrow.clockwise")
+                                                Text("Refresh Summary")
+                                            }
+                                        }
+                                        .disabled(!summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier))
+                                        .buttonStyle(.bordered)
+                                        
+                                        Spacer()
+                                        
+                                        let remaining = summaryService.getRemainingRefreshes(currentRefreshCount: refreshCount, userTier: userTier)
+                                        Text("\(remaining) refreshes left")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal)
+                                    
+                                    if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
+                                        Text("Daily refresh limit reached. Upgrade for more refreshes.")
+                                            .font(.caption)
+                                            .foregroundColor(.orange)
+                                            .multilineTextAlignment(.center)
+                                            .padding(.horizontal)
+                                    }
+                                }
                             }
                             .padding(.bottom, 100)
                         }
@@ -76,6 +111,14 @@ struct SummaryView: View {
             }
         }
         .ignoresSafeArea(edges: .bottom)
+        .alert("Refresh Limit Reached", isPresented: $showingRefreshLimit) {
+            Button("OK", role: .cancel) { }
+            Button("Upgrade") {
+                // TODO: Navigate to subscription/upgrade screen
+            }
+        } message: {
+            Text("You've reached your daily refresh limit. Upgrade your subscription to get more refreshes per day.")
+        }
         .onAppear {
             summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
             summaryService.summaryPublisher
@@ -93,12 +136,28 @@ struct SummaryView: View {
         }
     }
 
+    private func refreshSummary() {
+        guard let transcript = transcript else { return }
+        
+        // Check if refresh is allowed
+        if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
+            showingRefreshLimit = true
+            return
+        }
+        
+        // Call the refresh endpoint
+        summaryService.refreshSummary(for: transcript.text, type: serviceType)
+        
+        // Increment refresh count
+        refreshCount += 1
+    }
+    
     private func saveSermonAndContinue() {
         guard let summaryText = summary else { onNext?(); return }
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         let notes = noteService.currentNotes // Use the current notes array from noteService
-        let summaryModel = Summary(text: summaryText, type: serviceType, status: status)
+        let summaryModel = Summary(text: summaryText, type: serviceType, status: status, refreshCount: refreshCount, lastRefreshedAt: refreshCount > 0 ? Date() : nil)
         guard let audioFileURL = audioFileURL else {
             print("[SummaryView] No audioFileURL provided!")
             return
