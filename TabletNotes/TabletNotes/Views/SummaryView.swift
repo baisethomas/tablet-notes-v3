@@ -17,7 +17,6 @@ struct SummaryView: View {
     let noteService: NoteService
     var onNext: (() -> Void)?
     @StateObject private var summaryService = SummaryService()
-    private let settingsService = SettingsService.shared
     @State private var summary: String? = nil
     @State private var status: String = "idle"
     @State private var cancellables = Set<AnyCancellable>()
@@ -132,9 +131,14 @@ struct SummaryView: View {
             Text("You've reached your daily refresh limit. Upgrade your subscription to get more refreshes per day.")
         }
         .onAppear {
-            // Get user tier from settings
-            userTier = settingsService.userTier?.rawValue ?? "free"
-            print("[SummaryView] User tier loaded: \(userTier)")
+            // Get user tier from AuthenticationManager
+            if let currentUser = AuthenticationManager.shared.currentUser {
+                userTier = currentUser.subscriptionTier
+                print("[SummaryView] User tier loaded: \(userTier)")
+            } else {
+                userTier = "free"
+                print("[SummaryView] No current user, defaulting to free tier")
+            }
             
             summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
             summaryService.summaryPublisher
