@@ -17,7 +17,7 @@ struct SummaryView: View {
     let noteService: NoteService
     var onNext: (() -> Void)?
     @StateObject private var summaryService = SummaryService()
-    @StateObject private var settingsService = SettingsService()
+    private let settingsService = SettingsService.shared
     @State private var summary: String? = nil
     @State private var status: String = "idle"
     @State private var cancellables = Set<AnyCancellable>()
