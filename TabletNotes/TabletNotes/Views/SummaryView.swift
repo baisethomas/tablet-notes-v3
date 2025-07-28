@@ -41,9 +41,16 @@ struct SummaryView: View {
                                 )
                                 .padding(.horizontal)
                                 
-                                // Refresh button section
-                                VStack(spacing: 8) {
-                                    HStack {
+                                // DEBUG: Refresh button section - THIS SHOULD BE VISIBLE
+                                VStack(spacing: 12) {
+                                    // Debug info
+                                    Text("DEBUG: Refresh Section - Status: \(status), Count: \(refreshCount), Tier: \(userTier)")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                        .padding(.horizontal)
+                                    
+                                    // Prominent refresh button
+                                    VStack(spacing: 8) {
                                         Button {
                                             refreshSummary()
                                         } label: {
@@ -51,26 +58,30 @@ struct SummaryView: View {
                                                 Image(systemName: "arrow.clockwise")
                                                 Text("Refresh Summary")
                                             }
+                                            .padding()
+                                            .frame(maxWidth: .infinity)
                                         }
                                         .disabled(!summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier))
-                                        .buttonStyle(.bordered)
-                                        
-                                        Spacer()
+                                        .buttonStyle(.borderedProminent)
+                                        .padding(.horizontal)
                                         
                                         let remaining = summaryService.getRemainingRefreshes(currentRefreshCount: refreshCount, userTier: userTier)
-                                        Text("\(remaining) refreshes left")
+                                        Text("\(remaining) refreshes left today")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
+                                        
+                                        if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
+                                            Text("Daily refresh limit reached. Upgrade for more refreshes.")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
+                                                .multilineTextAlignment(.center)
+                                                .padding(.horizontal)
+                                        }
                                     }
+                                    .padding()
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(12)
                                     .padding(.horizontal)
-                                    
-                                    if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
-                                        Text("Daily refresh limit reached. Upgrade for more refreshes.")
-                                            .font(.caption)
-                                            .foregroundColor(.orange)
-                                            .multilineTextAlignment(.center)
-                                            .padding(.horizontal)
-                                    }
                                 }
                             }
                             .padding(.bottom, 100)
