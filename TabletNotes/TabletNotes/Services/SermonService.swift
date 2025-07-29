@@ -332,6 +332,15 @@ class SermonService: ObservableObject {
         }
     }
     
+    func saveContext() {
+        do {
+            try modelContext.save()
+            print("[SermonService] Context saved successfully")
+        } catch {
+            print("[SermonService] Failed to save context: \(error)")
+        }
+    }
+    
     // MARK: - Sync Methods
     
     private func markSermonForSync(_ sermonId: UUID) {

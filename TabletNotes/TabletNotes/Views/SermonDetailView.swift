@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import SwiftData
+import Combine
 // Add these imports if needed for model and view types
 // import TabletNotes.Models // Uncomment if models are in a separate module
 // import TabletNotes.Services // Uncomment if services are in a separate module
@@ -252,6 +253,14 @@ struct SermonDetailView: View {
     @State private var editableSpeaker: String = ""
     @State private var isEditingSpeaker = false
     
+    // Summary refresh functionality
+    @StateObject private var summaryService = SummaryService()
+    @State private var isRefreshingSummary = false
+    @State private var refreshCount: Int = 0
+    @State private var userTier: String = "free"
+    @State private var showingRefreshLimit = false
+    @State private var cancellables = Set<AnyCancellable>()
+    
     enum Tab: String, CaseIterable {
         case summary = "Summary"
         case transcript = "Transcript"
@@ -493,6 +502,11 @@ struct SermonDetailView: View {
                 editableTitle = sermon.title
                 editableSpeaker = sermon.speaker ?? ""
                 setupAudioPlayer()
+                
+                // Initialize refresh functionality
+                loadUserTier()
+                refreshCount = sermon.summary?.refreshCount ?? 0
+                print("[SermonDetailView] Initialized refresh count: \(refreshCount)")
             }
         }
         .onDisappear {
@@ -500,6 +514,14 @@ struct SermonDetailView: View {
             stopPlayback()
             audioPlayer = nil
             timer?.invalidate()
+        }
+        .alert("Refresh Limit Reached", isPresented: $showingRefreshLimit) {
+            Button("OK", role: .cancel) { }
+            Button("Upgrade") {
+                // TODO: Navigate to subscription/upgrade screen
+            }
+        } message: {
+            Text("You've reached your daily refresh limit. Upgrade your subscription to get more refreshes per day.")
         }
     }
     
@@ -613,13 +635,62 @@ struct SermonDetailView: View {
                 default:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
+                            let cleanSummary = (isRefreshingSummary ? "Refreshing summary..." : (sermon.summary?.text ?? "No summary available.")).replacingOccurrences(of: "**", with: "")
                             
                             SummaryTextView(
                                 summaryText: cleanSummary,
                                 serviceType: sermon.serviceType
                             )
                             .padding(.horizontal)
+                            
+                            // DEBUG: Refresh button section
+                            VStack(spacing: 12) {
+                                // Debug info
+                                Text("DEBUG: Refresh Section - Status: complete, Count: \(refreshCount), Tier: \(userTier)")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                                    .padding(.horizontal)
+                                
+                                // Prominent refresh button
+                                VStack(spacing: 8) {
+                                    Button {
+                                        refreshSummary(for: sermon)
+                                    } label: {
+                                        HStack {
+                                            if isRefreshingSummary {
+                                                ProgressView()
+                                                    .scaleEffect(0.8)
+                                                Text("Refreshing...")
+                                            } else {
+                                                Image(systemName: "arrow.clockwise")
+                                                Text("Refresh Summary")
+                                            }
+                                        }
+                                        .padding()
+                                        .frame(maxWidth: .infinity)
+                                    }
+                                    .disabled(!summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) || isRefreshingSummary)
+                                    .buttonStyle(.borderedProminent)
+                                    .padding(.horizontal)
+                                    
+                                    let remaining = summaryService.getRemainingRefreshes(currentRefreshCount: refreshCount, userTier: userTier)
+                                    Text("\(remaining) refreshes left today")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    
+                                    if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
+                                        Text("Daily refresh limit reached. Upgrade for more refreshes.")
+                                            .font(.caption)
+                                            .foregroundColor(.orange)
+                                            .multilineTextAlignment(.center)
+                                            .padding(.horizontal)
+                                    }
+                                }
+                                .padding()
+                                .background(Color.gray.opacity(0.1))
+                                .cornerRadius(12)
+                                .padding(.horizontal)
+                            }
                         }
                         .padding()
                         .padding(.bottom, 100)
@@ -962,6 +1033,73 @@ struct SermonDetailView: View {
         let minutes = Int(interval) / 60
         let seconds = Int(interval) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    // MARK: - Summary Refresh Methods
+    
+    private func loadUserTier() {
+        if let currentUser = AuthenticationManager.shared.currentUser {
+            userTier = currentUser.subscriptionTier
+            print("[SermonDetailView] User tier loaded: \(userTier)")
+        } else {
+            userTier = "free"
+            print("[SermonDetailView] No current user, defaulting to free tier")
+        }
+    }
+    
+    private func refreshSummary(for sermon: Sermon) {
+        guard let transcript = sermon.transcript else {
+            print("[SermonDetailView] No transcript available for refresh")
+            return
+        }
+        
+        // Check if refresh is allowed
+        if !summaryService.canRefreshSummary(currentRefreshCount: refreshCount, userTier: userTier) {
+            showingRefreshLimit = true
+            return
+        }
+        
+        print("[SermonDetailView] Starting summary refresh for sermon: \(sermon.title)")
+        isRefreshingSummary = true
+        refreshCount += 1
+        
+        // Call the refresh endpoint
+        summaryService.refreshSummary(for: transcript.text, type: sermon.serviceType)
+        
+        // Listen for the refreshed summary
+        summaryService.summaryPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { refreshedSummary in
+                guard let refreshedSummary = refreshedSummary else { return }
+                
+                // Update the sermon's summary
+                if let summary = sermon.summary {
+                    summary.text = refreshedSummary
+                    summary.refreshCount = refreshCount
+                    summary.lastRefreshedAt = Date()
+                } else {
+                    // Create new summary if none exists
+                    let newSummary = Summary(text: refreshedSummary, type: sermon.serviceType, status: "complete", refreshCount: refreshCount, lastRefreshedAt: Date())
+                    sermon.summary = newSummary
+                }
+                
+                // Save the updated sermon
+                sermonService.saveContext()
+                isRefreshingSummary = false
+                
+                print("[SermonDetailView] Summary refresh completed successfully")
+            }
+            .store(in: &cancellables)
+        
+        summaryService.statusPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { status in
+                if status == "failed" {
+                    isRefreshingSummary = false
+                    print("[SermonDetailView] Summary refresh failed")
+                }
+            }
+            .store(in: &cancellables)
     }
 }
 
