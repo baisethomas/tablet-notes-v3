@@ -233,6 +233,13 @@ Provide a concise overview of the main message, capturing the central theme and 
 - Include only the most essential sub-points that support the main teaching
 - Include meaningful biblical stories, personal testimonies, metaphors, important statements, and impact statements when they directly support the teaching points
 
+**Memorable Elements**
+When present in the transcript, capture these powerful teaching tools:
+- **Key Quotes**: Direct quotable statements or declarations from the speaker
+- **Analogies & Metaphors**: Word pictures, comparisons, or illustrations used to clarify concepts
+- **Impact Statements**: Declarations about transformation, life change, or consequences of applying the teaching
+- **Stories & Testimonies**: Personal experiences or biblical narratives that reinforce the message
+
 **Scripture References**
 - List supporting Bible passages referenced during the main teaching (exclude opening prayer scriptures)
 - Include book, chapter, and verse when specified
@@ -257,6 +264,15 @@ Provide a concise overview of the main message, capturing the central theme and 
   - Bible Study: emphasize teaching points and textual observations
   - Youth Groups: highlight engaging elements and relatable applications that support the message
   - Conference: focus on specialized insights and expert content
+
+**Memorable Elements (Comprehensive)**
+Capture all powerful teaching elements present in the transcript:
+- **Key Quotes**: Direct quotable statements, memorable phrases, or powerful declarations from the speaker
+- **Analogies & Metaphors**: All word pictures, comparisons, illustrations, or parables used to clarify theological concepts
+- **Impact Statements**: Declarations about transformation, life change, spiritual growth, or consequences of applying/not applying the teaching
+- **Stories & Testimonies**: Personal experiences, biblical narratives, historical examples, or contemporary illustrations that reinforce the message
+- **Pastoral Challenges**: Specific calls to action, encouragements, or challenges directed at the congregation
+- **Memorable Phrasing**: Unique expressions, repeated phrases, or distinctive ways the speaker communicated key truths
 
 **Scripture References (Complete)**
 - List all Bible passages referenced during the main teaching content (exclude opening prayer scriptures)
@@ -324,6 +340,7 @@ When applicable, include:
 ## Guidelines:
 - **Content Focus**: Begin analysis after opening prayers and introductory remarks. Focus on the main teaching content that develops the core message
 - **Scripture Prioritization**: Always lead with the main scripture text that grounds the teaching (not opening prayer verses)
+- **Memorable Elements Priority**: Pay special attention to capturing powerful quotes, analogies, metaphors, impact statements, and memorable illustrations that make the message stick - these are often the most valuable elements for attendees to remember and apply
 - **Relevance Filter**: Include biblical stories, personal testimonies, metaphors, important statements, and impact statements only when they directly support, illustrate, or enhance the main teaching points
 - **Meaningful Elements**: Distinguish between integral illustrative content (that helps understanding or retention) versus casual remarks or filler content
 - Distinguish between allegorical and literal interpretations when the speaker makes this distinction

@@ -98,21 +98,145 @@ struct SummaryTextView: View {
                     .cornerRadius(4)
             }
             
-            ClickableScriptureText(
-                text: summaryText,
-                font: .body,
-                lineSpacing: 6
-            )
+            StructuredSummaryView(summaryText: summaryText)
         }
         .padding()
-        // Removed background, cornerRadius, and shadow for a flat look
     }
 }
+
+// MARK: - Structured Summary Display
+struct StructuredSummaryView: View {
+    let summaryText: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Simple improved display for now - check if it contains structured sections
+            if summaryText.contains("**") && summaryText.contains("**") {
+                // Has structured format, display as formatted sections
+                let sections = parseSimpleSections(summaryText)
+                ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Section header with appropriate icon
+                        HStack {
+                            Image(systemName: iconForSection(section.title))
+                                .foregroundColor(.accentColor)
+                                .font(.system(size: 14))
+                            Text(section.title)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                        }
+                        
+                        // Section content
+                        ClickableScriptureText(
+                            text: section.content,
+                            font: .body,
+                            lineSpacing: 6
+                        )
+                    }
+                    .padding(.bottom, 8)
+                }
+            } else {
+                // Fallback to original display
+                ClickableScriptureText(
+                    text: summaryText,
+                    font: .body,
+                    lineSpacing: 6
+                )
+            }
+        }
+    }
+    
+    private func parseSimpleSections(_ text: String) -> [(title: String, content: String)] {
+        var sections: [(title: String, content: String)] = []
+        let lines = text.components(separatedBy: .newlines)
+        
+        var currentTitle: String? = nil
+        var currentContent: [String] = []
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            // Check if this is a section header (e.g., "**Main Scripture Text**")
+            if trimmedLine.hasPrefix("**") && trimmedLine.hasSuffix("**") && trimmedLine.count > 4 {
+                // Save previous section if exists
+                if let title = currentTitle {
+                    sections.append((title: title, content: currentContent.joined(separator: "\n")))
+                }
+                
+                // Start new section
+                currentTitle = String(trimmedLine.dropFirst(2).dropLast(2))
+                currentContent = []
+            } else if !trimmedLine.isEmpty {
+                // Add content to current section
+                currentContent.append(trimmedLine)
+            }
+        }
+        
+        // Add final section
+        if let title = currentTitle, !currentContent.isEmpty {
+            sections.append((title: title, content: currentContent.joined(separator: "\n")))
+        }
+        
+        return sections
+    }
+    
+    private func iconForSection(_ title: String) -> String {
+        let lowercased = title.lowercased()
+        
+        if lowercased.contains("scripture") || lowercased.contains("bible") {
+            return "book.closed"
+        } else if lowercased.contains("summary") || lowercased.contains("overview") {
+            return "text.alignleft"
+        } else if lowercased.contains("key points") || lowercased.contains("main points") {
+            return "list.bullet"
+        } else if lowercased.contains("memorable") || lowercased.contains("quotes") || lowercased.contains("impact") {
+            return "star.fill"
+        } else if lowercased.contains("application") || lowercased.contains("apply") {
+            return "hand.raised"
+        } else if lowercased.contains("questions") || lowercased.contains("study") {
+            return "questionmark.circle"
+        } else if lowercased.contains("structure") || lowercased.contains("outline") {
+            return "list.number"
+        } else if lowercased.contains("insights") || lowercased.contains("deeper") {
+            return "lightbulb"
+        } else if lowercased.contains("references") {
+            return "link"
+        } else {
+            return "text.alignleft"
+        }
+    }
+}
+
 
 #Preview {
     VStack {
         SummaryTextView(
-            summaryText: "In this sermon, we explored the profound truth of John 3:16, which speaks of God's love for the world. The passage reminds us that salvation comes through faith, as mentioned in Ephesians 2:8-9. We also looked at Romans 8:28 and how God works all things together for good.",
+            summaryText: """
+            **Main Scripture Text**
+            John 3:16 - "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life."
+            
+            **Brief Summary**
+            In this sermon, we explored the profound truth of God's love for humanity through John 3:16. The message emphasized that salvation comes through faith alone, and we examined how this truth transforms our daily lives and relationship with God.
+            
+            **Key Points**
+            - God's love is universal and sacrificial
+            - Salvation is a gift received through faith, not works
+            - Eternal life begins the moment we believe
+            - Our response should be gratitude and transformed living
+            
+            **Memorable Elements**
+            - "God didn't just love the world - He gave His very best for the world's very worst"
+            - Like a father giving his life for his child, God's love goes beyond human comprehension
+            - "Every breath you take is a gift of grace, every heartbeat is God saying 'I love you'"
+            - When we truly grasp God's love, our entire perspective on life changes
+            
+            **Scripture References**
+            John 3:16
+            Ephesians 2:8-9
+            Romans 8:28
+            1 John 4:19
+            """,
             serviceType: "Sunday Service"
         )
         .padding()

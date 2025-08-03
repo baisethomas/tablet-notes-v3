@@ -572,12 +572,12 @@ struct RecordingView: View {
                         .padding()
                     }
                     
-                    // Bible FAB positioned in bottom right of the sheet - Temporarily disabled
-                    // BibleFAB { reference, content in
-                    //     insertScriptureIntoNote(reference: reference, content: content)
-                    // }
-                    // .padding(.trailing, 20)
-                    // .padding(.bottom, 100)
+                    // Bible FAB positioned in bottom right of the sheet
+                    BibleFAB { reference, content in
+                        insertScriptureIntoNote(reference: reference, content: content)
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 100)
                 }
                 .navigationTitle("")
                 .navigationBarHidden(true)
