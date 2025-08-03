@@ -180,6 +180,7 @@ struct RecordingView: View {
     @State private var transcriptProcessingError: String? = nil
     @StateObject private var summaryService = SummaryService()
     @State private var latestSummaryText: String? = nil
+    @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
     #endif
     
     // Computed properties for the main button
@@ -354,19 +355,80 @@ struct RecordingView: View {
                         }
                         
                         if let error = transcriptProcessingError {
-                            HStack(spacing: 12) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.warningOrange)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Processing Failed")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                    Text(error)
-                                        .font(.caption)
-                                        .foregroundColor(.adaptiveSecondaryText)
+                            VStack(spacing: 12) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.warningOrange)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Processing Failed")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.adaptivePrimaryText)
+                                        Text(error)
+                                            .font(.caption)
+                                            .foregroundColor(.adaptiveSecondaryText)
+                                    }
+                                    Spacer()
                                 }
-                                Spacer()
+                                
+                                if let audioURL = audioFileURL {
+                                    VStack(spacing: 8) {
+                                        HStack {
+                                            Button(action: {
+                                                let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                                                let date = Date()
+                                                processTranscription(title: title, date: date, url: audioURL)
+                                            }) {
+                                                HStack(spacing: 8) {
+                                                    Image(systemName: "arrow.clockwise")
+                                                    Text("Retry")
+                                                }
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 16)
+                                                .padding(.vertical, 8)
+                                                .background(Color.accentColor)
+                                                .cornerRadius(8)
+                                            }
+                                            .disabled(isProcessingTranscript)
+                                            
+                                            Spacer()
+                                            
+                                            Button(action: {
+                                                withAnimation(.easeInOut(duration: 0.3)) {
+                                                    transcriptProcessingError = nil
+                                                }
+                                            }) {
+                                                Text("Dismiss")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.adaptiveSecondaryText)
+                                            }
+                                        }
+                                        
+                                        // Show "Save for Later" option if it's a network-related error
+                                        if let errorText = transcriptProcessingError, 
+                                           errorText.contains("internet connection") || errorText.contains("Network") {
+                                            Button(action: {
+                                                saveRecordingForLaterProcessing(audioURL: audioURL)
+                                            }) {
+                                                HStack(spacing: 8) {
+                                                    Image(systemName: "cloud.fill")
+                                                    Text("Save for Later Processing")
+                                                }
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                                .foregroundColor(.accentColor)
+                                                .padding(.horizontal, 16)
+                                                .padding(.vertical, 8)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .stroke(Color.accentColor, lineWidth: 1)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             .padding()
                             .background(Color.warningOrange.opacity(0.1))
@@ -510,12 +572,12 @@ struct RecordingView: View {
                         .padding()
                     }
                     
-                    // Bible FAB positioned in bottom right of the sheet
-                    BibleFAB { reference, content in
-                        insertScriptureIntoNote(reference: reference, content: content)
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 100)
+                    // Bible FAB positioned in bottom right of the sheet - Temporarily disabled
+                    // BibleFAB { reference, content in
+                    //     insertScriptureIntoNote(reference: reference, content: content)
+                    // }
+                    // .padding(.trailing, 20)
+                    // .padding(.bottom, 100)
                 }
                 .navigationTitle("")
                 .navigationBarHidden(true)
@@ -765,30 +827,102 @@ struct RecordingView: View {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         if let url = audioFileURL {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                isProcessingTranscript = true
-                transcriptProcessingError = nil
-            }
-            
-            transcriptionService.transcribeAudioFile(url: url) { text, segments in
-                print("[RecordingView] Vercel transcription callback fired.")
-                DispatchQueue.main.async {
-                    withAnimation(.easeInOut(duration: 0.5)) {
-                        isProcessingTranscript = false
-                    }
+            processTranscription(title: title, date: date, url: url)
+        }
+    }
+    
+    private func processTranscription(title: String, date: Date, url: URL) {
+        withAnimation(.easeInOut(duration: 0.5)) {
+            isProcessingTranscript = true
+            transcriptProcessingError = nil
+        }
+        
+        transcriptionService.transcribeAudioFileWithResult(url: url) { result in
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    isProcessingTranscript = false
+                }
+                
+                switch result {
+                case .success(let (text, segments)):
+                    print("[RecordingView] Transcription succeeded. Text length: \(text.count), Segments count: \(segments.count)")
+                    transcript = text
+                    detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
+                    handleTranscriptionResult(title: title, date: date, url: url)(text, segments)
                     
-                    if let text = text {
-                        print("[RecordingView] Vercel transcription succeeded. Text length: \(text.count), Segments count: \(segments.count)")
-                        transcript = text
-                        detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
-                        handleTranscriptionResult(title: title, date: date, url: url)(text, segments)
-                    } else {
-                        print("[RecordingView] Vercel transcription failed.")
-                        withAnimation(.easeInOut(duration: 0.5)) {
-                            transcriptProcessingError = "Failed to process audio. Please try again."
+                case .failure(let error):
+                    print("[RecordingView] Transcription failed: \(error.localizedDescription)")
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        // Show user-friendly error message
+                        let nsError = error as NSError
+                        if nsError.domain == NSURLErrorDomain && 
+                           (nsError.code == NSURLErrorNotConnectedToInternet || 
+                            nsError.code == NSURLErrorNetworkConnectionLost) {
+                            transcriptProcessingError = "No internet connection. You can save this recording and process it later when you're back online."
+                        } else {
+                            transcriptProcessingError = error.localizedDescription
                         }
                     }
                 }
+            }
+        }
+    }
+    
+    private func saveRecordingForLaterProcessing(audioURL: URL) {
+        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        let date = Date()
+        
+        // Create sermon without transcript first
+        let sermonId = UUID()
+        let latestNotes = noteService.currentNotes
+        
+        print("[RecordingView] Saving recording for later processing: \(title)")
+        
+        let sermon = Sermon(
+            id: sermonId,
+            title: title,
+            date: date,
+            audioFileURL: audioURL,
+            audioFileName: audioURL.lastPathComponent,
+            serviceType: serviceType.rawValue,
+            notes: latestNotes,
+            transcriptionStatus: "pending", // Mark as pending for later processing
+            summaryStatus: "pending",
+            isUploaded: false
+        )
+        
+        // Save to local storage
+        do {
+            modelContext.insert(sermon)
+            try modelContext.save()
+            
+            // Add to retry queue
+            let pendingTranscription = PendingTranscription(
+                audioFileURL: audioURL,
+                sermonTitle: title,
+                sermonDate: date,
+                serviceType: serviceType.rawValue
+            )
+            transcriptionRetryService.addPendingTranscription(pendingTranscription)
+            
+            // Clear the error and reset UI
+            withAnimation(.easeInOut(duration: 0.5)) {
+                transcriptProcessingError = nil
+                isRecordingStarted = false
+                isPaused = false
+                transcript = ""
+            }
+            
+            // Show success message briefly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // Navigate back to sermons list or show success message
+                coordinator.dismiss()
+            }
+            
+        } catch {
+            print("[RecordingView] Failed to save sermon for later processing: \(error)")
+            withAnimation(.easeInOut(duration: 0.5)) {
+                transcriptProcessingError = "Failed to save recording. Please try again."
             }
         }
     }

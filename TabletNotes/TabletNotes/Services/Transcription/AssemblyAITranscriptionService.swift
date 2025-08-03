@@ -343,9 +343,15 @@ class AssemblyAITranscriptionService: ObservableObject {
         return segments
     }
 
-    // High-level function to transcribe a file using the backend
+    // High-level function to transcribe a file using the backend with retry mechanism
     func transcribeAudioFile(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        transcribeAudioFileWithRetry(url: url, maxRetries: 3, currentAttempt: 1, completion: completion)
+    }
+    
+    private func transcribeAudioFileWithRetry(url: URL, maxRetries: Int, currentAttempt: Int, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         let fileName = url.lastPathComponent
+        
+        print("[API] Transcription attempt \(currentAttempt) of \(maxRetries) for \(fileName)")
         
         // Get file information
         do {
@@ -375,21 +381,117 @@ class AssemblyAITranscriptionService: ObservableObject {
                         switch uploadResult {
                         case .success:
                             self.startTranscription(filePath: uploadInfo.data.path) { transcriptionResult in
-                                completion(transcriptionResult)
+                                switch transcriptionResult {
+                                case .success:
+                                    completion(transcriptionResult)
+                                case .failure(let error):
+                                    self.handleTranscriptionError(error: error, url: url, maxRetries: maxRetries, currentAttempt: currentAttempt, completion: completion)
+                                }
                             }
                         case .failure(let error):
                             print("[API] Upload failed: \(error.localizedDescription)")
-                            completion(.failure(error))
+                            self.handleTranscriptionError(error: error, url: url, maxRetries: maxRetries, currentAttempt: currentAttempt, completion: completion)
                         }
                     }
                 case .failure(let error):
                     print("[API] GetUploadURL failed: \(error.localizedDescription)")
-                    completion(.failure(error))
+                    self.handleTranscriptionError(error: error, url: url, maxRetries: maxRetries, currentAttempt: currentAttempt, completion: completion)
                 }
             }
         } catch {
             print("[API] Failed to get file information: \(error.localizedDescription)")
             completion(.failure(error))
         }
+    }
+    
+    private func handleTranscriptionError(error: Error, url: URL, maxRetries: Int, currentAttempt: Int, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        // Check if we should retry
+        if currentAttempt < maxRetries && isRetryableError(error) {
+            let retryDelay = calculateRetryDelay(attempt: currentAttempt)
+            print("[API] Retrying transcription in \(retryDelay) seconds due to: \(error.localizedDescription)")
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay) {
+                self.transcribeAudioFileWithRetry(url: url, maxRetries: maxRetries, currentAttempt: currentAttempt + 1, completion: completion)
+            }
+        } else {
+            // All retries exhausted or non-retryable error
+            let enhancedError = self.createEnhancedError(from: error, attempt: currentAttempt, maxRetries: maxRetries)
+            completion(.failure(enhancedError))
+        }
+    }
+    
+    private func isRetryableError(_ error: Error) -> Bool {
+        // Network errors, timeouts, and server errors are retryable
+        let nsError = error as NSError
+        
+        // Network connectivity issues
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNotConnectedToInternet,
+                 NSURLErrorNetworkConnectionLost,
+                 NSURLErrorTimedOut,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorDNSLookupFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        
+        // Server errors (5xx status codes)
+        if nsError.domain == "UploadFailed" || nsError.domain == "TranscriptionError" {
+            let statusCode = nsError.code
+            return statusCode >= 500 && statusCode < 600
+        }
+        
+        // Circuit breaker and timeout errors
+        if error.localizedDescription.contains("Circuit breaker") ||
+           error.localizedDescription.contains("timed out") ||
+           error.localizedDescription.contains("timeout") {
+            return true
+        }
+        
+        return false
+    }
+    
+    private func calculateRetryDelay(attempt: Int) -> TimeInterval {
+        // Exponential backoff: 2, 4, 8 seconds
+        return TimeInterval(pow(2.0, Double(attempt)))
+    }
+    
+    private func createEnhancedError(from error: Error, attempt: Int, maxRetries: Int) -> Error {
+        let nsError = error as NSError
+        var userInfo = nsError.userInfo
+        
+        // Create user-friendly error message
+        let userMessage: String
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNotConnectedToInternet:
+                userMessage = "No internet connection. Please check your network and try again."
+            case NSURLErrorNetworkConnectionLost:
+                userMessage = "Network connection lost. Please check your connection and try again."
+            case NSURLErrorTimedOut:
+                userMessage = "Request timed out. Please try again with a better connection."
+            default:
+                userMessage = "Network error occurred. Please check your connection and try again."
+            }
+        } else if nsError.domain == "AuthError" {
+            userMessage = "Authentication failed. Please sign in again and try again."
+        } else if nsError.domain == "UploadFailed" {
+            userMessage = "Failed to upload audio file. Please try again."
+        } else if nsError.domain == "TranscriptionError" {
+            userMessage = "Transcription service is temporarily unavailable. Please try again later."
+        } else {
+            userMessage = "Processing failed after \(maxRetries) attempts. Please try again later."
+        }
+        
+        userInfo[NSLocalizedDescriptionKey] = userMessage
+        userInfo["originalError"] = error.localizedDescription
+        userInfo["attemptCount"] = attempt
+        userInfo["maxRetries"] = maxRetries
+        
+        return NSError(domain: "TranscriptionServiceError", code: nsError.code, userInfo: userInfo)
     }
 } 

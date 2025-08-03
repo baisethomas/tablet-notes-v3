@@ -261,10 +261,15 @@ class TranscriptionService: NSObject, ObservableObject {
                 case .success(let (text, segments)):
                     completion(text, segments)
                 case .failure(let error):
-                    print("[TranscriptionService] Netlify transcription error: \(error.localizedDescription)")
+                    print("[TranscriptionService] Transcription error: \(error.localizedDescription)")
                     completion(nil, [])
                 }
             }
         }
+    }
+    
+    // Enhanced version that returns Result for better error handling
+    func transcribeAudioFileWithResult(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+        assemblyAITranscriptionService.transcribeAudioFile(url: url, completion: completion)
     }
 }
