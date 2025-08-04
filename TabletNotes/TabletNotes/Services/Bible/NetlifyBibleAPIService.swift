@@ -218,7 +218,7 @@ class NetlifyBibleAPIService: ObservableObject {
             "ezekiel": "EZK", "ezek": "EZK", "ezk": "EZK",
             "daniel": "DAN", "dan": "DAN",
             "hosea": "HOS", "hos": "HOS",
-            "joel": "JOL", "joel": "JOL",
+            "joel": "JOL",
             "amos": "AMO", "amo": "AMO",
             "obadiah": "OBA", "obad": "OBA", "oba": "OBA",
             "jonah": "JON", "jon": "JON",
