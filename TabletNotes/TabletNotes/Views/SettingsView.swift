@@ -1279,7 +1279,7 @@ struct BibleTranslationSelectionView: View {
     @Binding var selectedTranslation: BibleTranslation
     let onSelectionChanged: (BibleTranslation) -> Void
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var bibleService = BibleAPIService()
+    @StateObject private var bibleService = NetlifyBibleAPIService()
     @State private var availableTranslations: [BibleTranslation] = []
     @State private var isLoading = true
     

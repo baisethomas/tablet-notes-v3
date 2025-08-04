@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ScriptureDetailView: View {
     let reference: ScriptureReference
-    @StateObject private var bibleService = DirectBibleAPIService()
+    @StateObject private var bibleService = NetlifyBibleAPIService()
     @State private var scriptureContent: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -172,15 +172,6 @@ struct ScriptureDetailView: View {
         errorMessage = nil
         
         Task {
-            // Check if API key is configured
-            guard ApiBibleConfig.isConfigured else {
-                await MainActor.run {
-                    errorMessage = "API.Bible is not configured. Please add your API key."
-                    isLoading = false
-                }
-                return
-            }
-            
             do {
                 let content: String
                 if reference.isRange {
@@ -242,7 +233,7 @@ struct ScriptureDetailView: View {
     }
     
     private func getEnglishBibles() -> [Bible] {
-        // DirectBibleAPIService already filters to English translations
+        // NetlifyBibleAPIService provides available Bibles
         return bibleService.availableBibles
     }
     

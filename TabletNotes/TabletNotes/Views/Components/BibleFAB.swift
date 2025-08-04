@@ -5,7 +5,7 @@ struct BibleFAB: View {
     
     @State private var showingBibleSheet = false
     @State private var showingSearchSheet = false
-    @StateObject private var bibleService = BibleAPIService()
+    @StateObject private var bibleService = NetlifyBibleAPIService()
     
     var body: some View {
         VStack(spacing: 12) {
@@ -46,7 +46,7 @@ struct ScriptureSearchView: View {
     @State private var selectedReference: ScriptureReference?
     @State private var scriptureContent = ""
     @State private var showingDetail = false
-    @StateObject private var bibleService = BibleAPIService()
+    @StateObject private var bibleService = NetlifyBibleAPIService()
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -215,11 +215,25 @@ struct ScriptureSearchView: View {
     private func selectScripture(_ reference: ScriptureReference) {
         selectedReference = reference
         
-        // For now, provide a placeholder content
-        // In a real implementation, this would fetch from the Bible API
-        let placeholderContent = "Scripture content for \(reference.displayText) would be loaded here from the Bible API service."
-        
-        onSelection(reference, placeholderContent)
+        // Fetch the actual scripture content
+        Task {
+            do {
+                let verse = try await bibleService.fetchVerse(reference: reference.displayText)
+                let content = verse.content
+                
+                await MainActor.run {
+                    onSelection(reference, content)
+                }
+            } catch {
+                print("Failed to fetch scripture: \(error)")
+                // Fallback to placeholder content if fetch fails
+                let placeholderContent = "Scripture content for \(reference.displayText) is currently unavailable."
+                
+                await MainActor.run {
+                    onSelection(reference, placeholderContent)
+                }
+            }
+        }
     }
 }
 
