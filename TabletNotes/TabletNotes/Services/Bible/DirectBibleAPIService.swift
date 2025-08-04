@@ -83,13 +83,11 @@ class DirectBibleAPIService: ObservableObject {
                 nameLocal: "King James Version",
                 description: "The King James Version (KJV), also known as the King James Bible or Authorized Version, is an English translation of the Christian Bible.",
                 relatedDbl: nil,
-                language: Language(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
+                language: BibleLanguage(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
                 countries: [],
                 type: "text",
                 updatedAt: "2021-01-01T00:00:00.000Z",
-                rightsHolder: "Public Domain",
-                rightsHolderLocal: nil,
-                copyright: "Public Domain"
+                audioBibles: nil
             ),
             Bible(
                 id: "90b8dbe0143dd92c-01",
@@ -100,13 +98,11 @@ class DirectBibleAPIService: ObservableObject {
                 nameLocal: "New American Standard Bible",
                 description: "The New American Standard Bible (NASB) is an English translation of the Bible by the Lockman Foundation.",
                 relatedDbl: nil,
-                language: Language(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
+                language: BibleLanguage(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
                 countries: [],
                 type: "text",
                 updatedAt: "2021-01-01T00:00:00.000Z",
-                rightsHolder: "The Lockman Foundation",
-                rightsHolderLocal: nil,
-                copyright: "Copyright © 1960, 1962, 1963, 1968, 1971, 1972, 1973, 1975, 1977, 1995 by The Lockman Foundation"
+                audioBibles: nil
             ),
             Bible(
                 id: "478cdd0b0b6f4567-01",
@@ -117,13 +113,11 @@ class DirectBibleAPIService: ObservableObject {
                 nameLocal: "New King James Version", 
                 description: "The New King James Version (NKJV) is an English translation of the Bible first published in 1982.",
                 relatedDbl: nil,
-                language: Language(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
+                language: BibleLanguage(id: "eng", name: "English", nameLocal: "English", script: "Latin", scriptDirection: "LTR"),
                 countries: [],
                 type: "text",
                 updatedAt: "2021-01-01T00:00:00.000Z",
-                rightsHolder: "Thomas Nelson",
-                rightsHolderLocal: nil,
-                copyright: "Copyright © 1982 by Thomas Nelson"
+                audioBibles: nil
             )
         ]
     }
