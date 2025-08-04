@@ -878,51 +878,44 @@ struct RecordingView: View {
         
         print("[RecordingView] Saving recording for later processing: \(title)")
         
-        let sermon = Sermon(
-            id: sermonId,
+        // Save to local storage using sermonService
+        sermonService.saveSermon(
             title: title,
-            date: date,
             audioFileURL: audioURL,
-            audioFileName: audioURL.lastPathComponent,
-            serviceType: serviceType.rawValue,
+            date: date,
+            serviceType: serviceType,
+            transcript: nil,
             notes: latestNotes,
+            summary: nil,
             transcriptionStatus: "pending", // Mark as pending for later processing
             summaryStatus: "pending",
-            isUploaded: false
+            id: sermonId
         )
         
-        // Save to local storage
-        do {
-            modelContext.insert(sermon)
-            try modelContext.save()
-            
-            // Add to retry queue
-            let pendingTranscription = PendingTranscription(
-                audioFileURL: audioURL,
-                sermonTitle: title,
-                sermonDate: date,
-                serviceType: serviceType.rawValue
-            )
-            transcriptionRetryService.addPendingTranscription(pendingTranscription)
-            
-            // Clear the error and reset UI
-            withAnimation(.easeInOut(duration: 0.5)) {
-                transcriptProcessingError = nil
-                isRecordingStarted = false
-                isPaused = false
-                transcript = ""
-            }
-            
-            // Show success message briefly
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                // Navigate back to sermons list or show success message
-                coordinator.dismiss()
-            }
-            
-        } catch {
-            print("[RecordingView] Failed to save sermon for later processing: \(error)")
-            withAnimation(.easeInOut(duration: 0.5)) {
-                transcriptProcessingError = "Failed to save recording. Please try again."
+        // Add to retry queue
+        let pendingTranscription = PendingTranscription(
+            audioFileURL: audioURL,
+            sermonTitle: title,
+            sermonDate: date,
+            serviceType: serviceType
+        )
+        transcriptionRetryService.addPendingTranscription(pendingTranscription)
+        
+        // Clear the error and reset UI
+        withAnimation(.easeInOut(duration: 0.5)) {
+            transcriptProcessingError = nil
+            isRecordingStarted = false
+            isPaused = false
+            transcript = ""
+        }
+        
+        // Show success message briefly
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Navigate back to sermons list or show success message
+            // Try to get the saved sermon and call onNext callback if available
+            if let onNext = onNext, 
+               let savedSermon = sermonService.sermons.first(where: { $0.id == sermonId }) {
+                onNext(savedSermon)
             }
         }
     }
