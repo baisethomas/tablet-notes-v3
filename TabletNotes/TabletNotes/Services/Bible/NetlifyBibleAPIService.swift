@@ -68,10 +68,10 @@ class NetlifyBibleAPIService: ObservableObject {
         // Use a known working Bible ID or try to get one from available bibles
         let workingBibleId = getWorkingBibleId(bibleId)
         
-        // Try direct verse lookup first using verse ID format
-        // Convert reference like "John 3:16" to verse ID format
-        let verseId = convertReferenceToVerseId(reference)
-        let endpoint = "bibles/\(workingBibleId)/verses/\(verseId)"
+        // Try different endpoint formats to debug the 404 issue
+        // First try: chapters endpoint to get chapter content, then parse verse
+        let chapterInfo = parseReferenceForChapter(reference)
+        let endpoint = "bibles/\(workingBibleId)/chapters/\(chapterInfo.chapterId)"
         
         guard let url = URL(string: "\(apiBaseUrl)/bible-api?endpoint=\(endpoint)") else {
             throw BibleAPIError.invalidRequest
@@ -95,12 +95,26 @@ class NetlifyBibleAPIService: ObservableObject {
             
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             guard let wrappedData = json?["data"] as? [String: Any],
-                  let verseData = wrappedData["data"] as? [String: Any] else {
+                  let chapterData = wrappedData["data"] as? [String: Any] else {
                 throw BibleAPIError.apiError("Invalid response format")
             }
             
-            let verseJsonData = try JSONSerialization.data(withJSONObject: verseData)
-            return try JSONDecoder().decode(BibleVerse.self, from: verseJsonData)
+            // Extract the specific verse from chapter content
+            let chapterInfo = parseReferenceForChapter(reference)
+            let verseContent = extractVerseFromChapter(chapterData, verseNumber: chapterInfo.verseNumber)
+            
+            // Create BibleVerse object
+            let bookId = String(chapterInfo.chapterId.prefix(3)) // Extract book abbreviation from chapter ID
+            return BibleVerse(
+                id: chapterInfo.chapterId + ".\(chapterInfo.verseNumber)",
+                orgId: workingBibleId,
+                bookId: bookId,
+                chapterId: chapterInfo.chapterId,
+                content: verseContent,
+                reference: reference,
+                verseCount: 1,
+                copyright: chapterData["copyright"] as? String
+            )
             
         } catch {
             throw BibleAPIError.networkError(error)
@@ -309,5 +323,49 @@ class NetlifyBibleAPIService: ObservableObject {
         
         // Otherwise use the first known working ID
         return knownWorkingIds[0]
+    }
+    
+    private func parseReferenceForChapter(_ reference: String) -> (chapterId: String, verseNumber: Int) {
+        let components = reference.components(separatedBy: " ")
+        guard components.count >= 2 else {
+            return (chapterId: reference, verseNumber: 1)
+        }
+        
+        let bookName = components[0]
+        let chapterVerse = components[1]
+        let bookAbbrev = mapBookNameToAbbreviation(bookName)
+        
+        if let colonIndex = chapterVerse.firstIndex(of: ":") {
+            let chapter = String(chapterVerse[..<colonIndex])
+            let verse = String(chapterVerse[chapterVerse.index(after: colonIndex)...])
+            return (chapterId: "\(bookAbbrev).\(chapter)", verseNumber: Int(verse) ?? 1)
+        } else {
+            // Just chapter number, return verse 1
+            return (chapterId: "\(bookAbbrev).\(chapterVerse)", verseNumber: 1)
+        }
+    }
+    
+    private func extractVerseFromChapter(_ chapterData: [String: Any], verseNumber: Int) -> String {
+        // Try to extract verse content from chapter data
+        // This will depend on the actual structure of the Bible API response
+        
+        if let content = chapterData["content"] as? String {
+            // If content is HTML/text with verse markers, try to parse
+            // For now, return the whole content as fallback
+            return content
+        }
+        
+        // Try to find verses array
+        if let verses = chapterData["verses"] as? [[String: Any]] {
+            // Look for specific verse number
+            for verse in verses {
+                if let verseNum = verse["number"] as? Int, verseNum == verseNumber,
+                   let verseContent = verse["content"] as? String {
+                    return verseContent
+                }
+            }
+        }
+        
+        return "Verse content not available"
     }
 }
