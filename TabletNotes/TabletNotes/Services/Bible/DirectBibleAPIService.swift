@@ -17,7 +17,7 @@ class DirectBibleAPIService: ObservableObject {
     
     func fetchVerse(reference: String, bibleId: String = ApiBibleConfig.defaultBibleId) async throws -> BibleVerse {
         guard ApiBibleConfig.isConfigured else {
-            throw BibleAPIError.apiKeyNotConfigured
+            throw BibleAPIError.apiError("Bible API key is not configured. Please add your API.Bible key to ApiBibleConfig.")
         }
         
         // Parse the reference to create the API endpoint
@@ -25,7 +25,7 @@ class DirectBibleAPIService: ObservableObject {
         let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/search?query=\(cleanReference.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
         
         guard let url = url else {
-            throw BibleAPIError.invalidURL
+            throw BibleAPIError.invalidRequest
         }
         
         var request = URLRequest(url: url)
@@ -37,7 +37,7 @@ class DirectBibleAPIService: ObservableObject {
         
         guard let httpResponse = response as? HTTPURLResponse,
               200...299 ~= httpResponse.statusCode else {
-            throw BibleAPIError.invalidResponse
+            throw BibleAPIError.apiError("Invalid response from Bible API")
         }
         
         // For now, return a mock verse until we implement full API parsing
@@ -55,7 +55,7 @@ class DirectBibleAPIService: ObservableObject {
     
     func fetchPassage(reference: String, bibleId: String = ApiBibleConfig.defaultBibleId) async throws -> BiblePassage {
         guard ApiBibleConfig.isConfigured else {
-            throw BibleAPIError.apiKeyNotConfigured
+            throw BibleAPIError.apiError("Bible API key is not configured. Please add your API.Bible key to ApiBibleConfig.")
         }
         
         // For now, return a mock passage until we implement full API parsing
@@ -137,26 +137,4 @@ class DirectBibleAPIService: ObservableObject {
     }
 }
 
-// MARK: - Bible API Error Types
-enum BibleAPIError: LocalizedError {
-    case apiKeyNotConfigured
-    case invalidURL
-    case invalidResponse
-    case noDataReceived
-    case parseError
-    
-    var errorDescription: String? {
-        switch self {
-        case .apiKeyNotConfigured:
-            return "Bible API key is not configured. Please add your API.Bible key to ApiBibleConfig."
-        case .invalidURL:
-            return "Invalid URL for Bible API request."
-        case .invalidResponse:
-            return "Invalid response from Bible API."
-        case .noDataReceived:
-            return "No data received from Bible API."
-        case .parseError:
-            return "Failed to parse Bible API response."
-        }
-    }
-}
+// Note: BibleAPIError is defined in BibleAPIService.swift to avoid duplication
