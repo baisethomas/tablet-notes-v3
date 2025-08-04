@@ -21,6 +21,16 @@ struct PendingTranscription: Codable, Identifiable {
         self.retryCount = 0
     }
     
+    private init(id: UUID, audioFileURL: URL, sermonTitle: String, sermonDate: Date, serviceType: String, createdAt: Date, retryCount: Int) {
+        self.id = id
+        self.audioFileURL = audioFileURL
+        self.sermonTitle = sermonTitle
+        self.sermonDate = sermonDate
+        self.serviceType = serviceType
+        self.createdAt = createdAt
+        self.retryCount = retryCount
+    }
+    
     func withIncrementedRetryCount() -> PendingTranscription {
         return PendingTranscription(
             id: self.id,
