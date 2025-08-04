@@ -167,7 +167,7 @@ class NetlifyBibleAPIService: ObservableObject {
         guard components.count >= 2 else { return reference }
         
         let bookName = components[0]
-        let chapterVerse = components[1]
+        let chapterVerse = components[1].replacingOccurrences(of: ":", with: ".")
         
         // Map book names to Bible API abbreviations
         let bookAbbrev = mapBookNameToAbbreviation(bookName)
@@ -179,9 +179,30 @@ class NetlifyBibleAPIService: ObservableObject {
         if reference.contains("-") {
             let parts = reference.components(separatedBy: "-")
             if parts.count == 2 {
-                let start = convertReferenceToVerseId(parts[0].trimmingCharacters(in: .whitespaces))
-                let end = convertReferenceToVerseId(parts[1].trimmingCharacters(in: .whitespaces))
-                return "\(start)-\(end)"
+                let startPart = parts[0].trimmingCharacters(in: .whitespaces)
+                let endPart = parts[1].trimmingCharacters(in: .whitespaces)
+                
+                // Handle ranges like "John 3:16-17" where end doesn't include book/chapter
+                let startVerseId = convertReferenceToVerseId(startPart)
+                let endVerseId: String
+                
+                if endPart.contains(" ") {
+                    // Full reference like "John 3:16-John 3:17"
+                    endVerseId = convertReferenceToVerseId(endPart)
+                } else {
+                    // Just verse number like "John 3:16-17"
+                    let startComponents = startPart.components(separatedBy: " ")
+                    if startComponents.count >= 2 {
+                        let bookName = startComponents[0]
+                        let chapter = startComponents[1].components(separatedBy: ":")[0]
+                        let endReference = "\(bookName) \(chapter):\(endPart)"
+                        endVerseId = convertReferenceToVerseId(endReference)
+                    } else {
+                        endVerseId = convertReferenceToVerseId(endPart)
+                    }
+                }
+                
+                return "\(startVerseId)-\(endVerseId)"
             }
         }
         // If no range, treat as single verse
