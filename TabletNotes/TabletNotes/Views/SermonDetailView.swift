@@ -252,6 +252,9 @@ struct SermonDetailView: View {
     @State private var editableSpeaker: String = ""
     @State private var isEditingSpeaker = false
     
+    // Transcription retry
+    @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
+    
     enum Tab: String, CaseIterable {
         case summary = "Summary"
         case transcript = "Transcript"
@@ -444,6 +447,16 @@ struct SermonDetailView: View {
                         editableTitle = sermon.title
                         editableSpeaker = sermon.speaker ?? ""
                         setupAudioPlayer()
+                        
+                        // Retry transcription if needed
+                        transcriptionRetryService.retryTranscriptionIfNeeded(for: sermon)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: TranscriptionRetryService.transcriptionCompletedNotification)) { notification in
+                        // Refresh sermon data when transcription completes
+                        if let completedSermonId = notification.object as? UUID,
+                           completedSermonId == sermon.id {
+                            // The sermon will automatically refresh through the @ObservedObject sermonService
+                        }
                     }
                     .onDisappear {
                         cleanup()

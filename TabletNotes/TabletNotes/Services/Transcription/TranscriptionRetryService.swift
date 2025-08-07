@@ -50,16 +50,24 @@ class TranscriptionRetryService: ObservableObject {
     @Published var pendingTranscriptions: [PendingTranscription] = []
     @Published var isProcessingQueue = false
     
+    // Notification for when transcription completes
+    static let transcriptionCompletedNotification = Notification.Name("TranscriptionCompleted")
+    
     private let networkMonitor = NWPathMonitor()
     private let networkQueue = DispatchQueue(label: "NetworkMonitor")
     private var isNetworkAvailable = false
     
     private let userDefaults = UserDefaults.standard
     private let pendingTranscriptionsKey = "PendingTranscriptions"
+    private var modelContext: ModelContext?
     
     private init() {
         loadPendingTranscriptions()
         startNetworkMonitoring()
+    }
+    
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
     }
     
     deinit {
@@ -96,6 +104,24 @@ class TranscriptionRetryService: ObservableObject {
         savePendingTranscriptions()
     }
     
+    func retryTranscriptionIfNeeded(for sermon: Sermon) {
+        // Check if there's a pending transcription for this sermon's audio file
+        let hasPendingTranscription = pendingTranscriptions.contains { pending in
+            pending.audioFileURL == sermon.audioFileURL
+        }
+        
+        // If sermon has failed transcription status and no pending retry, add it to queue
+        if sermon.transcriptionStatus == "failed" && !hasPendingTranscription && isNetworkAvailable {
+            let pendingTranscription = PendingTranscription(
+                audioFileURL: sermon.audioFileURL,
+                sermonTitle: sermon.title,
+                sermonDate: sermon.date,
+                serviceType: sermon.serviceType
+            )
+            addPendingTranscription(pendingTranscription)
+        }
+    }
+    
     func processQueue() {
         guard !isProcessingQueue && !pendingTranscriptions.isEmpty && isNetworkAvailable else { return }
         
@@ -113,7 +139,48 @@ class TranscriptionRetryService: ObservableObject {
                     switch result {
                     case .success(let (text, segments)):
                         print("[TranscriptionRetryService] Successfully processed pending transcription")
-                        // TODO: Save the sermon with transcription
+                        
+                        // Create the sermon with transcription
+                        if let context = self?.modelContext {
+                            let sermon = Sermon(
+                                title: nextTranscription.sermonTitle,
+                                audioFileURL: nextTranscription.audioFileURL,
+                                date: nextTranscription.sermonDate,
+                                serviceType: nextTranscription.serviceType,
+                                speaker: "", // Default empty speaker
+                                transcriptionStatus: "complete"
+                            )
+                            
+                            // Set transcription status and create transcript
+                            sermon.transcriptionStatus = "complete"
+                            
+                            let transcript = Transcript(
+                                text: text
+                            )
+                            
+                            // Add transcript segments
+                            for segment in segments {
+                                let transcriptSegment = TranscriptSegment(
+                                    text: segment.text,
+                                    startTime: segment.startTime,
+                                    endTime: segment.endTime
+                                )
+                                transcript.segments.append(transcriptSegment)
+                            }
+                            
+                            sermon.transcript = transcript
+                            
+                            // Save to SwiftData
+                            context.insert(sermon)
+                            try? context.save()
+                            
+                            // Notify UI that transcription completed
+                            NotificationCenter.default.post(
+                                name: TranscriptionRetryService.transcriptionCompletedNotification,
+                                object: sermon.id
+                            )
+                        }
+                        
                         self?.removePendingTranscription(withId: nextTranscription.id)
                         
                     case .failure(let error):

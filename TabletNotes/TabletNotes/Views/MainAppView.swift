@@ -37,6 +37,9 @@ struct MainAppView: View {
         self.modelContext = modelContext
         _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
         
+        // Initialize TranscriptionRetryService with ModelContext
+        TranscriptionRetryService.shared.setModelContext(modelContext)
+        
         // Check if user has seen onboarding before
         if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
             _currentScreen = State(initialValue: .onboarding)
