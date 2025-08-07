@@ -721,10 +721,12 @@ struct SermonDetailView: View {
                         subtitle: "Converting your sermon audio to text. This may take a few minutes.",
                         icon: "text.bubble"
                     )
-                case "failed":
+                case "failed", "pending":
                     ErrorStateView(
-                        title: "Transcription Failed",
-                        subtitle: "We couldn't transcribe this sermon. Please check your audio file and try again.",
+                        title: sermon.transcriptionStatus == "pending" ? "Transcription Pending" : "Transcription Failed",
+                        subtitle: sermon.transcriptionStatus == "pending" ? 
+                            "This recording was saved for later processing. Tap retry when you're back online." :
+                            "We couldn't transcribe this sermon. Please check your audio file and try again.",
                         actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
                         action: isRetryingTranscription ? nil : {
                             retryTranscription(for: sermon)

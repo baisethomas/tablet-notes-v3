@@ -110,8 +110,8 @@ class TranscriptionRetryService: ObservableObject {
             pending.audioFileURL == sermon.audioFileURL
         }
         
-        // If sermon has failed transcription status and no pending retry, add it to queue
-        if sermon.transcriptionStatus == "failed" && !hasPendingTranscription && isNetworkAvailable {
+        // If sermon has failed or pending transcription status and no pending retry, add it to queue
+        if (sermon.transcriptionStatus == "failed" || sermon.transcriptionStatus == "pending") && !hasPendingTranscription && isNetworkAvailable {
             let pendingTranscription = PendingTranscription(
                 audioFileURL: sermon.audioFileURL,
                 sermonTitle: sermon.title,
