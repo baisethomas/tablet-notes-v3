@@ -297,6 +297,18 @@ class SermonService: ObservableObject {
         try? modelContext.save()
         applyFilters()
     }
+    
+    func updateSermon(_ sermon: Sermon) {
+        markSermonForSync(sermon.id)
+        try? modelContext.save()
+        
+        // Trigger sync if user has sync enabled
+        if let currentUser = authManager.currentUser, currentUser.canSync {
+            triggerSyncIfNeeded()
+        }
+        
+        applyFilters()
+    }
 
     func deleteSermon(_ sermon: Sermon) {
         if let index = sermons.firstIndex(where: { $0.id == sermon.id }) {

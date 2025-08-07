@@ -254,6 +254,7 @@ struct SermonDetailView: View {
     
     // Transcription retry
     @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
+    @State private var isRetryingTranscription = false
     
     enum Tab: String, CaseIterable {
         case summary = "Summary"
@@ -724,9 +725,9 @@ struct SermonDetailView: View {
                     ErrorStateView(
                         title: "Transcription Failed",
                         subtitle: "We couldn't transcribe this sermon. Please check your audio file and try again.",
-                        actionTitle: "Retry",
-                        action: {
-                            // Retry logic would go here
+                        actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
+                        action: isRetryingTranscription ? nil : {
+                            retryTranscription(for: sermon)
                         }
                     )
                 default:
@@ -975,6 +976,67 @@ struct SermonDetailView: View {
         let minutes = Int(interval) / 60
         let seconds = Int(interval) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    private func retryTranscription(for sermon: Sermon) {
+        // Set retry state
+        isRetryingTranscription = true
+        
+        // Update sermon status to processing
+        sermon.transcriptionStatus = "processing"
+        
+        // Create a transcription service to retry the processing
+        let transcriptionService = TranscriptionService()
+        
+        transcriptionService.transcribeAudioFileWithResult(url: sermon.audioFileURL) { result in
+            DispatchQueue.main.async {
+                isRetryingTranscription = false
+                
+                switch result {
+                case .success(let (text, segments)):
+                    // Create or update transcript
+                    if sermon.transcript == nil {
+                        let transcript = Transcript(text: text)
+                        
+                        // Add transcript segments
+                        for segment in segments {
+                            let transcriptSegment = TranscriptSegment(
+                                text: segment.text,
+                                startTime: segment.startTime,
+                                endTime: segment.endTime
+                            )
+                            transcript.segments.append(transcriptSegment)
+                        }
+                        
+                        sermon.transcript = transcript
+                    } else {
+                        // Update existing transcript
+                        sermon.transcript?.text = text
+                        sermon.transcript?.segments.removeAll()
+                        
+                        for segment in segments {
+                            let transcriptSegment = TranscriptSegment(
+                                text: segment.text,
+                                startTime: segment.startTime,
+                                endTime: segment.endTime
+                            )
+                            sermon.transcript?.segments.append(transcriptSegment)
+                        }
+                    }
+                    
+                    // Update status
+                    sermon.transcriptionStatus = "complete"
+                    
+                    // Save changes
+                    sermonService.updateSermon(sermon)
+                    
+                case .failure(let error):
+                    print("Transcription retry failed: \(error)")
+                    sermon.transcriptionStatus = "failed"
+                    sermonService.updateSermon(sermon)
+                }
+            }
+        }
     }
 }
 
