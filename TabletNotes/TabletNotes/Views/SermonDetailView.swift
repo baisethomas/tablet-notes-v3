@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import SwiftData
+import Combine
 // Add these imports if needed for model and view types
 // import TabletNotes.Models // Uncomment if models are in a separate module
 // import TabletNotes.Services // Uncomment if services are in a separate module
@@ -255,6 +256,7 @@ struct SermonDetailView: View {
     // Transcription retry
     @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
     @State private var isRetryingTranscription = false
+    @State private var summaryCancellables = Set<AnyCancellable>()
     
     enum Tab: String, CaseIterable {
         case summary = "Summary"
@@ -1032,6 +1034,9 @@ struct SermonDetailView: View {
                     // Save changes
                     sermonService.updateSermon(sermon)
                     
+                    // Generate summary after successful transcription
+                    generateSummaryForSermon(sermon)
+                    
                 case .failure(let error):
                     print("Transcription retry failed: \(error)")
                     sermon.transcriptionStatus = "failed"
@@ -1039,6 +1044,53 @@ struct SermonDetailView: View {
                 }
             }
         }
+    }
+    
+    private func generateSummaryForSermon(_ sermon: Sermon) {
+        guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
+            print("[SermonDetailView] No transcript available for summary generation")
+            return
+        }
+        
+        // Set summary status to processing
+        sermon.summaryStatus = "processing"
+        
+        // Create summary service and generate summary
+        let summaryService = SummaryService()
+        summaryService.generateSummary(for: transcript.text, type: sermon.serviceType)
+        
+        // Subscribe to summary completion
+        summaryService.statusPublisher
+            .combineLatest(summaryService.summaryPublisher)
+            .sink { (status, summaryText) in
+                DispatchQueue.main.async {
+                    switch status {
+                    case "complete":
+                        if let summaryText = summaryText {
+                            // Create Summary object
+                            let summary = Summary(
+                                text: summaryText,
+                                type: "devotional", // Default type
+                                status: "complete"
+                            )
+                            sermon.summary = summary
+                            sermon.summaryStatus = "complete"
+                        } else {
+                            sermon.summaryStatus = "failed"
+                        }
+                        
+                    case "failed":
+                        sermon.summaryStatus = "failed"
+                        
+                    default:
+                        break
+                    }
+                    
+                    // Save changes
+                    sermonService.updateSermon(sermon)
+                }
+            }
+            .store(in: &summaryCancellables)
     }
 }
 

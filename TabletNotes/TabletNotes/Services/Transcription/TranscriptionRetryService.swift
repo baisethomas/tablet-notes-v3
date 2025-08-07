@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import Network
+import Combine
 
 struct PendingTranscription: Codable, Identifiable {
     let id: UUID
@@ -60,6 +61,7 @@ class TranscriptionRetryService: ObservableObject {
     private let userDefaults = UserDefaults.standard
     private let pendingTranscriptionsKey = "PendingTranscriptions"
     private var modelContext: ModelContext?
+    private var cancellables = Set<AnyCancellable>()
     
     private init() {
         loadPendingTranscriptions()
@@ -179,6 +181,9 @@ class TranscriptionRetryService: ObservableObject {
                                 name: TranscriptionRetryService.transcriptionCompletedNotification,
                                 object: sermon.id
                             )
+                            
+                            // Generate summary after successful transcription
+                            self?.generateSummaryForSermon(sermon)
                         }
                         
                         self?.removePendingTranscription(withId: nextTranscription.id)
@@ -243,5 +248,59 @@ class TranscriptionRetryService: ObservableObject {
             savePendingTranscriptions()
             print("[TranscriptionRetryService] Cleaned up \(originalCount - pendingTranscriptions.count) old pending transcriptions")
         }
+    }
+    
+    private func generateSummaryForSermon(_ sermon: Sermon) {
+        guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
+            print("[TranscriptionRetryService] No transcript available for summary generation")
+            return
+        }
+        
+        // Set summary status to processing
+        sermon.summaryStatus = "processing"
+        
+        // Save status update
+        if let context = modelContext {
+            try? context.save()
+        }
+        
+        // Create summary service and generate summary
+        let summaryService = SummaryService()
+        summaryService.generateSummary(for: transcript.text, type: sermon.serviceType)
+        
+        // Subscribe to summary completion
+        summaryService.statusPublisher
+            .combineLatest(summaryService.summaryPublisher)
+            .sink { (status, summaryText) in
+                DispatchQueue.main.async {
+                    switch status {
+                    case "complete":
+                        if let summaryText = summaryText {
+                            // Create Summary object
+                            let summary = Summary(
+                                text: summaryText,
+                                type: "devotional", // Default type
+                                status: "complete"
+                            )
+                            sermon.summary = summary
+                            sermon.summaryStatus = "complete"
+                        } else {
+                            sermon.summaryStatus = "failed"
+                        }
+                        
+                    case "failed":
+                        sermon.summaryStatus = "failed"
+                        
+                    default:
+                        break
+                    }
+                    
+                    // Save changes
+                    if let context = self.modelContext {
+                        try? context.save()
+                    }
+                }
+            }
+            .store(in: &cancellables)
     }
 }
