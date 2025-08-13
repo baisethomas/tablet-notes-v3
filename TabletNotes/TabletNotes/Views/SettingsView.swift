@@ -1226,7 +1226,7 @@ struct StaticPricingCard: View {
 
 // MARK: - Bible Translation Setting Row
 struct BibleTranslationSettingRow: View {
-    @State private var selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+    @State private var selectedTranslation = ApiBibleConfig.preferredBibleTranslation
     @State private var showingTranslationSheet = false
     
     var body: some View {
@@ -1264,12 +1264,12 @@ struct BibleTranslationSettingRow: View {
                 selectedTranslation: $selectedTranslation,
                 onSelectionChanged: { newTranslation in
                     selectedTranslation = newTranslation
-                    BibleAPIConfig.setPreferredBibleTranslation(newTranslation)
+                    ApiBibleConfig.setPreferredBibleTranslation(newTranslation)
                 }
             )
         }
         .onAppear {
-            selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+            selectedTranslation = ApiBibleConfig.preferredBibleTranslation
         }
     }
 }
@@ -1279,7 +1279,7 @@ struct BibleTranslationSelectionView: View {
     @Binding var selectedTranslation: BibleTranslation
     let onSelectionChanged: (BibleTranslation) -> Void
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var bibleService = NetlifyBibleAPIService()
+    @StateObject private var bibleService = BibleAPIService()
     @State private var availableTranslations: [BibleTranslation] = []
     @State private var isLoading = true
     
@@ -1334,7 +1334,7 @@ struct BibleTranslationSelectionView: View {
                                             .font(.subheadline)
                                             .foregroundColor(.primary)
                                         
-                                        Text(translation.translationDescription ?? "")
+                                        Text(translation.description)
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                             .lineLimit(2)
@@ -1375,7 +1375,7 @@ struct BibleTranslationSelectionView: View {
                     id: bible.id,
                     name: bible.name,
                     abbreviation: bible.abbreviation,
-                    translationDescription: "English Bible translation"
+                    description: "English Bible translation"
                 )
             }
             isLoading = false

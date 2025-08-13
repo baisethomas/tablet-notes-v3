@@ -2,12 +2,45 @@ import Foundation
 import Combine
 import Supabase
 
-class SummaryService: ObservableObject {
+class SummaryService: ObservableObject, SummaryServiceProtocol {
     private let summarySubject = CurrentValueSubject<String?, Never>(nil)
     let statusSubject = CurrentValueSubject<String, Never>("idle") // idle, pending, complete, failed
     var summaryPublisher: AnyPublisher<String?, Never> { summarySubject.eraseToAnyPublisher() }
     var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
+    private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
+    var errorPublisher: AnyPublisher<Error?, Never> { errorSubject.eraseToAnyPublisher() }
     private var cancellables = Set<AnyCancellable>()
+    private var lastTranscript: String?
+    private var lastType: String?
+
+    private enum SummaryError: LocalizedError {
+        case transcriptTooShort(Int)
+        case invalidRequest
+        case network(String)
+        case server(Int)
+        case noData
+        case parseFailure
+        case auth(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .transcriptTooShort(let count):
+                return "Transcript too short (\(count) chars)"
+            case .invalidRequest:
+                return "Failed to create summarize request"
+            case .network(let message):
+                return message
+            case .server(let code):
+                return "Server error (\(code))"
+            case .noData:
+                return "No data received from summarize endpoint"
+            case .parseFailure:
+                return "Failed to parse summarize response"
+            case .auth(let message):
+                return "Authentication failed: \(message)"
+            }
+        }
+    }
     
     private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
     private let supabase: SupabaseClient
@@ -18,6 +51,8 @@ class SummaryService: ObservableObject {
     
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
+        lastTranscript = transcript
+        lastType = type
         
         // Validate transcript content
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -25,6 +60,7 @@ class SummaryService: ObservableObject {
             print("[SummaryService] ERROR: Transcript too short (\(trimmedTranscript.count) chars)")
             statusSubject.send("failed")
             summarySubject.send("[Error] Transcript is too short for meaningful summarization. Please ensure the recording captured audio properly.")
+            errorSubject.send(SummaryError.transcriptTooShort(trimmedTranscript.count))
             return
         }
         
@@ -54,6 +90,7 @@ class SummaryService: ObservableObject {
                     print("[SummaryService] ERROR: Failed to create request body or URL")
                     DispatchQueue.main.async {
                         self.statusSubject.send("failed")
+                        self.errorSubject.send(SummaryError.invalidRequest)
                     }
                     return
                 }
@@ -76,6 +113,7 @@ class SummaryService: ObservableObject {
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
                     self.summarySubject.send("[Error] \(errorMessage)")
+                    self.errorSubject.send(SummaryError.network(errorMessage))
                 }
                 return
             }
@@ -88,6 +126,7 @@ class SummaryService: ObservableObject {
                     DispatchQueue.main.async {
                         self.statusSubject.send("failed")
                         self.summarySubject.send("[Error] The summarization service timed out. This is common with longer transcripts. Please try again with a shorter transcript or contact support.")
+                        self.errorSubject.send(SummaryError.server(502))
                     }
                     return
                 } else if httpResponse.statusCode >= 500 {
@@ -95,6 +134,7 @@ class SummaryService: ObservableObject {
                     DispatchQueue.main.async {
                         self.statusSubject.send("failed")
                         self.summarySubject.send("[Error] Server error (\(httpResponse.statusCode)). Please try again later.")
+                        self.errorSubject.send(SummaryError.server(httpResponse.statusCode))
                     }
                     return
                 }
@@ -104,6 +144,7 @@ class SummaryService: ObservableObject {
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
                     self.summarySubject.send("[Error] No data received from Netlify summarize endpoint.")
+                    self.errorSubject.send(SummaryError.noData)
                 }
                 return
             }
@@ -115,6 +156,7 @@ class SummaryService: ObservableObject {
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
                     self.summarySubject.send("[Error] Failed to parse response from summarize endpoint.")
+                    self.errorSubject.send(SummaryError.parseFailure)
                 }
                 return
             }
@@ -133,6 +175,7 @@ class SummaryService: ObservableObject {
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
                     self.summarySubject.send("[Error] Invalid response format from summarize endpoint.")
+                    self.errorSubject.send(SummaryError.parseFailure)
                 }
                 return
             }
@@ -140,6 +183,7 @@ class SummaryService: ObservableObject {
             DispatchQueue.main.async {
                 self.summarySubject.send(summary.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.statusSubject.send("complete")
+                self.errorSubject.send(nil)
             }
                 }
                 task.resume()
@@ -148,12 +192,21 @@ class SummaryService: ObservableObject {
                 DispatchQueue.main.async {
                     self.statusSubject.send("failed")
                     self.summarySubject.send("[Error] Authentication failed: \(error.localizedDescription)")
+                    self.errorSubject.send(SummaryError.auth(error.localizedDescription))
                 }
             }
         }
     }
 
+    func retrySummary() {
+        guard let transcript = lastTranscript, let type = lastType else { return }
+        generateSummary(for: transcript, type: type)
+    }
+
+    // Convenience method (not in protocol)
     func retrySummary(for transcript: String, type: String) {
+        lastTranscript = transcript
+        lastType = type
         generateSummary(for: transcript, type: type)
     }
     
@@ -198,3 +251,4 @@ class SummaryService: ObservableObject {
         }
     }
 }
+

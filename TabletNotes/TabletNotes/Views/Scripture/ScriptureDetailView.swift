@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ScriptureDetailView: View {
     let reference: ScriptureReference
-    @StateObject private var bibleService = NetlifyBibleAPIService()
+    @StateObject private var bibleService = BibleAPIService()
     @State private var scriptureContent: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
