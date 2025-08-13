@@ -1138,7 +1138,7 @@ struct StaticPricingCard: View {
 
 // MARK: - Bible Translation Setting Row
 struct BibleTranslationSettingRow: View {
-    @State private var selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+    @State private var selectedTranslation = ApiBibleConfig.preferredBibleTranslation
     @State private var showingTranslationSheet = false
     
     var body: some View {
@@ -1176,12 +1176,12 @@ struct BibleTranslationSettingRow: View {
                 selectedTranslation: $selectedTranslation,
                 onSelectionChanged: { newTranslation in
                     selectedTranslation = newTranslation
-                    BibleAPIConfig.setPreferredBibleTranslation(newTranslation)
+                    ApiBibleConfig.setPreferredBibleTranslation(newTranslation)
                 }
             )
         }
         .onAppear {
-            selectedTranslation = BibleAPIConfig.preferredBibleTranslation
+            selectedTranslation = ApiBibleConfig.preferredBibleTranslation
         }
     }
 }

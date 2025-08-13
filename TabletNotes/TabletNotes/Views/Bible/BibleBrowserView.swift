@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BibleBrowserView: View {
     @StateObject private var bibleService = BibleAPIService()
-    @State private var selectedBibleId = BibleAPIConfig.defaultBibleId
+    @State private var selectedBibleId = ApiBibleConfig.defaultBibleId
     @State private var selectedBook: BibleBook?
     @State private var selectedChapter: Int = 1
     @State private var selectedVerseStart: Int = 1
