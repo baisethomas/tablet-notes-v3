@@ -528,22 +528,24 @@ struct SermonListView: View {
                             }
                         )
                         
-                        // Recovery button for users who might have lost recordings
+                        #if DEBUG
+                        // Recovery button for debugging (only in debug builds)
                         Button(action: {
                             sermonService.checkForRecoverableRecordings()
                         }) {
                             HStack(spacing: 8) {
                                 Image(systemName: "arrow.clockwise.circle.fill")
-                                Text("Recover Previous Recordings")
+                                Text("DEBUG: Recover Previous Recordings")
                             }
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundColor(.adaptiveAccent)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                             .background(Color.adaptiveAccent.opacity(0.1))
-                            .cornerRadius(20)
+                            .cornerRadius(15)
                         }
                         .buttonStyle(.plain)
+                        #endif
                     }
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
                     // Empty state when search returns no results

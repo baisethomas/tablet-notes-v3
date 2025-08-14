@@ -47,9 +47,6 @@ class SermonService: ObservableObject {
         // Listen for auth state changes to refresh sermons
         Task { @MainActor in
             setupAuthStateObserver()
-            
-            // Check for recoverable audio files after migration
-            checkForRecoverableAudioFiles()
         }
     }
     
@@ -194,6 +191,9 @@ class SermonService: ObservableObject {
             
             // Migrate any sermons that still have absolute URLs to relative filenames
             migrateAudioFilePaths()
+            
+            // Check for recoverable audio files after database operations are complete
+            checkForRecoverableAudioFiles()
             
             // Create predicate to filter by userId
             let userIdToMatch = currentUser.id
@@ -525,11 +525,14 @@ class SermonService: ObservableObject {
     
     @MainActor
     private func checkForOrphanedAudioFiles() {
-        // Check if we have an empty database but audio files exist
-        if sermons.isEmpty {
-            print("[SermonService] Empty database detected, checking for orphaned audio files...")
+        // Check if we have an empty database but audio files exist by querying database directly
+        do {
+            let fetchDescriptor = FetchDescriptor<Sermon>()
+            let allSermons = try modelContext.fetch(fetchDescriptor)
             
-            do {
+            if allSermons.isEmpty {
+                print("[SermonService] Empty database detected (direct query), checking for orphaned audio files...")
+                
                 let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("AudioRecordings")
                 
@@ -561,9 +564,11 @@ class SermonService: ObservableObject {
                     
                     performRecovery(from: recoverableFiles, source: "orphaned files")
                 }
-            } catch {
-                print("[SermonService] Error checking for orphaned audio files: \(error)")
+            } else {
+                print("[SermonService] Database has \(allSermons.count) existing sermons, no recovery needed")
             }
+        } catch {
+            print("[SermonService] Error checking database or audio files: \(error)")
         }
     }
     
