@@ -480,6 +480,15 @@ class SermonService: ObservableObject {
         limitReachedMessage = nil
     }
     
+    // MARK: - Manual Recovery
+    
+    func checkForRecoverableRecordings() {
+        Task { @MainActor in
+            print("[SermonService] Manual recovery triggered by user")
+            checkForOrphanedAudioFiles()
+        }
+    }
+    
     // MARK: - Helper Methods
     
     private func getFileSize(_ url: URL) -> Int64? {
@@ -496,11 +505,70 @@ class SermonService: ObservableObject {
     
     @MainActor
     private func checkForRecoverableAudioFiles() {
+        // Check for recoverable files from migration OR orphaned files in empty database
+        if !DataMigration.hasRecoverableAudioFiles() {
+            checkForOrphanedAudioFiles()
+        } else {
+            recoverFromMigration()
+        }
+    }
+    
+    @MainActor
+    private func recoverFromMigration() {
         guard DataMigration.hasRecoverableAudioFiles() else { return }
         
         print("[SermonService] Found recoverable audio files after migration, attempting recovery...")
         
         let recoverableFiles = DataMigration.getRecoverableAudioFiles()
+        performRecovery(from: recoverableFiles, source: "migration")
+    }
+    
+    @MainActor
+    private func checkForOrphanedAudioFiles() {
+        // Check if we have an empty database but audio files exist
+        if sermons.isEmpty {
+            print("[SermonService] Empty database detected, checking for orphaned audio files...")
+            
+            do {
+                let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("AudioRecordings")
+                
+                let audioFiles = try FileManager.default.contentsOfDirectory(
+                    at: audioDir,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey]
+                )
+                
+                let sermonFiles = audioFiles.filter { 
+                    $0.lastPathComponent.hasPrefix("sermon_") && $0.lastPathComponent.hasSuffix(".m4a") 
+                }
+                
+                if !sermonFiles.isEmpty {
+                    print("[SermonService] Found \(sermonFiles.count) orphaned audio files")
+                    
+                    // Convert to recovery format
+                    var recoverableFiles: [(filename: String, creationDate: Date, path: String)] = []
+                    
+                    for audioFile in sermonFiles {
+                        let resourceValues = try audioFile.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+                        let creationDate = resourceValues.creationDate ?? resourceValues.contentModificationDate ?? Date()
+                        
+                        recoverableFiles.append((
+                            filename: audioFile.lastPathComponent,
+                            creationDate: creationDate,
+                            path: audioFile.path
+                        ))
+                    }
+                    
+                    performRecovery(from: recoverableFiles, source: "orphaned files")
+                }
+            } catch {
+                print("[SermonService] Error checking for orphaned audio files: \(error)")
+            }
+        }
+    }
+    
+    @MainActor
+    private func performRecovery(from recoverableFiles: [(filename: String, creationDate: Date, path: String)], source: String) {
         var recoveredCount = 0
         
         for fileInfo in recoverableFiles {
@@ -535,16 +603,18 @@ class SermonService: ObservableObject {
         if recoveredCount > 0 {
             do {
                 try modelContext.save()
-                print("[SermonService] Successfully recovered \(recoveredCount) sermons from audio files")
+                print("[SermonService] Successfully recovered \(recoveredCount) sermons from \(source)")
                 
-                // Clear recovery flags
-                DataMigration.clearRecoveryFlags()
+                // Clear recovery flags if from migration
+                if source == "migration" {
+                    DataMigration.clearRecoveryFlags()
+                }
                 
                 // Refresh sermon list
                 fetchSermons()
                 
                 // Show user notification about recovery
-                limitReachedMessage = "Recovered \(recoveredCount) recordings after app update!"
+                limitReachedMessage = "Recovered \(recoveredCount) recordings from previous version!"
                 
                 // Clear the message after a delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) {

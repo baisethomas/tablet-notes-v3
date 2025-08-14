@@ -515,17 +515,36 @@ struct SermonListView: View {
                     }
                 } else if sermonService.sermons.isEmpty {
                     // Empty state when no sermons exist
-                    EmptyStateView(
-                        title: "No Sermons Yet",
-                        subtitle: "Start recording your first sermon to see it here. Your recordings will be automatically transcribed and summarized.",
-                        systemImage: "mic.circle",
-                        actionTitle: "Start Recording",
-                        action: {
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                            impactFeedback.impactOccurred()
-                            onStartRecording?()
+                    VStack(spacing: 16) {
+                        EmptyStateView(
+                            title: "No Sermons Yet",
+                            subtitle: "Start recording your first sermon to see it here. Your recordings will be automatically transcribed and summarized.",
+                            systemImage: "mic.circle",
+                            actionTitle: "Start Recording",
+                            action: {
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                impactFeedback.impactOccurred()
+                                onStartRecording?()
+                            }
+                        )
+                        
+                        // Recovery button for users who might have lost recordings
+                        Button(action: {
+                            sermonService.checkForRecoverableRecordings()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                                Text("Recover Previous Recordings")
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.adaptiveAccent)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.adaptiveAccent.opacity(0.1))
+                            .cornerRadius(20)
                         }
-                    )
+                        .buttonStyle(.plain)
+                    }
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
                     // Empty state when search returns no results
                     EmptyStateView(
