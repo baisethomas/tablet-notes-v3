@@ -1226,7 +1226,7 @@ struct StaticPricingCard: View {
 
 // MARK: - Bible Translation Setting Row
 struct BibleTranslationSettingRow: View {
-    @State private var selectedTranslation = ApiBibleConfig.preferredBibleTranslation
+    @State private var selectedTranslationId = ApiBibleConfig.preferredBibleTranslationId
     @State private var showingTranslationSheet = false
     
     var body: some View {
@@ -1245,7 +1245,7 @@ struct BibleTranslationSettingRow: View {
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
                     
-                    Text(selectedTranslation.abbreviation + " - " + selectedTranslation.name)
+                    Text(getSelectedTranslationName())
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1261,23 +1261,31 @@ struct BibleTranslationSettingRow: View {
         }
         .sheet(isPresented: $showingTranslationSheet) {
             BibleTranslationSelectionView(
-                selectedTranslation: $selectedTranslation,
-                onSelectionChanged: { newTranslation in
-                    selectedTranslation = newTranslation
-                    ApiBibleConfig.setPreferredBibleTranslation(newTranslation)
+                selectedTranslationId: $selectedTranslationId,
+                onSelectionChanged: { translationId in
+                    selectedTranslationId = translationId
+                    ApiBibleConfig.setPreferredBibleTranslation(translationId)
                 }
             )
         }
         .onAppear {
-            selectedTranslation = ApiBibleConfig.preferredBibleTranslation
+            selectedTranslationId = ApiBibleConfig.preferredBibleTranslationId
         }
+    }
+    
+    private func getSelectedTranslationName() -> String {
+        // Find the selected translation from the default list
+        if let translation = BibleTranslation.defaultTranslations.first(where: { $0.id == selectedTranslationId }) {
+            return "\(translation.abbreviation) - \(translation.name)"
+        }
+        return "KJV - King James Version" // Fallback
     }
 }
 
 // MARK: - Bible Translation Selection View
 struct BibleTranslationSelectionView: View {
-    @Binding var selectedTranslation: BibleTranslation
-    let onSelectionChanged: (BibleTranslation) -> Void
+    @Binding var selectedTranslationId: String
+    let onSelectionChanged: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var bibleService = BibleAPIService()
     @State private var availableTranslations: [BibleTranslation] = []
@@ -1313,7 +1321,7 @@ struct BibleTranslationSelectionView: View {
                     List {
                         ForEach(availableTranslations) { translation in
                             Button(action: {
-                                onSelectionChanged(translation)
+                                onSelectionChanged(translation.id)
                                 dismiss()
                             }) {
                                 HStack(spacing: 16) {
@@ -1324,7 +1332,7 @@ struct BibleTranslationSelectionView: View {
                                                 .fontWeight(.semibold)
                                                 .foregroundColor(.primary)
                                             
-                                            if translation.id == selectedTranslation.id {
+                                            if translation.id == selectedTranslationId {
                                                 Image(systemName: "checkmark.circle.fill")
                                                     .foregroundColor(.accentColor)
                                             }
@@ -1334,7 +1342,7 @@ struct BibleTranslationSelectionView: View {
                                             .font(.subheadline)
                                             .foregroundColor(.primary)
                                         
-                                        Text(translation.description)
+                                        Text(translation.translationDescription ?? "")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                             .lineLimit(2)
@@ -1367,32 +1375,9 @@ struct BibleTranslationSelectionView: View {
     private func loadAvailableTranslations() {
         isLoading = true
         
-        // Wait a bit for the Bible service to load available Bibles
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: DispatchWorkItem {
-            let englishBibles = getEnglishBibles()
-            availableTranslations = englishBibles.map { bible in
-                BibleTranslation(
-                    id: bible.id,
-                    name: bible.name,
-                    abbreviation: bible.abbreviation,
-                    description: "English Bible translation"
-                )
-            }
-            isLoading = false
-        })
-    }
-    
-    private func getEnglishBibles() -> [Bible] {
-        // Filter available Bibles to only show English translations
-        return bibleService.availableBibles.filter { bible in
-            bible.language.name.lowercased().contains("english")
-        }.sorted { first, second in
-            // Prioritize common translations
-            let priority = ["ESV", "NIV", "NLT", "KJV", "NASB", "ASV"]
-            let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
-            let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
-            return firstPriority < secondPriority
-        }
+        // Use the default translations from the model
+        availableTranslations = BibleTranslation.defaultTranslations
+        isLoading = false
     }
 }
 

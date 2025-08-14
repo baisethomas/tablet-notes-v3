@@ -16,6 +16,7 @@ class MockRecordingService: RecordingServiceProtocol {
     @Published private(set) var isPaused = false
     @Published private(set) var recordingDuration: TimeInterval = 0
     @Published private(set) var currentRecordingURL: URL?
+    @Published private(set) var currentRecordingFileName: String?
     
     private var shouldFailNextCall = false
     private var mockError: Error?
@@ -25,6 +26,14 @@ class MockRecordingService: RecordingServiceProtocol {
     // MARK: - Publishers
     var isRecordingPublisher: AnyPublisher<Bool, Never> {
         $isRecording.eraseToAnyPublisher()
+    }
+    
+    var audioFileURLPublisher: AnyPublisher<URL?, Never> {
+        $currentRecordingURL.eraseToAnyPublisher()
+    }
+    
+    var audioFileNamePublisher: AnyPublisher<String?, Never> {
+        $currentRecordingFileName.eraseToAnyPublisher()
     }
     
     var isPausedPublisher: AnyPublisher<Bool, Never> {
@@ -46,12 +55,13 @@ class MockRecordingService: RecordingServiceProtocol {
         isPaused = false
         recordingDuration = 0
         currentRecordingURL = nil
+        currentRecordingFileName = nil
         recordingTimer?.invalidate()
         recordingTimer = nil
     }
     
     // MARK: - RecordingServiceProtocol Implementation
-    func startRecording() async throws -> URL {
+    func startRecording(serviceType: String) throws {
         if shouldFailNextCall {
             shouldFailNextCall = false
             throw mockError ?? RecordingError.recordingFailed
@@ -65,36 +75,20 @@ class MockRecordingService: RecordingServiceProtocol {
         isPaused = false
         recordingDuration = 0
         currentRecordingURL = mockRecordingURL
+        currentRecordingFileName = mockRecordingURL.lastPathComponent
         
         // Start mock timer to simulate recording duration
         startMockTimer()
-        
-        return mockRecordingURL
     }
     
-    func stopRecording() async throws -> URL {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? RecordingError.recordingFailed
-        }
-        
-        guard isRecording else {
-            throw RecordingError.notRecording
-        }
-        
+    func stopRecording() {
         isRecording = false
         isPaused = false
         recordingTimer?.invalidate()
         recordingTimer = nil
-        
-        guard let url = currentRecordingURL else {
-            throw RecordingError.recordingFailed
-        }
-        
-        return url
     }
     
-    func pauseRecording() async throws {
+    func pauseRecording() throws {
         if shouldFailNextCall {
             shouldFailNextCall = false
             throw mockError ?? RecordingError.recordingFailed
@@ -109,7 +103,7 @@ class MockRecordingService: RecordingServiceProtocol {
         recordingTimer = nil
     }
     
-    func resumeRecording() async throws {
+    func resumeRecording() throws {
         if shouldFailNextCall {
             shouldFailNextCall = false
             throw mockError ?? RecordingError.recordingFailed

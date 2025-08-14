@@ -108,7 +108,7 @@ class SermonService: ObservableObject {
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
                 existing.title = title
-                existing.audioFileURL = audioFileURL
+                existing.audioFileName = audioFileURL.lastPathComponent
                 existing.date = date
                 existing.serviceType = serviceType
                 existing.speaker = speaker
@@ -189,6 +189,9 @@ class SermonService: ObservableObject {
             // First, migrate any existing sermons without userId to current user
             migrateExistingSermons(to: currentUser.id)
             
+            // Migrate any sermons that still have absolute URLs to relative filenames
+            migrateAudioFilePaths()
+            
             // Create predicate to filter by userId
             let userIdToMatch = currentUser.id
             let predicate = #Predicate<Sermon> { sermon in
@@ -229,6 +232,52 @@ class SermonService: ObservableObject {
             
             try? modelContext.save()
             print("[SermonService] Migration completed")
+        }
+    }
+    
+    @MainActor
+    private func migrateAudioFilePaths() {
+        print("[SermonService] Checking for sermons with absolute audio file paths to migrate...")
+        
+        // Fetch all sermons to check for old absolute path format
+        let fetchDescriptor = FetchDescriptor<Sermon>()
+        guard let allSermons = try? modelContext.fetch(fetchDescriptor) else { return }
+        
+        var migratedCount = 0
+        for sermon in allSermons {
+            // Check if the audioFileName contains path separators, indicating it's still an absolute path
+            if sermon.audioFileName.contains("/") {
+                // Extract just the filename from the stored path
+                let filename = sermon.audioFileName.components(separatedBy: "/").last ?? sermon.audioFileName
+                
+                print("[SermonService] Migrating sermon '\(sermon.title)' from path '\(sermon.audioFileName)' to filename '\(filename)'")
+                
+                // Update to store just the filename
+                sermon.audioFileName = filename
+                
+                // Check if the file actually exists at the new computed path
+                if !sermon.audioFileExists {
+                    print("[SermonService] WARNING: Audio file '\(filename)' not found at expected location for sermon '\(sermon.title)'")
+                    // Try to find the file in the AudioRecordings directory
+                    let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("AudioRecordings")
+                    if let files = try? FileManager.default.contentsOfDirectory(at: audioDir, includingPropertiesForKeys: nil) {
+                        if let foundFile = files.first(where: { $0.lastPathComponent == filename }) {
+                            print("[SermonService] Found audio file at: \(foundFile.path)")
+                        } else {
+                            print("[SermonService] Audio file '\(filename)' not found in AudioRecordings directory")
+                        }
+                    }
+                }
+                
+                migratedCount += 1
+            }
+        }
+        
+        if migratedCount > 0 {
+            print("[SermonService] Migrated \(migratedCount) sermons to use relative file paths")
+            try? modelContext.save()
+        } else {
+            print("[SermonService] No sermons needed audio path migration")
         }
     }
     

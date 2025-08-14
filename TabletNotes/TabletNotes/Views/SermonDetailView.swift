@@ -928,6 +928,19 @@ struct SermonDetailView: View {
         
         if !fileExists {
             print("[AudioPlayer] ERROR: Audio file not found at path: \(sermon.audioFileURL.path)")
+            print("[AudioPlayer] Checking if audio file exists with audioFileExists property: \(sermon.audioFileExists)")
+            
+            // Try to find the file in the AudioRecordings directory
+            let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("AudioRecordings")
+            if let files = try? FileManager.default.contentsOfDirectory(at: audioDir, includingPropertiesForKeys: nil) {
+                let audioFileName = sermon.audioFileName
+                if let foundFile = files.first(where: { $0.lastPathComponent == audioFileName }) {
+                    print("[AudioPlayer] Found audio file at alternative location: \(foundFile.path)")
+                } else {
+                    print("[AudioPlayer] Audio file '\(audioFileName)' not found in AudioRecordings directory")
+                    print("[AudioPlayer] Available files: \(files.map { $0.lastPathComponent })")
+                }
+            }
             return
         }
         

@@ -498,7 +498,7 @@ struct RecordingView: View {
         }
         .onReceive(recordingService.audioFileURLPublisher) { url in
             audioFileURL = url
-            print("[RecordingView] Captured audioFileURL: \(url)")
+            print("[RecordingView] Captured audioFileURL: \(url?.absoluteString ?? "nil")")
         }
         .onReceive(transcriptionService.transcriptPublisher) { newTranscript in
             withAnimation(.easeInOut(duration: 0.3)) {

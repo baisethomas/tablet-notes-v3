@@ -1,11 +1,11 @@
 import SwiftUI
 
-struct BibleFAB: View {
+struct ScriptureSearchFAB: View {
     let onScriptureSelected: (ScriptureReference, String) -> Void
     
     @State private var showingBibleSheet = false
     @State private var showingSearchSheet = false
-    @StateObject private var bibleService = NetlifyBibleAPIService()
+    @StateObject private var bibleService = BibleAPIService()
     
     var body: some View {
         VStack(spacing: 12) {
@@ -46,7 +46,7 @@ struct ScriptureSearchView: View {
     @State private var selectedReference: ScriptureReference?
     @State private var scriptureContent = ""
     @State private var showingDetail = false
-    @StateObject private var bibleService = NetlifyBibleAPIService()
+    @StateObject private var bibleService = BibleAPIService()
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -218,7 +218,7 @@ struct ScriptureSearchView: View {
         // Fetch the actual scripture content
         Task {
             do {
-                let verse = try await bibleService.fetchVerse(reference: reference.displayText)
+                let verse = try await bibleService.fetchVerse(reference: reference.displayText, bibleId: ApiBibleConfig.preferredBibleTranslationId)
                 let content = verse.content
                 
                 await MainActor.run {
@@ -269,7 +269,7 @@ struct ScriptureSuggestionRow: View {
 }
 
 #Preview {
-    BibleFAB { reference, content in
+    ScriptureSearchFAB { reference, content in
         print("Selected: \(reference.displayText)")
     }
 }

@@ -17,9 +17,11 @@ class RecordingService: NSObject, ObservableObject {
     // Publishers
     let isRecordingPublisher: AnyPublisher<Bool, Never>
     let audioFileURLPublisher: AnyPublisher<URL?, Never>
+    let audioFileNamePublisher: AnyPublisher<String?, Never>
     let isPausedPublisher: AnyPublisher<Bool, Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
+    private let audioFileNameSubject = CurrentValueSubject<String?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
     
     // Duration tracking
@@ -30,6 +32,7 @@ class RecordingService: NSObject, ObservableObject {
     override init() {
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
+        audioFileNamePublisher = audioFileNameSubject.eraseToAnyPublisher()
         isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
         super.init()
         
@@ -183,6 +186,7 @@ class RecordingService: NSObject, ObservableObject {
         }
         isRecordingSubject.send(true)
         audioFileURLSubject.send(url)
+        audioFileNameSubject.send(filename)
         
         // Log the duration limit for this recording
         Task { @MainActor in
@@ -324,8 +328,10 @@ extension RecordingService: AVAudioRecorderDelegate {
         isPausedSubject.send(false)
         if flag {
             audioFileURLSubject.send(recorder.url)
+            audioFileNameSubject.send(recorder.url.lastPathComponent)
         } else {
             audioFileURLSubject.send(nil)
+            audioFileNameSubject.send(nil)
         }
     }
 }
