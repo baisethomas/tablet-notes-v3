@@ -26,11 +26,28 @@ struct TabletNotesApp: App {
                 User.self,
                 UserNotificationSettings.self
             ])
-            let configuration = ModelConfiguration(schema: schema)
+            
+            // Create configuration with migration options
+            let url = URL.documentsDirectory.appending(path: "TabletNotes.store")
+            let configuration = ModelConfiguration(url: url, allowsSave: true)
             container = try ModelContainer(for: schema, configurations: configuration)
         } catch {
-            // If migration fails, try to create a fresh container
-            print("Migration failed, creating fresh container: \(error)")
+            // If migration fails due to schema changes, preserve audio files and reset database
+            print("Schema migration failed, preserving audio files and resetting data store: \(error)")
+            
+            // First, catalog existing audio files for potential recovery
+            DataMigration.recoverAudioFilesAfterMigration()
+            
+            // Delete the existing store files
+            let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let storeURL = documentsDir.appendingPathComponent("TabletNotes.store")
+            let storeURLShm = documentsDir.appendingPathComponent("TabletNotes.store-shm") 
+            let storeURLWal = documentsDir.appendingPathComponent("TabletNotes.store-wal")
+            
+            try? FileManager.default.removeItem(at: storeURL)
+            try? FileManager.default.removeItem(at: storeURLShm)
+            try? FileManager.default.removeItem(at: storeURLWal)
+            
             do {
                 let schema = Schema([
                     Sermon.self, 
@@ -41,10 +58,11 @@ struct TabletNotesApp: App {
                     User.self,
                     UserNotificationSettings.self
                 ])
-                let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+                let configuration = ModelConfiguration(url: storeURL, allowsSave: true)
                 container = try ModelContainer(for: schema, configurations: configuration)
+                print("Successfully created fresh ModelContainer after migration failure")
             } catch {
-                fatalError("Failed to create ModelContainer: \(error)")
+                fatalError("Failed to create ModelContainer even after reset: \(error)")
             }
         }
     }

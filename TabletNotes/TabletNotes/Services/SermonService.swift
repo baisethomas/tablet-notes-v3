@@ -47,6 +47,9 @@ class SermonService: ObservableObject {
         // Listen for auth state changes to refresh sermons
         Task { @MainActor in
             setupAuthStateObserver()
+            
+            // Check for recoverable audio files after migration
+            checkForRecoverableAudioFiles()
         }
     }
     
@@ -487,5 +490,81 @@ class SermonService: ObservableObject {
             print("[SermonService] Error getting file size: \(error)")
             return nil
         }
+    }
+    
+    // MARK: - Data Recovery
+    
+    @MainActor
+    private func checkForRecoverableAudioFiles() {
+        guard DataMigration.hasRecoverableAudioFiles() else { return }
+        
+        print("[SermonService] Found recoverable audio files after migration, attempting recovery...")
+        
+        let recoverableFiles = DataMigration.getRecoverableAudioFiles()
+        var recoveredCount = 0
+        
+        for fileInfo in recoverableFiles {
+            // Check if audio file still exists
+            if FileManager.default.fileExists(atPath: fileInfo.path) {
+                // Create a new sermon record for this audio file
+                let title = generateTitleFromFilename(fileInfo.filename, date: fileInfo.creationDate)
+                
+                let sermon = Sermon(
+                    title: title,
+                    audioFileName: fileInfo.filename,
+                    date: fileInfo.creationDate,
+                    serviceType: "Sunday Service", // Default service type
+                    speaker: nil,
+                    transcript: nil,
+                    notes: [],
+                    summary: nil,
+                    syncStatus: "localOnly",
+                    transcriptionStatus: "pending",
+                    summaryStatus: "pending",
+                    isArchived: false,
+                    userId: authManager.currentUser?.id
+                )
+                
+                modelContext.insert(sermon)
+                recoveredCount += 1
+                
+                print("[SermonService] Recovered sermon: \(title)")
+            }
+        }
+        
+        if recoveredCount > 0 {
+            do {
+                try modelContext.save()
+                print("[SermonService] Successfully recovered \(recoveredCount) sermons from audio files")
+                
+                // Clear recovery flags
+                DataMigration.clearRecoveryFlags()
+                
+                // Refresh sermon list
+                fetchSermons()
+                
+                // Show user notification about recovery
+                limitReachedMessage = "Recovered \(recoveredCount) recordings after app update!"
+                
+                // Clear the message after a delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    self.limitReachedMessage = nil
+                }
+                
+            } catch {
+                print("[SermonService] Failed to save recovered sermons: \(error)")
+            }
+        }
+    }
+    
+    private func generateTitleFromFilename(_ filename: String, date: Date) -> String {
+        // Extract UUID from filename if possible, otherwise use date
+        if filename.hasPrefix("sermon_") {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            return "Recovered Recording from \(formatter.string(from: date))"
+        }
+        return "Recovered Recording"
     }
 } 
