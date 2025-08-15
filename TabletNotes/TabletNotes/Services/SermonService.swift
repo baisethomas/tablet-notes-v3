@@ -576,11 +576,44 @@ class SermonService: ObservableObject {
     private func performRecovery(from recoverableFiles: [(filename: String, creationDate: Date, path: String)], source: String) {
         var recoveredCount = 0
         
+        // Get backed-up notes if available
+        let backedUpNotes = DataMigration.getBackedUpSermonNotes()
+        
         for fileInfo in recoverableFiles {
             // Check if audio file still exists
             if FileManager.default.fileExists(atPath: fileInfo.path) {
                 // Create a new sermon record for this audio file
                 let title = generateTitleFromFilename(fileInfo.filename, date: fileInfo.creationDate)
+                
+                // Recover notes for this sermon if available
+                var recoveredNotes: [Note] = []
+                if let notesData = backedUpNotes[fileInfo.filename] {
+                    for noteDict in notesData {
+                        if let id = noteDict["id"] as? String,
+                           let text = noteDict["text"] as? String,
+                           let timestamp = noteDict["timestamp"] as? TimeInterval,
+                           let uuid = UUID(uuidString: id) {
+                            
+                            let remoteId = noteDict["remoteId"] as? String
+                            let updatedAtInterval = noteDict["updatedAt"] as? TimeInterval
+                            let updatedAt = updatedAtInterval != nil ? Date(timeIntervalSince1970: updatedAtInterval!) : nil
+                            let needsSync = noteDict["needsSync"] as? Bool ?? false
+                            
+                            let note = Note(
+                                id: uuid,
+                                text: text,
+                                timestamp: timestamp,
+                                remoteId: remoteId?.isEmpty == false ? remoteId : nil,
+                                updatedAt: updatedAt,
+                                needsSync: needsSync
+                            )
+                            
+                            modelContext.insert(note)
+                            recoveredNotes.append(note)
+                        }
+                    }
+                    print("[SermonService] Recovered \(recoveredNotes.count) notes for \(fileInfo.filename)")
+                }
                 
                 let sermon = Sermon(
                     title: title,
@@ -589,7 +622,7 @@ class SermonService: ObservableObject {
                     serviceType: "Sunday Service", // Default service type
                     speaker: nil,
                     transcript: nil,
-                    notes: [],
+                    notes: recoveredNotes,
                     summary: nil,
                     syncStatus: "localOnly",
                     transcriptionStatus: "pending",
@@ -601,7 +634,7 @@ class SermonService: ObservableObject {
                 modelContext.insert(sermon)
                 recoveredCount += 1
                 
-                print("[SermonService] Recovered sermon: \(title)")
+                print("[SermonService] Recovered sermon: \(title) with \(recoveredNotes.count) notes")
             }
         }
         
