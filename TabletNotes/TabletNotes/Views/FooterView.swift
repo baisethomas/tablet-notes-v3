@@ -15,7 +15,7 @@ struct FooterView: View {
     // Computed properties for button appearance
     private var buttonColor: Color {
         if !isRecording {
-            return .recordingRed    // Red color for starting recording (matches RecordingView)
+            return .adaptiveAccent  // Blue color for starting recording
         } else if isPaused {
             return .successGreen    // Green for resume (matches RecordingView)
         } else {
