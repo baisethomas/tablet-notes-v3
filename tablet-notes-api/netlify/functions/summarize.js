@@ -132,11 +132,51 @@ exports.handler = withLogging('summarize', async (event, context) => {
       userId: user.id
     });
 
-    // Log the detected subscription tier for debugging
-    const userTier = user.user_metadata?.subscription_tier || 'basic';
+    // Initialize Supabase client to fetch user profile
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      logger.error('Missing Supabase configuration', { userId: user.id });
+      return createErrorResponse(new Error('Server configuration error'), 500);
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Fetch user profile to get subscription tier
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('subscription_tier, subscription_status, subscription_expiry')
+      .eq('id', user.id)
+      .single();
+    
+    if (profileError) {
+      logger.warn('Could not fetch user profile, defaulting to basic tier', {
+        userId: user.id,
+        error: profileError.message
+      });
+    }
+    
+    // Determine user tier - check if they have an active paid subscription
+    let userTier = 'basic';
+    if (profile) {
+      const tier = profile.subscription_tier || 'free';
+      const status = profile.subscription_status || 'free';
+      const expiry = profile.subscription_expiry ? new Date(profile.subscription_expiry) : null;
+      
+      // Check if subscription is active and not expired
+      if (tier !== 'free' && status === 'active') {
+        if (!expiry || expiry > new Date()) {
+          userTier = tier === 'premium' ? 'premium' : 'premium'; // Treat both pro and premium as premium for testing
+        }
+      }
+    }
+    
     logger.info('Processing summary request', {
       userId: user.id,
       detectedTier: userTier,
+      profileTier: profile?.subscription_tier,
+      profileStatus: profile?.subscription_status,
       serviceType: actualServiceType,
       transcriptLength: text.length
     });
@@ -152,7 +192,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
 
 You are a theological assistant designed to create accurate, faithful summaries of Christian messages based on transcripts. Your role is to serve attendees who were present during the live recording by providing a structured summary that captures exactly what was taught, tailored to both the service type and user tier.
 
-**User Tier: ${user.user_metadata?.subscription_tier || 'basic'}**
+**User Tier: ${userTier}**
 **Service Type: ${actualServiceType}**
 
 ## Core Principles:
