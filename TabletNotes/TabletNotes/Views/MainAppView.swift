@@ -151,8 +151,29 @@ struct MainAppView: View {
                 if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
                     FooterView(
                         selectedTab: tabForScreen(currentScreen),
+                        isRecording: recordingService.isRecording,
+                        isPaused: recordingService.isPaused,
                         onHome: { currentScreen = .home },
-                        onRecord: { showServiceTypeModal = true },
+                        onRecord: { 
+                            // Check if recording is in progress
+                            if recordingService.isRecording {
+                                // Handle pause/resume for active recording
+                                do {
+                                    if recordingService.isPaused {
+                                        try recordingService.resumeRecording()
+                                        print("[MainAppView] Recording resumed")
+                                    } else {
+                                        try recordingService.pauseRecording()
+                                        print("[MainAppView] Recording paused")
+                                    }
+                                } catch {
+                                    print("[MainAppView] Failed to pause/resume recording: \(error)")
+                                }
+                            } else {
+                                // No recording in progress, show service type modal to start new recording
+                                showServiceTypeModal = true 
+                            }
+                        },
                         onAccount: { currentScreen = .account }
                     )
                 }
