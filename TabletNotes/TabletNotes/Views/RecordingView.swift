@@ -163,8 +163,8 @@ struct RecordingView: View {
     #if canImport(AVFoundation) && os(iOS)
     @StateObject private var transcriptionService = TranscriptionService()
     @StateObject private var scriptureAnalysisService = ScriptureAnalysisService()
-    @State private var timer: Timer? = nil
-    @State private var elapsedTime: TimeInterval = 0
+    // Timer removed - using RecordingService.recordingDuration for continuous timing
+    // Note: Using recordingService.recordingDuration instead of separate elapsedTime to ensure continuity
     @State private var isRecordingStarted = false
     @State private var isPaused = false
     @State private var showNoteSheet = false
@@ -246,7 +246,7 @@ struct RecordingView: View {
                     
                     // Timer with remaining time
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(timeString(from: elapsedTime))
+                        Text(timeString(from: recordingService.recordingDuration))
                             .font(.system(size: 18, weight: .medium, design: .monospaced))
                             .foregroundColor(isRecordingStarted ? .recordingRed : .adaptivePrimaryText)
                         
@@ -524,7 +524,7 @@ struct RecordingView: View {
                                 .fontWeight(.semibold)
                                 .foregroundColor(.adaptivePrimaryText)
                             Spacer()
-                            Text(timeString(from: elapsedTime))
+                            Text(timeString(from: recordingService.recordingDuration))
                                 .font(.caption)
                                 .foregroundColor(.adaptiveSecondaryText)
                         }
@@ -558,7 +558,7 @@ struct RecordingView: View {
                                     if let existingNote = notes.first {
                                         noteService.updateNote(id: existingNote.id, newText: trimmed)
                                     } else {
-                                        noteService.addNote(text: trimmed, timestamp: elapsedTime)
+                                        noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
                                     }
                                 }
                                 showNoteSheet = false
@@ -633,7 +633,7 @@ struct RecordingView: View {
                         let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                         impactFeedback.impactOccurred()
                         
-                        noteService.addNote(text: "Scripture: \(ref.raw)", timestamp: elapsedTime)
+                        noteService.addNote(text: "Scripture: \(ref.raw)", timestamp: recordingService.recordingDuration)
                         selectedReference = nil
                     }
                     .frame(maxWidth: .infinity)
@@ -661,7 +661,7 @@ struct RecordingView: View {
                 print("[RecordingView] Recording already in progress, setting up UI state")
                 isRecordingStarted = true
                 try? transcriptionService.startTranscription()
-                startTimer()
+                // Timer auto-starts with RecordingService
             }
         }
         #else
@@ -746,13 +746,7 @@ struct RecordingView: View {
                         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                             isRecordingStarted = true
                         }
-                        elapsedTime = 0
-                        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
-                            // Only increment time if recording and not paused
-                            if isRecordingStarted && !isPaused {
-                                elapsedTime += 1
-                            }
-                        })
+                        // Timer removed - RecordingService handles duration tracking continuously
                     } catch {
                         permissionMessage = "Failed to start transcription: \(error.localizedDescription)"
                         showPermissionAlert = true
@@ -805,19 +799,12 @@ struct RecordingView: View {
         }
     }
     
-    private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            // Only increment time if recording and not paused
-            if isRecordingStarted && !isPaused {
-                elapsedTime += 1
-            }
-        }
-    }
+    // Timer function removed - RecordingService manages duration continuously
     
     private func stopRecording() {
         recordingService.stopRecording()
         transcriptionService.stopTranscription()
-        timer?.invalidate()
+        // Timer automatically stops with RecordingService
         
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             isPaused = false
@@ -1043,7 +1030,7 @@ struct RecordingView: View {
             if let existingNote = notes.first {
                 noteService.updateNote(id: existingNote.id, newText: trimmed)
             } else {
-                noteService.addNote(text: trimmed, timestamp: elapsedTime)
+                noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
             }
         }
         
