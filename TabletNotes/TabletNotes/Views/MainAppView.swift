@@ -29,6 +29,7 @@ struct MainAppView: View {
     @State private var showSplash = true
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
+    @State private var currentRecordingServiceType: String? = nil // Track what type of service is being recorded
     @StateObject private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
@@ -146,7 +147,59 @@ struct MainAppView: View {
                         }
                     ))
                 }
-                
+
+                // Show mini-player when recording but not on recording screen
+                if recordingService.isRecording,
+                   let serviceType = currentRecordingServiceType,
+                   !isRecordingScreen(currentScreen) {
+                    VStack(spacing: 0) {
+                        Spacer()
+                        MiniPlayer(
+                            serviceType: serviceType,
+                            duration: recordingService.recordingDuration,
+                            isRecording: recordingService.isRecording,
+                            isPaused: recordingService.isPaused,
+                            onTap: {
+                                // Navigate back to recording screen
+                                currentScreen = .recording(serviceType: serviceType)
+                            },
+                            onPlayPause: {
+                                // Handle pause/resume
+                                do {
+                                    if recordingService.isPaused {
+                                        try recordingService.resumeRecording()
+                                        print("[MiniPlayer] Recording resumed")
+                                    } else {
+                                        try recordingService.pauseRecording()
+                                        print("[MiniPlayer] Recording paused")
+                                    }
+                                } catch {
+                                    print("[MiniPlayer] Failed to pause/resume recording: \(error)")
+                                }
+                            },
+                            onStop: {
+                                // Stop recording
+                                Task {
+                                    do {
+                                        let audioURL = try await recordingService.stopRecording()
+                                        print("[MiniPlayer] Recording stopped, saved to: \(audioURL)")
+
+                                        await MainActor.run {
+                                            // Clear recording state
+                                            currentRecordingServiceType = nil
+                                            // Generate new session ID for next recording
+                                            currentRecordingSessionId = UUID().uuidString
+                                        }
+                                    } catch {
+                                        print("[MiniPlayer] Failed to stop recording: \(error)")
+                                    }
+                                }
+                            }
+                        )
+                        .padding(.bottom, 90) // Account for footer height
+                    }
+                }
+
                 // Only show footer when not in onboarding, settings, or account
                 if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
                     FooterView(
@@ -206,15 +259,17 @@ struct MainAppView: View {
                                 do {
                                     try await recordingService.startRecording(serviceType: type)
                                     print("[MainAppView] Recording started immediately for \(type)")
-                                    
+
                                     // Log duration limit
                                     let maxDuration = await recordingService.getMaxRecordingDuration()
                                     if let maxDuration = maxDuration {
                                         let maxMinutes = Int(maxDuration / 60)
                                         print("[MainAppView] Recording limit: \(maxMinutes) minutes")
                                     }
-                                    
+
                                     await MainActor.run {
+                                        // Track the current recording service type for mini-player
+                                        currentRecordingServiceType = type
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                             currentScreen = .recording(serviceType: type)
                                         }
@@ -252,6 +307,13 @@ struct MainAppView: View {
         case .settings: return .home
         case .account: return .account
         }
+    }
+
+    func isRecordingScreen(_ screen: AppScreen) -> Bool {
+        if case .recording = screen {
+            return true
+        }
+        return false
     }
     
     private func isOnboardingScreen(_ screen: AppScreen) -> Bool {
