@@ -20,7 +20,7 @@ struct ApiBibleConfig {
 
     static var headers: [String: String] {
         return [
-            "X-API-Key": apiKey,
+            "api-key": apiKey,
             "Content-Type": "application/json",
             "Accept": "application/json"
         ]
