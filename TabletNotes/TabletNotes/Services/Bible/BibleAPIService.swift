@@ -15,7 +15,9 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
     // MARK: - BibleAPIServiceProtocol Implementation
     
     func fetchVerse(reference: String, bibleId: String) async throws -> BibleVerse {
+        print("[BibleAPIService] fetchVerse called with reference: '\(reference)', bibleId: '\(bibleId)'")
         let verseId = formatReferenceForAPI(reference)
+        print("[BibleAPIService] Using verse ID: '\(verseId)' with Bible: '\(bibleId)'")
         let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/verses/\(verseId)")!
         
         var request = URLRequest(url: url)
@@ -148,7 +150,7 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
                 let apiResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: data)
                 
                 await MainActor.run {
-                    self.availableBibles = apiResponse.data.filter { bible in
+                    let filteredBibles = apiResponse.data.filter { bible in
                         bible.language.name.lowercased().contains("english")
                     }.sorted { first, second in
                         // Prioritize common translations
@@ -157,15 +159,20 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
                         let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
                         return firstPriority < secondPriority
                     }
+                    self.availableBibles = filteredBibles
                     self.isLoading = false
                     self.error = nil
+                    print("[BibleAPIService] Successfully loaded \(filteredBibles.count) English Bibles from API")
+                    print("[BibleAPIService] First few Bible IDs: \(filteredBibles.prefix(3).map { "\($0.abbreviation): \($0.id)" })")
                 }
             } catch {
+                print("[BibleAPIService] Failed to load bibles: \(error)")
                 await MainActor.run {
                     self.error = error.localizedDescription
                     self.isLoading = false
                     // Use fallback Bible list for popular translations
                     self.availableBibles = getFallbackBibles()
+                    print("[BibleAPIService] Using fallback Bibles: \(self.availableBibles.prefix(3).map { $0.id })")
                 }
             }
         }
@@ -174,29 +181,55 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
     private func formatReferenceForAPI(_ reference: String) -> String {
         // API.Bible uses standard format: BOOK.CHAPTER.VERSE
         // Convert "John 3:16" to "JHN.3.16"
-        
-        let components = reference.components(separatedBy: " ")
-        guard components.count >= 2 else { return reference }
-        
+
+        print("[BibleAPIService] Formatting reference: '\(reference)'")
+
+        // Handle different input formats
+        let normalizedReference = reference.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Split by space to separate book name from chapter:verse
+        let components = normalizedReference.components(separatedBy: " ")
+        guard components.count >= 2 else {
+            print("[BibleAPIService] Invalid reference format: \(reference)")
+            return reference
+        }
+
+        // Everything except the last component is the book name
         let book = components.dropLast().joined(separator: " ")
         let chapterVerse = components.last ?? ""
-        
+
+        print("[BibleAPIService] Parsed book: '\(book)', chapterVerse: '\(chapterVerse)'")
+
+        // Split chapter:verse
         let chapterVerseComponents = chapterVerse.components(separatedBy: ":")
-        guard chapterVerseComponents.count == 2 else { return reference }
-        
+        guard chapterVerseComponents.count == 2 else {
+            print("[BibleAPIService] Invalid chapter:verse format: \(chapterVerse)")
+            return reference
+        }
+
         let chapter = chapterVerseComponents[0]
         let verseRange = chapterVerseComponents[1]
-        
+
         let bookAbbreviation = convertBookNameToAPIBibleFormat(book)
-        
+
+        print("[BibleAPIService] Book abbreviation: '\(bookAbbreviation)', chapter: '\(chapter)', verse: '\(verseRange)'")
+
         // Handle verse ranges like "16-18"
         if verseRange.contains("-") {
             let verseComponents = verseRange.components(separatedBy: "-")
-            guard verseComponents.count == 2 else { return "\(bookAbbreviation).\(chapter).\(verseRange)" }
-            return "\(bookAbbreviation).\(chapter).\(verseComponents[0])-\(bookAbbreviation).\(chapter).\(verseComponents[1])"
+            guard verseComponents.count == 2 else {
+                let result = "\(bookAbbreviation).\(chapter).\(verseRange)"
+                print("[BibleAPIService] Formatted result (range): \(result)")
+                return result
+            }
+            let result = "\(bookAbbreviation).\(chapter).\(verseComponents[0])-\(bookAbbreviation).\(chapter).\(verseComponents[1])"
+            print("[BibleAPIService] Formatted result (range): \(result)")
+            return result
         }
-        
-        return "\(bookAbbreviation).\(chapter).\(verseRange)"
+
+        let result = "\(bookAbbreviation).\(chapter).\(verseRange)"
+        print("[BibleAPIService] Formatted result: \(result)")
+        return result
     }
     
     private func convertBookNameToAPIBibleFormat(_ bookName: String) -> String {
