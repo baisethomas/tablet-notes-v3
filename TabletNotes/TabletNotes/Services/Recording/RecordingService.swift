@@ -19,10 +19,12 @@ class RecordingService: NSObject, ObservableObject {
     let audioFileURLPublisher: AnyPublisher<URL?, Never>
     let audioFileNamePublisher: AnyPublisher<String?, Never>
     let isPausedPublisher: AnyPublisher<Bool, Never>
+    let recordingStoppedPublisher: AnyPublisher<(URL?, Bool), Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
     private let audioFileNameSubject = CurrentValueSubject<String?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
+    private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
     
     // Duration tracking
     private var durationTimer: Timer?
@@ -34,6 +36,7 @@ class RecordingService: NSObject, ObservableObject {
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
         audioFileNamePublisher = audioFileNameSubject.eraseToAnyPublisher()
         isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
+        recordingStoppedPublisher = recordingStoppedSubject.eraseToAnyPublisher()
         super.init()
         
         // Create audio recordings directory if it doesn't exist
@@ -144,7 +147,9 @@ class RecordingService: NSObject, ObservableObject {
             // Auto-stop if limit reached
             if recordingDuration >= maxDuration {
                 print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
-                stopRecording()
+                let audioURL = stopRecording()
+                // Emit auto-stop event with the audio URL and auto-stop flag
+                recordingStoppedSubject.send((audioURL, true))
             }
         }
     }
@@ -199,23 +204,26 @@ class RecordingService: NSObject, ObservableObject {
         }
     }
 
-    func stopRecording() {
+    func stopRecording() -> URL? {
+        let currentURL = recordingURL
         audioRecorder?.stop()
         stopDurationTimer()
-        
+
         Task { @MainActor in
             isRecording = false
             isPaused = false
         }
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
-        
+
         // Reset duration tracking
         Task { @MainActor in
             recordingDuration = 0
             remainingTime = nil
         }
         recordingStartTime = nil
+
+        return currentURL
     }
     
     func pauseRecording() throws {
@@ -241,23 +249,41 @@ class RecordingService: NSObject, ObservableObject {
     // MARK: - Duration Timer Management
     
     private func startDurationTimer() {
-        stopDurationTimer() // Ensure no duplicate timers
-        
-        durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updateDuration()
+        // Ensure timer is created on main thread for proper scheduling
+        DispatchQueue.main.async { [weak self] in
+            self?.stopDurationTimer() // Ensure no duplicate timers
+
+            print("[RecordingService] Starting duration timer on main thread")
+            self?.durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.updateDuration()
+            }
         }
     }
     
     private func stopDurationTimer() {
-        durationTimer?.invalidate()
-        durationTimer = nil
+        // Ensure timer is stopped on main thread
+        if Thread.isMainThread {
+            durationTimer?.invalidate()
+            durationTimer = nil
+        } else {
+            DispatchQueue.main.sync {
+                durationTimer?.invalidate()
+                durationTimer = nil
+            }
+        }
     }
     
     private func updateDuration() {
-        guard let startTime = recordingStartTime else { return }
-        
+        guard let startTime = recordingStartTime else {
+            print("[RecordingService] updateDuration: No start time set")
+            return
+        }
+
+        let currentDuration = Date().timeIntervalSince(startTime)
+        print("[RecordingService] updateDuration: \(String(format: "%.1f", currentDuration))s")
+
         Task { @MainActor in
-            recordingDuration = Date().timeIntervalSince(startTime)
+            recordingDuration = currentDuration
         }
         checkDurationLimit()
     }

@@ -33,6 +33,7 @@ struct MainAppView: View {
     @StateObject private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
+    @StateObject private var transcriptionService = TranscriptionService()
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -103,7 +104,8 @@ struct MainAppView: View {
                             currentScreen = .sermons // Go to the list after recording
                         },
                         sermonService: sermonService,
-                        recordingService: recordingService
+                        recordingService: recordingService,
+                        transcriptionService: transcriptionService
                     ))
                 case .sermonDetail(let sermon):
                     AnyView(SermonDetailView(
@@ -148,61 +150,150 @@ struct MainAppView: View {
                     ))
                 }
 
-                // Show mini-player when recording but not on recording screen
-                if recordingService.isRecording,
-                   let serviceType = currentRecordingServiceType,
-                   !isRecordingScreen(currentScreen) {
+                // Show footer and mini-player together when not in onboarding, settings, or account
+                if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
                     VStack(spacing: 0) {
                         Spacer()
-                        MiniPlayer(
-                            serviceType: serviceType,
-                            duration: recordingService.recordingDuration,
-                            isRecording: recordingService.isRecording,
-                            isPaused: recordingService.isPaused,
-                            onTap: {
-                                // Navigate back to recording screen
-                                currentScreen = .recording(serviceType: serviceType)
-                            },
-                            onPlayPause: {
-                                // Handle pause/resume
-                                do {
-                                    if recordingService.isPaused {
-                                        try recordingService.resumeRecording()
-                                        print("[MiniPlayer] Recording resumed")
-                                    } else {
-                                        try recordingService.pauseRecording()
-                                        print("[MiniPlayer] Recording paused")
-                                    }
-                                } catch {
-                                    print("[MiniPlayer] Failed to pause/resume recording: \(error)")
-                                }
-                            },
-                            onStop: {
-                                // Stop recording
-                                Task {
+
+                        // Show mini-player above footer when recording
+                        if recordingService.isRecording,
+                           let serviceType = currentRecordingServiceType,
+                           !isRecordingScreen(currentScreen) {
+                            MiniPlayer(
+                                serviceType: serviceType,
+                                duration: recordingService.recordingDuration,
+                                isRecording: recordingService.isRecording,
+                                isPaused: recordingService.isPaused,
+                                onTap: {
+                                    // Navigate back to recording screen
+                                    currentScreen = .recording(serviceType: serviceType)
+                                },
+                                onPlayPause: {
+                                    // Handle pause/resume
                                     do {
-                                        let audioURL = try await recordingService.stopRecording()
-                                        print("[MiniPlayer] Recording stopped, saved to: \(audioURL)")
+                                        if recordingService.isPaused {
+                                            try recordingService.resumeRecording()
+                                            print("[MiniPlayer] Recording resumed")
+                                        } else {
+                                            try recordingService.pauseRecording()
+                                            print("[MiniPlayer] Recording paused")
+                                        }
+                                    } catch {
+                                        print("[MiniPlayer] Failed to pause/resume recording: \(error)")
+                                    }
+                                },
+                                onStop: {
+                                    // Stop recording and process
+                                    Task {
+                                        // Stop the recording and get the audio URL
+                                        let audioURL = recordingService.stopRecording()
+                                        print("[MiniPlayer] Recording stopped")
 
                                         await MainActor.run {
+                                            if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
+                                                // Create title and date for processing
+                                                let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                                                let date = Date()
+
+                                                // Process the recording just like in RecordingView
+                                                let transcriptionService = TranscriptionService()
+                                                transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
+                                                    DispatchQueue.main.async {
+                                                        switch result {
+                                                        case .success(let (text, segments)):
+                                                            guard !text.isEmpty else { return }
+
+                                                            let transcriptModel = Transcript(text: text, segments: segments)
+                                                            let summaryModel = Summary(text: "", type: serviceType, status: "processing")
+                                                            let sermonId = UUID()
+
+                                                            // Get notes from the current session
+                                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                                            let notes = noteService.currentNotes
+
+                                                            // Save sermon with transcript
+                                                            sermonService.saveSermon(
+                                                                title: title,
+                                                                audioFileURL: audioURL,
+                                                                date: date,
+                                                                serviceType: serviceType,
+                                                                speaker: nil,
+                                                                transcript: transcriptModel,
+                                                                notes: notes,
+                                                                summary: summaryModel,
+                                                                transcriptionStatus: "complete",
+                                                                summaryStatus: "processing",
+                                                                id: sermonId
+                                                            )
+
+                                                            // Generate summary
+                                                            let summaryService = SummaryService()
+                                                            summaryService.generateSummary(for: text, type: serviceType)
+
+                                                            // Update sermon when summary completes
+                                                            var cancellables = Set<AnyCancellable>()
+                                                            summaryService.summaryPublisher
+                                                                .combineLatest(summaryService.statusPublisher)
+                                                                .sink { summaryText, status in
+                                                                    if status == "complete", let summaryText = summaryText {
+                                                                        let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
+                                                                        sermonService.saveSermon(
+                                                                            title: title,
+                                                                            audioFileURL: audioURL,
+                                                                            date: date,
+                                                                            serviceType: serviceType,
+                                                                            speaker: nil,
+                                                                            transcript: transcriptModel,
+                                                                            notes: notes,
+                                                                            summary: updatedSummary,
+                                                                            transcriptionStatus: "complete",
+                                                                            summaryStatus: "complete",
+                                                                            id: sermonId
+                                                                        )
+                                                                    }
+                                                                }
+                                                                .store(in: &cancellables)
+
+                                                            print("[MiniPlayer] Processing complete, refreshing sermon list")
+                                                            sermonService.fetchSermons()
+
+                                                        case .failure(let error):
+                                                            print("[MiniPlayer] Transcription failed: \(error)")
+                                                            // Save recording for later processing
+                                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                                            let notes = noteService.currentNotes
+
+                                                            sermonService.saveSermon(
+                                                                title: title,
+                                                                audioFileURL: audioURL,
+                                                                date: date,
+                                                                serviceType: serviceType,
+                                                                transcript: nil,
+                                                                notes: notes,
+                                                                summary: nil,
+                                                                transcriptionStatus: "pending",
+                                                                summaryStatus: "pending",
+                                                                id: UUID()
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
                                             // Clear recording state
                                             currentRecordingServiceType = nil
+                                            // Clear session notes
+                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                            noteService.clearSession()
                                             // Generate new session ID for next recording
                                             currentRecordingSessionId = UUID().uuidString
                                         }
-                                    } catch {
-                                        print("[MiniPlayer] Failed to stop recording: \(error)")
                                     }
                                 }
-                            }
-                        )
-                        .padding(.bottom, 90) // Account for footer height
-                    }
-                }
+                            )
+                        }
 
-                // Only show footer when not in onboarding, settings, or account
-                if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
-                    FooterView(
+                        FooterView(
                         selectedTab: tabForScreen(currentScreen),
                         isRecording: recordingService.isRecording,
                         isPaused: recordingService.isPaused,
@@ -229,6 +320,147 @@ struct MainAppView: View {
                         },
                         onAccount: { currentScreen = .account }
                     )
+                    }
+                }
+
+                // Show mini-player on settings/account screens when recording (no footer)
+                if isSettingsOrAccountScreen(currentScreen),
+                   recordingService.isRecording,
+                   let serviceType = currentRecordingServiceType,
+                   !isRecordingScreen(currentScreen) {
+                    MiniPlayer(
+                        serviceType: serviceType,
+                        duration: recordingService.recordingDuration,
+                        isRecording: recordingService.isRecording,
+                        isPaused: recordingService.isPaused,
+                        onTap: {
+                            // Navigate back to recording screen
+                            currentScreen = .recording(serviceType: serviceType)
+                        },
+                        onPlayPause: {
+                            // Handle pause/resume
+                            do {
+                                if recordingService.isPaused {
+                                    try recordingService.resumeRecording()
+                                    print("[MiniPlayer] Recording resumed")
+                                } else {
+                                    try recordingService.pauseRecording()
+                                    print("[MiniPlayer] Recording paused")
+                                }
+                            } catch {
+                                print("[MiniPlayer] Failed to pause/resume recording: \(error)")
+                            }
+                        },
+                        onStop: {
+                            // Stop recording and process
+                            Task {
+                                // Stop the recording and get the audio URL
+                                let audioURL = recordingService.stopRecording()
+                                print("[MiniPlayer] Recording stopped")
+
+                                await MainActor.run {
+                                    if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
+                                        // Create title and date for processing
+                                        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                                        let date = Date()
+
+                                        // Process the recording just like in RecordingView
+                                        let transcriptionService = TranscriptionService()
+                                        transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
+                                            DispatchQueue.main.async {
+                                                switch result {
+                                                case .success(let (text, segments)):
+                                                    guard !text.isEmpty else { return }
+
+                                                    let transcriptModel = Transcript(text: text, segments: segments)
+                                                    let summaryModel = Summary(text: "", type: serviceType, status: "processing")
+                                                    let sermonId = UUID()
+
+                                                    // Get notes from the current session
+                                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                                    let notes = noteService.currentNotes
+
+                                                    // Save sermon with transcript
+                                                    sermonService.saveSermon(
+                                                        title: title,
+                                                        audioFileURL: audioURL,
+                                                        date: date,
+                                                        serviceType: serviceType,
+                                                        speaker: nil,
+                                                        transcript: transcriptModel,
+                                                        notes: notes,
+                                                        summary: summaryModel,
+                                                        transcriptionStatus: "complete",
+                                                        summaryStatus: "processing",
+                                                        id: sermonId
+                                                    )
+
+                                                    // Generate summary
+                                                    let summaryService = SummaryService()
+                                                    summaryService.generateSummary(for: text, type: serviceType)
+
+                                                    // Update sermon when summary completes
+                                                    var cancellables = Set<AnyCancellable>()
+                                                    summaryService.summaryPublisher
+                                                        .combineLatest(summaryService.statusPublisher)
+                                                        .sink { summaryText, status in
+                                                            if status == "complete", let summaryText = summaryText {
+                                                                let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
+                                                                sermonService.saveSermon(
+                                                                    title: title,
+                                                                    audioFileURL: audioURL,
+                                                                    date: date,
+                                                                    serviceType: serviceType,
+                                                                    speaker: nil,
+                                                                    transcript: transcriptModel,
+                                                                    notes: notes,
+                                                                    summary: updatedSummary,
+                                                                    transcriptionStatus: "complete",
+                                                                    summaryStatus: "complete",
+                                                                    id: sermonId
+                                                                )
+                                                            }
+                                                        }
+                                                        .store(in: &cancellables)
+
+                                                    print("[MiniPlayer] Processing complete, refreshing sermon list")
+                                                    sermonService.fetchSermons()
+
+                                                case .failure(let error):
+                                                    print("[MiniPlayer] Transcription failed: \(error)")
+                                                    // Save recording for later processing
+                                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                                    let notes = noteService.currentNotes
+
+                                                    sermonService.saveSermon(
+                                                        title: title,
+                                                        audioFileURL: audioURL,
+                                                        date: date,
+                                                        serviceType: serviceType,
+                                                        transcript: nil,
+                                                        notes: notes,
+                                                        summary: nil,
+                                                        transcriptionStatus: "pending",
+                                                        summaryStatus: "pending",
+                                                        id: UUID()
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Clear recording state
+                                    currentRecordingServiceType = nil
+                                    // Clear session notes
+                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                    noteService.clearSession()
+                                    // Generate new session ID for next recording
+                                    currentRecordingSessionId = UUID().uuidString
+                                }
+                            }
+                        }
+                    )
+                    .padding(.bottom, 20) // Bottom padding for no-footer screens
                 }
             }
             .ignoresSafeArea(edges: .bottom)
@@ -295,7 +527,7 @@ struct MainAppView: View {
                 .presentationDetents([.medium])
             }
         }
-        }
+    }
     }
 
     func tabForScreen(_ screen: AppScreen) -> FooterTab {

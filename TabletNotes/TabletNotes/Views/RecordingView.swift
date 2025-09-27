@@ -157,11 +157,11 @@ struct RecordingView: View {
     var onNext: ((Sermon) -> Void)?
     @ObservedObject var sermonService: SermonService
     @ObservedObject var recordingService: RecordingService
+    @ObservedObject var transcriptionService: TranscriptionService
     private let recordingSessionId = UUID().uuidString
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
     #if canImport(AVFoundation) && os(iOS)
-    @StateObject private var transcriptionService = TranscriptionService()
     @StateObject private var scriptureAnalysisService = ScriptureAnalysisService()
     // Timer removed - using RecordingService.recordingDuration for continuous timing
     // Note: Using recordingService.recordingDuration instead of separate elapsedTime to ensure continuity
@@ -496,6 +496,26 @@ struct RecordingView: View {
         .onReceive(recordingService.isRecordingPublisher) { isRecording in
             // Handle recording state changes
         }
+        .onReceive(recordingService.recordingStoppedPublisher) { (audioURL, wasAutoStopped) in
+            if wasAutoStopped {
+                print("[RecordingView] Recording auto-stopped due to time limit, triggering transcription and summary")
+                // Update UI state
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                    isPaused = false
+                    isRecordingStarted = false
+                }
+
+                // Stop transcription service
+                transcriptionService.stopTranscription()
+
+                // Trigger auto-processing
+                if let url = audioURL {
+                    let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                    let date = Date()
+                    processTranscription(title: title, date: date, url: url)
+                }
+            }
+        }
         .onReceive(recordingService.audioFileURLPublisher) { url in
             audioFileURL = url
             print("[RecordingView] Captured audioFileURL: \(url?.absoluteString ?? "nil")")
@@ -802,18 +822,18 @@ struct RecordingView: View {
     // Timer function removed - RecordingService manages duration continuously
     
     private func stopRecording() {
-        recordingService.stopRecording()
+        let audioURL = recordingService.stopRecording()
         transcriptionService.stopTranscription()
         // Timer automatically stops with RecordingService
-        
+
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             isPaused = false
             isRecordingStarted = false
         }
-        
+
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
-        if let url = audioFileURL {
+        if let url = audioURL {
             processTranscription(title: title, date: date, url: url)
         }
     }
@@ -1042,5 +1062,5 @@ struct RecordingView: View {
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService())
+    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService(), transcriptionService: TranscriptionService())
 }
