@@ -80,7 +80,7 @@ class TranscriptionService: NSObject, ObservableObject {
     }
     
     private func startTranscriptionWithProvider(_ provider: TranscriptionProvider) async {
-        
+
         switch provider {
         case .assemblyAILive:
             Task {
@@ -88,33 +88,31 @@ class TranscriptionService: NSObject, ObservableObject {
                     try await assemblyAILiveService.startLiveTranscription()
                 } catch {
                     print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
-                    // Fallback to Apple Speech if AssemblyAI Live fails
-                    DispatchQueue.main.async {
-                        do {
-                            try self.startAppleSpeechSession()
-                        } catch {
-                            print("[TranscriptionService] Fallback to Apple Speech also failed: \(error)")
-                        }
-                    }
+                    // No longer fallback to Apple Speech - AssemblyAI Live is the only live transcription method
                 }
             }
         case .appleSpeech:
-            do {
-                try startAppleSpeechSession()
-            } catch {
-                print("[TranscriptionService] Failed to start Apple Speech: \(error)")
+            print("[TranscriptionService] Apple Speech is deprecated. Using AssemblyAI Live instead.")
+            Task {
+                do {
+                    try await assemblyAILiveService.startLiveTranscription()
+                } catch {
+                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
+                }
             }
         case .assemblyAI:
-            // AssemblyAI provider uses post-recording transcription only
-            // Fall back to Apple Speech for live transcription
-            do {
-                try startAppleSpeechSession()
-            } catch {
-                print("[TranscriptionService] Failed to start Apple Speech fallback: \(error)")
+            print("[TranscriptionService] Regular AssemblyAI doesn't support live transcription. Using AssemblyAI Live instead.")
+            Task {
+                do {
+                    try await assemblyAILiveService.startLiveTranscription()
+                } catch {
+                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
+                }
             }
         }
     }
 
+    @available(*, deprecated, message: "Apple Speech has been replaced with AssemblyAI Live for better transcription quality")
     private func startAppleSpeechSession() throws {
         guard !audioEngine.isRunning else { return }
         print("[TranscriptionService] Starting new session...")
@@ -152,6 +150,7 @@ class TranscriptionService: NSObject, ObservableObject {
         }
     }
 
+    @available(*, deprecated, message: "Apple Speech session restart is no longer needed with AssemblyAI Live")
     private func restartSession() {
         print("[TranscriptionService] Restarting session...")
         guard audioEngine.isRunning else {
@@ -193,14 +192,11 @@ class TranscriptionService: NSObject, ObservableObject {
     }
     
     private func stopTranscriptionWithProvider(_ provider: TranscriptionProvider) async {
-        switch provider {
-        case .assemblyAILive:
-            assemblyAILiveService.stopLiveTranscription()
-        case .appleSpeech, .assemblyAI:
-            stopAppleSpeechSessionGracefully()
-        }
+        // All providers now use AssemblyAI Live, so we always stop the live service
+        assemblyAILiveService.stopLiveTranscription()
     }
     
+    @available(*, deprecated, message: "Apple Speech has been replaced with AssemblyAI Live")
     private func stopAppleSpeechSessionGracefully() {
         print("[TranscriptionService] Gracefully stopping Apple Speech session...")
         
@@ -237,6 +233,7 @@ class TranscriptionService: NSObject, ObservableObject {
         }
     }
 
+    @available(*, deprecated, message: "Apple Speech has been replaced with AssemblyAI Live")
     private func stopAppleSpeechSession(clean: Bool = false) {
         print("[TranscriptionService] Stopping session...")
         timer?.invalidate()

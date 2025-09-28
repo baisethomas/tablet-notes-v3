@@ -6,155 +6,206 @@
 //
 
 import Foundation
-import SwiftData
+import Combine
 @testable import TabletNotes
 
-class MockAuthService: AuthServiceProtocol {
+@MainActor
+class MockAuthService: AuthServiceProtocol, ObservableObject {
+    // MARK: - Published Properties
+    @Published private(set) var authState: AuthState = .unauthenticated
+    @Published private(set) var currentUser: User? = nil
+
+    // MARK: - Publishers
+    var authStatePublisher: AnyPublisher<AuthState, Never> {
+        $authState.eraseToAnyPublisher()
+    }
+
+    var currentUserPublisher: AnyPublisher<User?, Never> {
+        $currentUser.eraseToAnyPublisher()
+    }
+
     // MARK: - Mock State
-    private(set) var isSignedIn = false
-    private(set) var currentUser: User?
     private var shouldFailNextCall = false
-    private var mockError: Error?
-    
+    private var mockError: AuthError?
+
     // MARK: - Test Configuration
-    func setSignedIn(_ signedIn: Bool, user: User? = nil) {
-        isSignedIn = signedIn
-        currentUser = user
+    func setAuthState(_ state: AuthState) {
+        authState = state
+        switch state {
+        case .authenticated(let user):
+            currentUser = user
+        default:
+            currentUser = nil
+        }
     }
-    
-    func setShouldFailNextCall(_ shouldFail: Bool, error: Error? = nil) {
+
+    func setShouldFailNextCall(_ shouldFail: Bool, error: AuthError? = nil) {
         shouldFailNextCall = shouldFail
-        mockError = error ?? AuthError.networkError
+        mockError = error ?? .networkError
     }
-    
+
+    func resetState() {
+        authState = .unauthenticated
+        currentUser = nil
+        shouldFailNextCall = false
+        mockError = nil
+    }
+
     // MARK: - AuthServiceProtocol Implementation
-    func signUp(email: String, password: String) async throws -> User {
+    func signUp(data: SignUpData) async throws -> User {
         if shouldFailNextCall {
             shouldFailNextCall = false
-            throw mockError ?? AuthError.networkError
+            throw mockError ?? .networkError
         }
-        
+
         let user = User(
-            id: "mock-user-\(UUID().uuidString)",
-            email: email,
-            displayName: nil,
-            subscriptionTier: .pro,
-            trialEndDate: Calendar.current.date(byAdding: .day, value: 14, to: Date()),
-            isActive: true,
+            id: UUID(),
+            email: data.email,
+            name: data.name,
+            profileImageURL: nil,
             createdAt: Date(),
-            lastLoginAt: Date()
+            isEmailVerified: true,
+            subscriptionTier: "pro",
+            subscriptionStatus: "active",
+            subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 14, to: Date()),
+            subscriptionProductId: nil,
+            subscriptionPurchaseDate: Date(),
+            subscriptionRenewalDate: Calendar.current.date(byAdding: .day, value: 14, to: Date())
         )
-        
-        isSignedIn = true
+
+        authState = .authenticated(user)
         currentUser = user
         return user
     }
-    
+
     func signIn(email: String, password: String) async throws -> User {
         if shouldFailNextCall {
             shouldFailNextCall = false
-            throw mockError ?? AuthError.invalidCredentials
+            throw mockError ?? .invalidCredentials
         }
-        
+
         let user = User(
-            id: "mock-user-signin",
+            id: UUID(),
             email: email,
-            displayName: nil,
-            subscriptionTier: .pro,
-            trialEndDate: Calendar.current.date(byAdding: .day, value: 10, to: Date()),
-            isActive: true,
+            name: "Test User",
+            profileImageURL: nil,
             createdAt: Date().addingTimeInterval(-86400), // Yesterday
-            lastLoginAt: Date()
+            isEmailVerified: true,
+            subscriptionTier: "pro",
+            subscriptionStatus: "active",
+            subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 10, to: Date()),
+            subscriptionProductId: nil,
+            subscriptionPurchaseDate: Date().addingTimeInterval(-86400),
+            subscriptionRenewalDate: Calendar.current.date(byAdding: .day, value: 10, to: Date())
         )
-        
-        isSignedIn = true
+
+        authState = .authenticated(user)
         currentUser = user
         return user
     }
-    
+
     func signOut() async throws {
         if shouldFailNextCall {
             shouldFailNextCall = false
-            throw mockError ?? AuthError.networkError
+            throw mockError ?? .networkError
         }
-        
-        isSignedIn = false
+
+        authState = .unauthenticated
         currentUser = nil
     }
-    
-    func getCurrentUser() async -> User? {
-        return currentUser
-    }
-    
-    func updateProfile(displayName: String?) async throws -> User {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? AuthError.networkError
-        }
-        
-        guard var user = currentUser else {
-            throw AuthError.notAuthenticated
-        }
-        
-        user.displayName = displayName
-        currentUser = user
-        return user
-    }
-    
-    func refreshSession() async throws {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? AuthError.sessionExpired
-        }
-        
-        // Mock session refresh - update last login
-        if var user = currentUser {
-            user.lastLoginAt = Date()
-            currentUser = user
-        }
-    }
-    
+
     func resetPassword(email: String) async throws {
         if shouldFailNextCall {
             shouldFailNextCall = false
-            throw mockError ?? AuthError.networkError
+            throw mockError ?? .networkError
         }
-        
+
         // Mock password reset - no-op for testing
     }
-    
-    func updateSubscription(tier: SubscriptionTier) async throws -> User {
+
+    func updateProfile(name: String, email: String?) async throws -> User {
         if shouldFailNextCall {
             shouldFailNextCall = false
-            throw mockError ?? AuthError.networkError
+            throw mockError ?? .networkError
         }
-        
-        guard var user = currentUser else {
-            throw AuthError.notAuthenticated
+
+        guard let existingUser = currentUser else {
+            throw AuthError.sessionExpired
         }
-        
-        user.subscriptionTier = tier
-        currentUser = user
-        return user
+
+        let updatedUser = User(
+            id: existingUser.id,
+            email: email ?? existingUser.email,
+            name: name,
+            profileImageURL: existingUser.profileImageURL,
+            createdAt: existingUser.createdAt,
+            isEmailVerified: existingUser.isEmailVerified,
+            subscriptionTier: existingUser.subscriptionTier,
+            subscriptionStatus: existingUser.subscriptionStatus,
+            subscriptionExpiry: existingUser.subscriptionExpiry,
+            subscriptionProductId: existingUser.subscriptionProductId,
+            subscriptionPurchaseDate: existingUser.subscriptionPurchaseDate,
+            subscriptionRenewalDate: existingUser.subscriptionRenewalDate,
+            monthlyRecordingCount: existingUser.monthlyRecordingCount,
+            monthlyRecordingMinutes: existingUser.monthlyRecordingMinutes,
+            currentStorageUsedGB: existingUser.currentStorageUsedGB,
+            monthlyExportCount: existingUser.monthlyExportCount,
+            lastUsageResetDate: existingUser.lastUsageResetDate
+        )
+
+        authState = .authenticated(updatedUser)
+        currentUser = updatedUser
+        return updatedUser
+    }
+
+    func deleteAccount() async throws {
+        if shouldFailNextCall {
+            shouldFailNextCall = false
+            throw mockError ?? .networkError
+        }
+
+        authState = .unauthenticated
+        currentUser = nil
+    }
+
+    func refreshSession() async throws {
+        if shouldFailNextCall {
+            shouldFailNextCall = false
+            throw mockError ?? .sessionExpired
+        }
+
+        // Mock session refresh - no-op for testing
+        // In a real implementation, this would refresh the authentication token
+    }
+
+    nonisolated func isAuthenticated() -> Bool {
+        // Since this is nonisolated, we can't access @MainActor properties directly
+        // For mock purposes, we'll return a simple implementation
+        return true // Mock always returns authenticated for simplicity
     }
 }
 
 // MARK: - Test Helpers
 extension MockAuthService {
     static func createMockUser(
-        id: String = "test-user-id",
+        id: UUID = UUID(),
         email: String = "test@example.com",
-        tier: SubscriptionTier = .pro
+        name: String = "Test User",
+        tier: String = "pro"
     ) -> User {
         return User(
             id: id,
             email: email,
-            displayName: "Test User",
-            subscriptionTier: tier,
-            trialEndDate: Calendar.current.date(byAdding: .day, value: 14, to: Date()),
-            isActive: true,
+            name: name,
+            profileImageURL: nil,
             createdAt: Date().addingTimeInterval(-86400),
-            lastLoginAt: Date()
+            isEmailVerified: true,
+            subscriptionTier: tier,
+            subscriptionStatus: "active",
+            subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 14, to: Date()),
+            subscriptionProductId: nil,
+            subscriptionPurchaseDate: Date().addingTimeInterval(-86400),
+            subscriptionRenewalDate: Calendar.current.date(byAdding: .day, value: 14, to: Date())
         )
     }
 }

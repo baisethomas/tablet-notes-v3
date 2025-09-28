@@ -1,8 +1,5 @@
 import SwiftUI
 import AVFoundation
-#if canImport(Speech)
-import Speech
-#endif
 import Combine
 import SwiftData
 import Foundation
@@ -727,18 +724,11 @@ struct RecordingView: View {
             showPermissionAlert = true
             return
         }
-        SFSpeechRecognizer.requestAuthorization { authStatus in
-            print("[RecordingView] Speech recognition status: \(authStatus.rawValue)")
-            if authStatus != .authorized {
-                permissionMessage = "Speech recognition access is required to transcribe sermons. Please enable it in Settings."
-                showPermissionAlert = true
-            } else {
-                DispatchQueue.main.async {
-                    print("[RecordingView] Permissions granted, starting recording...")
-                    startRecording()
-                }
-            }
-        }
+
+        // No longer need Apple Speech permission since we're using AssemblyAI Live
+        // which handles transcription via cloud API rather than on-device speech recognition
+        print("[RecordingView] Microphone permission granted, starting recording...")
+        startRecording()
     }
 
     private func startRecording() {

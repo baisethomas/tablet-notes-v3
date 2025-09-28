@@ -6,14 +6,42 @@
 //
 
 import Foundation
+import Supabase
 @testable import TabletNotes
 
 class MockSupabaseService: SupabaseServiceProtocol {
+    var client: SupabaseClient {
+        // Return a dummy client for testing
+        fatalError("Not implemented in mock")
+    }
+
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
+        return (URL(string: "https://example.com")!, "test/path")
+    }
+
+    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
+        return (URL(string: "https://example.com")!, "test/path")
+    }
+
+    func uploadFile(data: Data, to uploadUrl: URL) async throws {
+        // Mock implementation
+    }
+
+    func getSignedDownloadURL(for path: String) async throws -> URL {
+        return URL(string: "https://example.com")!
+    }
+
+    func updateUserProfile(_ user: TabletNotes.User) async throws {
+        // Mock implementation
+    }
+
+    /*
+    // Temporarily commenting out extra methods that don't match protocol
     // MARK: - Mock State
     private var shouldFailNextCall = false
     private var mockError: Error?
     private var mockFiles: [String: Data] = [:]
-    private var mockUsers: [String: User] = [:]
+    private var mockUsers: [UUID: User] = [:]
     
     // MARK: - Test Configuration
     func setShouldFailNextCall(_ shouldFail: Bool, error: Error? = nil) {
@@ -110,7 +138,7 @@ class MockSupabaseService: SupabaseServiceProtocol {
         }
         
         // Return mock sermon data
-        return createMockSermons(userId: userId)
+        return createMockSermons(userId: UUID(uuidString: userId) ?? UUID())
     }
     
     func uploadSermon(_ sermon: Sermon, userId: String) async throws {
@@ -137,19 +165,20 @@ class MockSupabaseService: SupabaseServiceProtocol {
     }
     
     // MARK: - Mock Data Helpers
-    private func createMockSermons(userId: String, count: Int = 3) -> [Sermon] {
+    private func createMockSermons(userId: UUID, count: Int = 3) -> [Sermon] {
         return (1...count).map { index in
             createMockSermon(id: "mock-sermon-\(index)", userId: userId)
         }
     }
     
-    private func createMockSermon(id: String, userId: String) -> Sermon {
+    private func createMockSermon(id: String, userId: UUID) -> Sermon {
         return Sermon(
+            id: UUID(),
             title: "Mock Sermon \(id.suffix(1))",
-            serviceType: .sundayService,
-            audioFilePath: "\(userId)/mock-audio-\(id).m4a",
-            duration: 1800, // 30 minutes
-            recordedAt: Date().addingTimeInterval(-Double.random(in: 0...604800)), // Within last week
+            audioFileName: "mock-audio-\(id).m4a",
+            date: Date().addingTimeInterval(-Double.random(in: 0...604800)), // Within last week
+            serviceType: "Sunday Service",
+            speaker: "Test Speaker",
             userId: userId
         )
     }
@@ -189,4 +218,5 @@ enum SupabaseError: LocalizedError {
             return "Authentication required"
         }
     }
+    */
 }

@@ -39,7 +39,13 @@ class MockRecordingService: RecordingServiceProtocol {
     var isPausedPublisher: AnyPublisher<Bool, Never> {
         $isPaused.eraseToAnyPublisher()
     }
-    
+
+    var recordingStoppedPublisher: AnyPublisher<(URL?, Bool), Never> {
+        recordingStoppedSubject.eraseToAnyPublisher()
+    }
+
+    private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
+
     var recordingDurationPublisher: AnyPublisher<TimeInterval, Never> {
         $recordingDuration.eraseToAnyPublisher()
     }
@@ -68,7 +74,7 @@ class MockRecordingService: RecordingServiceProtocol {
         }
         
         guard !isRecording else {
-            throw RecordingError.alreadyRecording
+            throw RecordingError.recordingFailed
         }
         
         isRecording = true
@@ -81,11 +87,13 @@ class MockRecordingService: RecordingServiceProtocol {
         startMockTimer()
     }
     
-    func stopRecording() {
+    func stopRecording() -> URL? {
+        let currentURL = currentRecordingURL
         isRecording = false
         isPaused = false
         recordingTimer?.invalidate()
         recordingTimer = nil
+        return currentURL
     }
     
     func pauseRecording() throws {
@@ -95,7 +103,7 @@ class MockRecordingService: RecordingServiceProtocol {
         }
         
         guard isRecording && !isPaused else {
-            throw RecordingError.notRecording
+            throw RecordingError.recordingFailed
         }
         
         isPaused = true
@@ -110,7 +118,7 @@ class MockRecordingService: RecordingServiceProtocol {
         }
         
         guard isRecording && isPaused else {
-            throw RecordingError.notRecording
+            throw RecordingError.recordingFailed
         }
         
         isPaused = false
@@ -146,26 +154,3 @@ class MockRecordingService: RecordingServiceProtocol {
     }
 }
 
-// MARK: - Recording Errors for Testing
-enum RecordingError: LocalizedError {
-    case permissionDenied
-    case recordingFailed
-    case alreadyRecording
-    case notRecording
-    case fileSystemError
-    
-    var errorDescription: String? {
-        switch self {
-        case .permissionDenied:
-            return "Microphone permission denied"
-        case .recordingFailed:
-            return "Recording failed"
-        case .alreadyRecording:
-            return "Already recording"
-        case .notRecording:
-            return "Not currently recording"
-        case .fileSystemError:
-            return "File system error"
-        }
-    }
-}

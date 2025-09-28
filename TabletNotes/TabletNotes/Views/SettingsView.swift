@@ -475,7 +475,7 @@ struct AboutView: View {
                         
                         VStack(alignment: .leading, spacing: 12) {
                             FeatureRow(icon: "mic", title: "Audio Recording", description: "High-quality AAC encoding at configurable bitrates")
-                            FeatureRow(icon: "text.bubble", title: "Transcription Engine", description: "AssemblyAI API with speaker diarization")
+                            FeatureRow(icon: "text.bubble", title: "Transcription Engine", description: "AssemblyAI Live streaming with speaker diarization")
                             FeatureRow(icon: "brain.head.profile", title: "AI Summarization", description: "OpenAI GPT-powered content analysis")
                             FeatureRow(icon: "icloud", title: "Cloud Storage", description: "Secure Supabase backend with encryption")
                             FeatureRow(icon: "phone", title: "iOS Compatibility", description: "Supports iOS 17.0 and later")
@@ -1386,12 +1386,7 @@ struct TranscriptionProviderPicker: View {
     @ObservedObject var settings: SettingsService
     @ObservedObject var authManager: AuthenticationManager
     @Binding var showingSubscriptionPrompt: Bool
-    
-    private var hasLiveTranscriptionAccess: Bool {
-        let tier = authManager.currentUser?.subscriptionTier ?? "pro"
-        return tier == "pro" || tier == "premium"
-    }
-    
+
     var body: some View {
         SettingsRow(
             icon: "brain.head.profile",
@@ -1402,38 +1397,28 @@ struct TranscriptionProviderPicker: View {
                 Text(currentProvider.rawValue)
                     .foregroundColor(.primary)
                     .fontWeight(.medium)
-                
+
                 Spacer()
-                
-                if hasLiveTranscriptionAccess {
-                    Image(systemName: "crown.fill")
-                        .foregroundColor(.adaptiveAccent)
-                        .font(.caption)
-                } else {
-                    Button("Upgrade") {
-                        showingSubscriptionPrompt = true
-                    }
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.adaptiveAccent)
+
+                // Show a "standard" badge since AssemblyAI Live is now the standard for all users
+                Text("STANDARD")
+                    .font(.caption2)
+                    .fontWeight(.bold)
                     .foregroundColor(.white)
-                    .cornerRadius(6)
-                }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.adaptiveAccent)
+                    .cornerRadius(4)
             }
         }
     }
-    
+
     private var currentProvider: TranscriptionProvider {
         return settings.effectiveTranscriptionProvider
     }
-    
+
     private var transcriptionDescription: String {
-        if hasLiveTranscriptionAccess {
-            return "AssemblyAI - High-quality real-time transcription"
-        } else {
-            return "Apple Speech - Basic transcription (upgrade for better quality)"
-        }
+        return "AssemblyAI Live - High-quality real-time transcription for all users"
     }
 }
 

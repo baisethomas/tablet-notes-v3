@@ -20,18 +20,18 @@ enum TranscriptionProvider: String, CaseIterable {
     case assemblyAI = "AssemblyAI"
     case assemblyAILive = "AssemblyAI Live"
     case appleSpeech = "Apple Speech"
-    
+
     var description: String {
         switch self {
         case .assemblyAI: return "Cloud-based, highly accurate"
-        case .assemblyAILive: return "Real-time AI transcription (Pro/Premium)"
-        case .appleSpeech: return "On-device, private"
+        case .assemblyAILive: return "Real-time AI transcription (Standard)"
+        case .appleSpeech: return "On-device, private (Deprecated)"
         }
     }
-    
+
     var requiresPremium: Bool {
         switch self {
-        case .assemblyAILive: return true
+        case .assemblyAILive: return false // No longer requires premium
         default: return false
         }
     }
@@ -230,23 +230,14 @@ class SettingsService: ObservableObject {
     
     /// Returns the effective transcription provider based on user's subscription tier
     @MainActor var effectiveTranscriptionProvider: TranscriptionProvider {
-        // Automatically determine the best transcription provider based on subscription tier
+        // AssemblyAI Live is now the standard for all users (free and paid)
         guard let currentUser = AuthenticationManager.shared.currentUser else {
-            return .appleSpeech
+            return .assemblyAILive // Default to AssemblyAI Live even for unauthenticated users
         }
-        
-        // Premium users get AssemblyAI Live (real-time transcription)
-        if currentUser.subscriptionTier == "premium" {
-            return .assemblyAILive
-        }
-        
-        // Pro users get regular AssemblyAI (cloud-based, highly accurate)
-        if currentUser.subscriptionTier == "pro" {
-            return .assemblyAI
-        }
-        
-        // Free/Basic users get Apple Speech
-        return .appleSpeech
+
+        // All users now get AssemblyAI Live as the standard transcription service
+        // This provides superior real-time transcription quality compared to Apple Speech
+        return .assemblyAILive
     }
     
     /// No longer needed - transcription provider is now automatically determined based on subscription tier
