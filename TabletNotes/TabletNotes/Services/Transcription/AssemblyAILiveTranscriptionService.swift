@@ -21,16 +21,30 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     
     func startLiveTranscription() async throws {
         guard !isConnected else { return }
-        
-        // First, get a temporary session token from our Netlify function
-        try await getSessionToken()
-        
+
+        do {
+            // First, try to get a temporary session token from our Netlify function
+            try await getSessionToken()
+        } catch {
+            print("[AssemblyAI Live] Failed to get session token from Netlify function: \(error)")
+            do {
+                // Fallback: use direct API key access
+                try await getSessionTokenDirect()
+            } catch let directError {
+                print("[AssemblyAI Live] Direct API key access also failed: \(directError)")
+                DispatchQueue.main.async {
+                    self.error = "AssemblyAI Live transcription is not available. Please check your configuration."
+                }
+                throw directError
+            }
+        }
+
         // Start WebSocket connection
         try await startWebSocketConnection()
-        
+
         // Start audio capture
         try startAudioCapture()
-        
+
         isConnected = true
     }
     
@@ -44,24 +58,73 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         guard let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/assemblyai-live-token") else {
             throw NSError(domain: "InvalidURL", code: 1, userInfo: nil)
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Add authentication
-        let session = try await supabase.client.auth.session
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw NSError(domain: "TokenError", code: 1, userInfo: nil)
+
+        // Try to add authentication if available, but don't require it for free users
+        do {
+            let session = try await supabase.client.auth.session
+            request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+            print("[AssemblyAI Live] Using authenticated session for live transcription")
+        } catch {
+            print("[AssemblyAI Live] No authentication available, using public access")
+            // Continue without authentication - the Netlify function should handle unauthenticated requests
         }
-        
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
+        }
+
+        if httpResponse.statusCode != 200 {
+            let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+            print("[AssemblyAI Live] Token request failed with status: \(httpResponse.statusCode), body: \(responseBody)")
+            throw NSError(domain: "TokenError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get session token: \(responseBody)"])
+        }
+
         let tokenResponse = try JSONDecoder().decode(SessionTokenResponse.self, from: data)
         self.sessionToken = tokenResponse.sessionToken
+    }
+
+    private func getSessionTokenDirect() async throws {
+        print("[AssemblyAI Live] Using direct API key for session token")
+
+        // Check if API key is configured
+        guard AssemblyAIConfig.apiKey != "YOUR_ASSEMBLYAI_API_KEY_HERE" && !AssemblyAIConfig.apiKey.isEmpty else {
+            throw NSError(domain: "APIKeyError", code: 1, userInfo: [NSLocalizedDescriptionKey: "AssemblyAI API key not configured. Please add your API key to AssemblyAIKey.swift"])
+        }
+
+        guard let url = URL(string: "\(AssemblyAIConfig.baseURL)/realtime/token") else {
+            throw NSError(domain: "InvalidURL", code: 1, userInfo: nil)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
+
+        let requestBody = [
+            "expires_in": 3600 // 1 hour
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
+        }
+
+        if httpResponse.statusCode != 200 {
+            let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
+            print("[AssemblyAI Live] Direct token request failed with status: \(httpResponse.statusCode), body: \(responseBody)")
+            throw NSError(domain: "TokenError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get session token directly: \(responseBody)"])
+        }
+
+        let tokenResponse = try JSONDecoder().decode(DirectTokenResponse.self, from: data)
+        self.sessionToken = tokenResponse.token
     }
     
     private func startWebSocketConnection() async throws {
@@ -221,6 +284,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
 // MARK: - Response Models
 private struct SessionTokenResponse: Codable {
     let sessionToken: String
+}
+
+private struct DirectTokenResponse: Codable {
+    let token: String
 }
 
 private struct TranscriptResponse: Codable {
