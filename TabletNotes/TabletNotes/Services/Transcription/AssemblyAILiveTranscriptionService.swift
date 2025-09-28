@@ -45,7 +45,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Start audio capture
         try startAudioCapture()
 
-        isConnected = true
+        // Note: isConnected will be set to true when we receive "SessionBegins" message
     }
     
     func stopLiveTranscription() {
@@ -131,26 +131,66 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         guard let sessionToken = sessionToken else {
             throw NSError(domain: "NoToken", code: 1, userInfo: nil)
         }
-        
+
         var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
         urlComponents.queryItems = [
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))),
-            URLQueryItem(name: "token", value: sessionToken),
-            URLQueryItem(name: "encoding", value: "pcm_f32le"),
-            URLQueryItem(name: "word_boost", value: "['sermon','church','bible','scripture','jesus','christ','god','lord','faith','prayer','worship','ministry','pastor','preacher','congregation','salvation','grace','mercy','gospel','holy','spirit','heaven','blessing','amen','hallelujah']"),
-            URLQueryItem(name: "boost_param", value: "high")
+            URLQueryItem(name: "token", value: sessionToken)
         ]
-        
+
         guard let url = urlComponents.url else {
             throw NSError(domain: "InvalidWebSocketURL", code: 1, userInfo: nil)
         }
-        
-        let session = URLSession(configuration: .default)
+
+        print("[AssemblyAI Live] Connecting to WebSocket: \(url)")
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
+        let session = URLSession(configuration: config)
         webSocketTask = session.webSocketTask(with: url)
+
+        // Add connection state tracking
         webSocketTask?.resume()
-        
+
+        // Wait a moment for connection to establish
+        try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+
+        // Send initial configuration
+        try await sendInitialConfiguration()
+
         // Start listening for messages
         startListeningForMessages()
+    }
+
+    private func sendInitialConfiguration() async throws {
+        let config = [
+            "sample_rate": Int(sampleRate),
+            "word_boost": [
+                "sermon", "church", "bible", "scripture", "jesus", "christ", "god", "lord",
+                "faith", "prayer", "worship", "ministry", "pastor", "preacher", "congregation",
+                "salvation", "grace", "mercy", "gospel", "holy", "spirit", "heaven",
+                "blessing", "amen", "hallelujah"
+            ],
+            "boost_param": "high"
+        ] as [String: Any]
+
+        let configData = try JSONSerialization.data(withJSONObject: config)
+        let configString = String(data: configData, encoding: .utf8)!
+
+        print("[AssemblyAI Live] Sending initial configuration: \(configString)")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            webSocketTask?.send(.string(configString)) { error in
+                if let error = error {
+                    print("[AssemblyAI Live] Failed to send initial config: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("[AssemblyAI Live] Initial configuration sent successfully")
+                    continuation.resume()
+                }
+            }
+        }
     }
     
     private func startListeningForMessages() {
@@ -172,34 +212,62 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
         switch message {
         case .string(let text):
+            print("[AssemblyAI Live] Received message: \(text)")
+
             do {
-                let response = try JSONDecoder().decode(TranscriptResponse.self, from: text.data(using: .utf8)!)
-                DispatchQueue.main.async {
-                    if response.messageType == "PartialTranscript" {
-                        // Update with partial transcript
-                        let partialText = response.text ?? ""
-                        print("[AssemblyAI Live] Partial: '\(partialText)' (confidence: \(response.confidence ?? 0))")
-                        self.transcriptSubject.send(self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText))
-                    } else if response.messageType == "FinalTranscript" {
-                        // Add to full transcript
-                        if let finalText = response.text, !finalText.isEmpty {
-                            print("[AssemblyAI Live] Final: '\(finalText)' (confidence: \(response.confidence ?? 0))")
-                            if self.fullTranscript.isEmpty {
-                                self.fullTranscript = finalText
-                            } else {
-                                self.fullTranscript += " " + finalText
+                // Try to parse as JSON to understand the message structure
+                if let jsonData = text.data(using: .utf8),
+                   let jsonObject = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+
+                    // Handle different message types from AssemblyAI
+                    if let messageType = jsonObject["message_type"] as? String {
+                        print("[AssemblyAI Live] Message type: \(messageType)")
+
+                        switch messageType {
+                        case "PartialTranscript":
+                            if let partialText = jsonObject["text"] as? String {
+                                print("[AssemblyAI Live] Partial: '\(partialText)'")
+                                DispatchQueue.main.async {
+                                    self.transcriptSubject.send(self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText))
+                                }
                             }
-                            self.transcriptSubject.send(self.fullTranscript)
+                        case "FinalTranscript":
+                            if let finalText = jsonObject["text"] as? String, !finalText.isEmpty {
+                                print("[AssemblyAI Live] Final: '\(finalText)'")
+                                DispatchQueue.main.async {
+                                    if self.fullTranscript.isEmpty {
+                                        self.fullTranscript = finalText
+                                    } else {
+                                        self.fullTranscript += " " + finalText
+                                    }
+                                    self.transcriptSubject.send(self.fullTranscript)
+                                }
+                            }
+                        case "SessionBegins":
+                            print("[AssemblyAI Live] Session began successfully")
+                            DispatchQueue.main.async {
+                                self.isConnected = true
+                            }
+                        case "SessionTerminated":
+                            print("[AssemblyAI Live] Session terminated")
+                            DispatchQueue.main.async {
+                                self.isConnected = false
+                            }
+                        default:
+                            print("[AssemblyAI Live] Unknown message type: \(messageType)")
                         }
+                    } else {
+                        print("[AssemblyAI Live] No message_type in response: \(jsonObject)")
                     }
                 }
             } catch {
-                print("[AssemblyAI Live] Failed to decode message: \(error)")
+                print("[AssemblyAI Live] Failed to parse message as JSON: \(error)")
+                print("[AssemblyAI Live] Raw message: \(text)")
             }
-        case .data(_):
-            break
+        case .data(let data):
+            print("[AssemblyAI Live] Received binary data: \(data.count) bytes")
         @unknown default:
-            break
+            print("[AssemblyAI Live] Received unknown message type")
         }
     }
     
@@ -244,23 +312,19 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData?[0] else { return }
-        
+        guard isConnected else { return } // Don't send if not connected
+
         let frameLength = Int(buffer.frameLength)
         let data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
-        
-        let base64String = data.base64EncodedString()
-        let message = ["audio_data": base64String]
-        
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: message)
-            let jsonString = String(data: jsonData, encoding: .utf8)!
-            webSocketTask?.send(.string(jsonString)) { error in
-                if let error = error {
-                    print("[AssemblyAI Live] Failed to send audio data: \(error)")
+
+        // Send binary audio data directly (AssemblyAI expects binary data, not base64 JSON)
+        webSocketTask?.send(.data(data)) { error in
+            if let error = error {
+                print("[AssemblyAI Live] Failed to send audio data: \(error)")
+                DispatchQueue.main.async {
+                    self.isConnected = false
                 }
             }
-        } catch {
-            print("[AssemblyAI Live] Failed to serialize audio message: \(error)")
         }
     }
     
