@@ -200,22 +200,29 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                         switch messageType {
                         case "PartialTranscript":
                             if let partialText = jsonObject["text"] as? String {
-                                print("[AssemblyAI Live] Partial: '\(partialText)'")
+                                print("[AssemblyAI Live] ✅ Partial transcript received: '\(partialText)'")
                                 DispatchQueue.main.async {
-                                    self.transcriptSubject.send(self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText))
+                                    let combinedText = self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText)
+                                    print("[AssemblyAI Live] 📤 Sending partial to UI: '\(combinedText)'")
+                                    self.transcriptSubject.send(combinedText)
                                 }
+                            } else {
+                                print("[AssemblyAI Live] ⚠️ PartialTranscript message with no text")
                             }
                         case "FinalTranscript":
                             if let finalText = jsonObject["text"] as? String, !finalText.isEmpty {
-                                print("[AssemblyAI Live] Final: '\(finalText)'")
+                                print("[AssemblyAI Live] ✅ Final transcript received: '\(finalText)'")
                                 DispatchQueue.main.async {
                                     if self.fullTranscript.isEmpty {
                                         self.fullTranscript = finalText
                                     } else {
                                         self.fullTranscript += " " + finalText
                                     }
+                                    print("[AssemblyAI Live] 📤 Sending final to UI: '\(self.fullTranscript)'")
                                     self.transcriptSubject.send(self.fullTranscript)
                                 }
+                            } else {
+                                print("[AssemblyAI Live] ⚠️ FinalTranscript message with no text")
                             }
                         case "SessionBegins":
                             print("[AssemblyAI Live] Session began successfully")
@@ -287,11 +294,19 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData?[0] else { return }
-        guard isConnected else { return } // Don't send if not connected
+        guard let channelData = buffer.floatChannelData?[0] else {
+            print("[AssemblyAI Live] No channel data available")
+            return
+        }
+        guard isConnected else {
+            print("[AssemblyAI Live] Not connected, skipping audio data")
+            return
+        }
 
         let frameLength = Int(buffer.frameLength)
         let data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
+
+        print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames)")
 
         // Send binary audio data directly (AssemblyAI expects binary data, not base64 JSON)
         webSocketTask?.send(.data(data)) { error in
@@ -299,6 +314,11 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
                 DispatchQueue.main.async {
                     self.isConnected = false
+                }
+            } else {
+                // Successful send - log occasionally to avoid spam
+                if frameLength > 0 && Int.random(in: 1...100) == 1 {
+                    print("[AssemblyAI Live] Audio data sent successfully")
                 }
             }
         }

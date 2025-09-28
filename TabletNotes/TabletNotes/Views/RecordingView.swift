@@ -518,8 +518,10 @@ struct RecordingView: View {
             print("[RecordingView] Captured audioFileURL: \(url?.absoluteString ?? "nil")")
         }
         .onReceive(transcriptionService.transcriptPublisher) { newTranscript in
+            print("[RecordingView] 📥 Received transcript update: '\(newTranscript)' (length: \(newTranscript.count))")
             withAnimation(.easeInOut(duration: 0.3)) {
                 transcript = newTranscript
+                print("[RecordingView] 📱 UI transcript updated to: '\(transcript)'")
             }
             detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: newTranscript)
         }
