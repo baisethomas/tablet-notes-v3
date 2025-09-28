@@ -135,7 +135,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
         urlComponents.queryItems = [
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))),
-            URLQueryItem(name: "token", value: sessionToken)
+            URLQueryItem(name: "token", value: sessionToken),
+            URLQueryItem(name: "encoding", value: "pcm_f32le"),
+            URLQueryItem(name: "word_boost", value: "sermon,church,bible,scripture,jesus,christ,god,lord,faith,prayer,worship,ministry,pastor,preacher,congregation,salvation,grace,mercy,gospel,holy,spirit,heaven,blessing,amen,hallelujah"),
+            URLQueryItem(name: "boost_param", value: "high")
         ]
 
         guard let url = urlComponents.url else {
@@ -156,42 +159,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Wait a moment for connection to establish
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
 
-        // Send initial configuration
-        try await sendInitialConfiguration()
-
-        // Start listening for messages
+        // Start listening for messages (configuration is sent via URL parameters)
         startListeningForMessages()
     }
 
-    private func sendInitialConfiguration() async throws {
-        let config = [
-            "sample_rate": Int(sampleRate),
-            "word_boost": [
-                "sermon", "church", "bible", "scripture", "jesus", "christ", "god", "lord",
-                "faith", "prayer", "worship", "ministry", "pastor", "preacher", "congregation",
-                "salvation", "grace", "mercy", "gospel", "holy", "spirit", "heaven",
-                "blessing", "amen", "hallelujah"
-            ],
-            "boost_param": "high"
-        ] as [String: Any]
-
-        let configData = try JSONSerialization.data(withJSONObject: config)
-        let configString = String(data: configData, encoding: .utf8)!
-
-        print("[AssemblyAI Live] Sending initial configuration: \(configString)")
-
-        return try await withCheckedThrowingContinuation { continuation in
-            webSocketTask?.send(.string(configString)) { error in
-                if let error = error {
-                    print("[AssemblyAI Live] Failed to send initial config: \(error)")
-                    continuation.resume(throwing: error)
-                } else {
-                    print("[AssemblyAI Live] Initial configuration sent successfully")
-                    continuation.resume()
-                }
-            }
-        }
-    }
     
     private func startListeningForMessages() {
         webSocketTask?.receive { [weak self] result in
