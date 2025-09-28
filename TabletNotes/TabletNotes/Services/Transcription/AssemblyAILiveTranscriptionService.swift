@@ -18,6 +18,8 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     @Published var error: String?
     
     private let sampleRate: Double = 44100 // Use higher quality audio
+    private var connectionAttempts = 0
+    private let maxConnectionAttempts = 3
     
     func startLiveTranscription() async throws {
         guard !isConnected else { return }
@@ -132,13 +134,12 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             throw NSError(domain: "NoToken", code: 1, userInfo: nil)
         }
 
+        // Use only essential parameters that AssemblyAI supports
         var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
         urlComponents.queryItems = [
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))),
-            URLQueryItem(name: "token", value: sessionToken),
-            URLQueryItem(name: "encoding", value: "pcm_f32le"),
-            URLQueryItem(name: "word_boost", value: "sermon,church,bible,scripture,jesus,christ,god,lord,faith,prayer,worship,ministry,pastor,preacher,congregation,salvation,grace,mercy,gospel,holy,spirit,heaven,blessing,amen,hallelujah"),
-            URLQueryItem(name: "boost_param", value: "high")
+            URLQueryItem(name: "token", value: sessionToken)
+            // Note: Other parameters like word_boost can be sent after connection if needed
         ]
 
         guard let url = urlComponents.url else {
@@ -174,8 +175,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             case .failure(let error):
                 print("[AssemblyAI Live] WebSocket error: \(error)")
                 DispatchQueue.main.async {
+                    self?.isConnected = false
                     self?.error = error.localizedDescription
                 }
+                // Don't continue listening on failure
             }
         }
     }
@@ -224,6 +227,8 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                             DispatchQueue.main.async {
                                 self.isConnected = false
                             }
+                            // Stop listening when session terminates
+                            return
                         default:
                             print("[AssemblyAI Live] Unknown message type: \(messageType)")
                         }
@@ -307,8 +312,12 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func closeWebSocketConnection() {
+        print("[AssemblyAI Live] Closing WebSocket connection")
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        DispatchQueue.main.async {
+            self.isConnected = false
+        }
     }
     
     deinit {
