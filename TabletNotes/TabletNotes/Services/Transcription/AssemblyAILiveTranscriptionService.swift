@@ -255,42 +255,76 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func startAudioCapture() throws {
+        // Use the existing audio session configuration from RecordingService
+        // Don't reconfigure the audio session since RecordingService already set it up
+        let audioSession = AVAudioSession.sharedInstance()
+        print("[AssemblyAI Live] Using existing audio session configuration: \(audioSession.category), mode: \(audioSession.mode)")
+
+        // Ensure session is active (RecordingService should have already done this)
+        if !audioSession.isOtherAudioPlaying {
+            do {
+                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+                print("[AssemblyAI Live] Audio session activated")
+            } catch {
+                print("[AssemblyAI Live] Warning: Could not activate audio session: \(error)")
+                // Continue anyway since RecordingService might have it active
+            }
+        }
+
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
-        
-        // Convert to high-quality format for better transcription
-        guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, 
-                                             sampleRate: sampleRate, 
-                                             channels: 1, 
-                                             interleaved: false) else {
-            throw NSError(domain: "AudioFormatError", code: 1, userInfo: nil)
-        }
-        
-        guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
-            throw NSError(domain: "AudioConverterError", code: 1, userInfo: nil)
-        }
-        
+
+        print("[AssemblyAI Live] Input format: \(recordingFormat)")
+
+        // Use input format directly to avoid unnecessary conversion
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
-            
-            // Convert audio format
-            let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: buffer.frameCapacity)!
+
+            let frameLength = Int(buffer.frameLength)
+            print("[AssemblyAI Live] Raw audio buffer: \(frameLength) frames")
+
+            if frameLength == 0 {
+                print("[AssemblyAI Live] ⚠️ Received empty audio buffer")
+                return
+            }
+
+            // Convert to the format AssemblyAI expects (Float32, mono, 44.1kHz)
+            guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                 sampleRate: self.sampleRate,
+                                                 channels: 1,
+                                                 interleaved: false) else {
+                print("[AssemblyAI Live] Failed to create output format")
+                return
+            }
+
+            guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
+                print("[AssemblyAI Live] Failed to create audio converter")
+                return
+            }
+
+            guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: buffer.frameCapacity) else {
+                print("[AssemblyAI Live] Failed to create converted buffer")
+                return
+            }
+
             var error: NSError?
             converter.convert(to: convertedBuffer, error: &error) { _, _ in
                 return buffer
             }
-            
+
             if let error = error {
                 print("[AssemblyAI Live] Audio conversion error: \(error)")
                 return
             }
-            
+
             // Send audio data via WebSocket
             self.sendAudioData(convertedBuffer)
         }
-        
+
+        print("[AssemblyAI Live] Installing audio tap and starting engine")
         audioEngine.prepare()
         try audioEngine.start()
+        print("[AssemblyAI Live] Audio engine started successfully")
     }
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
@@ -325,10 +359,15 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func stopAudioCapture() {
+        print("[AssemblyAI Live] Stopping audio capture")
         if audioEngine.isRunning {
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
+            print("[AssemblyAI Live] Audio engine stopped")
         }
+
+        // Don't deactivate the audio session since RecordingService is still using it
+        print("[AssemblyAI Live] Leaving audio session active for RecordingService")
     }
     
     private func closeWebSocketConnection() {
