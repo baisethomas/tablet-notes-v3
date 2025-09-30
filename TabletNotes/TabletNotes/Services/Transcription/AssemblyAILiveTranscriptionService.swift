@@ -135,9 +135,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         }
 
         // Use only essential parameters that AssemblyAI supports
+        // Use the actual sample rate we'll be sending (which might be different from target)
         var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
         urlComponents.queryItems = [
-            URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))),
+            URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))), // Always use 44100 as target
             URLQueryItem(name: "token", value: sessionToken)
             // Note: Other parameters like word_boost can be sent after connection if needed
         ]
@@ -288,37 +289,60 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 return
             }
 
-            // Convert to the format AssemblyAI expects (Float32, mono, 44.1kHz)
-            guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                                 sampleRate: self.sampleRate,
-                                                 channels: 1,
-                                                 interleaved: false) else {
-                print("[AssemblyAI Live] Failed to create output format")
-                return
-            }
+            // Check if we need to convert the sample rate
+            let inputSampleRate = recordingFormat.sampleRate
+            let targetSampleRate = self.sampleRate
 
-            guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
-                print("[AssemblyAI Live] Failed to create audio converter")
-                return
-            }
+            if inputSampleRate == targetSampleRate && recordingFormat.channelCount == 1 && recordingFormat.commonFormat == .pcmFormatFloat32 {
+                // No conversion needed - use buffer directly
+                print("[AssemblyAI Live] No conversion needed, using buffer directly")
+                self.sendAudioData(buffer)
+            } else {
+                // Convert to the format AssemblyAI expects (Float32, mono, 44.1kHz)
+                print("[AssemblyAI Live] Converting from \(inputSampleRate)Hz to \(targetSampleRate)Hz")
 
-            guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: buffer.frameCapacity) else {
-                print("[AssemblyAI Live] Failed to create converted buffer")
-                return
-            }
+                guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                     sampleRate: targetSampleRate,
+                                                     channels: 1,
+                                                     interleaved: false) else {
+                    print("[AssemblyAI Live] Failed to create output format")
+                    return
+                }
 
-            var error: NSError?
-            converter.convert(to: convertedBuffer, error: &error) { _, _ in
-                return buffer
-            }
+                guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
+                    print("[AssemblyAI Live] Failed to create audio converter from \(recordingFormat) to \(outputFormat)")
+                    return
+                }
 
-            if let error = error {
-                print("[AssemblyAI Live] Audio conversion error: \(error)")
-                return
-            }
+                // Calculate the output frame capacity for sample rate conversion
+                let ratio = targetSampleRate / inputSampleRate
+                let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameCapacity) * ratio)
 
-            // Send audio data via WebSocket
-            self.sendAudioData(convertedBuffer)
+                guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFrameCapacity) else {
+                    print("[AssemblyAI Live] Failed to create converted buffer with capacity \(outputFrameCapacity)")
+                    return
+                }
+
+                var error: NSError?
+                let status = converter.convert(to: convertedBuffer, error: &error) { _, _ in
+                    return buffer
+                }
+
+                if let error = error {
+                    print("[AssemblyAI Live] Audio conversion error: \(error)")
+                    return
+                }
+
+                if status == .error {
+                    print("[AssemblyAI Live] Audio conversion failed with status: \(status)")
+                    return
+                }
+
+                print("[AssemblyAI Live] Conversion successful: \(buffer.frameLength) → \(convertedBuffer.frameLength) frames")
+
+                // Send audio data via WebSocket
+                self.sendAudioData(convertedBuffer)
+            }
         }
 
         print("[AssemblyAI Live] Installing audio tap and starting engine")
@@ -329,7 +353,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData?[0] else {
-            print("[AssemblyAI Live] No channel data available")
+            print("[AssemblyAI Live] No channel data available in buffer")
             return
         }
         guard isConnected else {
@@ -338,6 +362,12 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         }
 
         let frameLength = Int(buffer.frameLength)
+
+        if frameLength == 0 {
+            print("[AssemblyAI Live] ⚠️ Trying to send empty audio buffer")
+            return
+        }
+
         let data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
 
         print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames)")
@@ -352,7 +382,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             } else {
                 // Successful send - log occasionally to avoid spam
                 if frameLength > 0 && Int.random(in: 1...100) == 1 {
-                    print("[AssemblyAI Live] Audio data sent successfully")
+                    print("[AssemblyAI Live] ✅ Audio data sent successfully: \(frameLength) frames")
                 }
             }
         }
