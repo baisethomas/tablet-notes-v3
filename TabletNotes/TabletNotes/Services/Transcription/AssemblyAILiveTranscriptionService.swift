@@ -24,6 +24,12 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     func startLiveTranscription() async throws {
         guard !isConnected else { return }
 
+        // Clear previous transcript
+        DispatchQueue.main.async {
+            self.fullTranscript = ""
+            self.transcriptSubject.send("")
+        }
+
         do {
             // First, try to get a temporary session token from our Netlify function
             try await getSessionToken()
@@ -130,30 +136,37 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func startWebSocketConnection() async throws {
-        guard let sessionToken = sessionToken else {
-            throw NSError(domain: "NoToken", code: 1, userInfo: nil)
-        }
+        // Determine the actual sample rate we'll be sending
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        let inputSampleRate = recordingFormat.sampleRate
 
-        // Use only essential parameters that AssemblyAI supports
-        // Use the actual sample rate we'll be sending (which might be different from target)
-        var urlComponents = URLComponents(string: "wss://api.assemblyai.com/v2/realtime/ws")!
+        // Use input sample rate if supported by AssemblyAI, otherwise use target rate
+        let supportedRates: [Double] = [8000, 16000, 22050, 44100, 48000]
+        let actualSampleRate = supportedRates.contains(inputSampleRate) ? inputSampleRate : sampleRate
+
+        // Try Universal-Streaming v3 first, then fallback to v2
+        var urlComponents = URLComponents(string: "wss://streaming.assemblyai.com/v3/ws")!
         urlComponents.queryItems = [
-            URLQueryItem(name: "sample_rate", value: String(Int(sampleRate))), // Always use 44100 as target
-            URLQueryItem(name: "token", value: sessionToken)
-            // Note: Other parameters like word_boost can be sent after connection if needed
+            URLQueryItem(name: "sample_rate", value: String(Int(actualSampleRate))),
+            URLQueryItem(name: "encoding", value: "pcm_s16le")
         ]
 
         guard let url = urlComponents.url else {
             throw NSError(domain: "InvalidWebSocketURL", code: 1, userInfo: nil)
         }
 
-        print("[AssemblyAI Live] Connecting to WebSocket: \(url)")
+        print("[AssemblyAI Live] Connecting to Universal-Streaming v3 with \(Int(actualSampleRate))Hz: \(url)")
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 300
         let session = URLSession(configuration: config)
-        webSocketTask = session.webSocketTask(with: url)
+
+        var request = URLRequest(url: url)
+        request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
+
+        webSocketTask = session.webSocketTask(with: request)
 
         // Add connection state tracking
         webSocketTask?.resume()
@@ -161,7 +174,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Wait a moment for connection to establish
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
 
-        // Start listening for messages (configuration is sent via URL parameters)
+        // Start listening for messages
         startListeningForMessages()
     }
 
@@ -195,10 +208,40 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                    let jsonObject = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
 
                     // Handle different message types from AssemblyAI
-                    if let messageType = jsonObject["message_type"] as? String {
+                    // v3 API uses "type" field, v2 API uses "message_type" field
+                    let messageType = (jsonObject["type"] as? String) ?? (jsonObject["message_type"] as? String)
+
+                    if let messageType = messageType {
                         print("[AssemblyAI Live] Message type: \(messageType)")
 
                         switch messageType {
+                        case "Turn":
+                            // v3 API uses "Turn" messages with a "transcript" field
+                            if let transcriptText = jsonObject["transcript"] as? String {
+                                let isEndOfTurn = jsonObject["end_of_turn"] as? Bool ?? false
+
+                                if isEndOfTurn && !transcriptText.isEmpty {
+                                    // Final transcript for this turn
+                                    print("[AssemblyAI Live] ✅ Final turn transcript: '\(transcriptText)'")
+                                    DispatchQueue.main.async {
+                                        if self.fullTranscript.isEmpty {
+                                            self.fullTranscript = transcriptText
+                                        } else {
+                                            self.fullTranscript += " " + transcriptText
+                                        }
+                                        print("[AssemblyAI Live] 📤 Sending final to UI: '\(self.fullTranscript)'")
+                                        self.transcriptSubject.send(self.fullTranscript)
+                                    }
+                                } else if !transcriptText.isEmpty {
+                                    // Partial transcript for this turn
+                                    print("[AssemblyAI Live] ✅ Partial turn transcript: '\(transcriptText)'")
+                                    DispatchQueue.main.async {
+                                        let combinedText = self.fullTranscript + (self.fullTranscript.isEmpty ? "" : " ") + transcriptText
+                                        print("[AssemblyAI Live] 📤 Sending partial to UI: '\(combinedText)'")
+                                        self.transcriptSubject.send(combinedText)
+                                    }
+                                }
+                            }
                         case "PartialTranscript":
                             if let partialText = jsonObject["text"] as? String {
                                 print("[AssemblyAI Live] ✅ Partial transcript received: '\(partialText)'")
@@ -225,13 +268,16 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                             } else {
                                 print("[AssemblyAI Live] ⚠️ FinalTranscript message with no text")
                             }
-                        case "SessionBegins":
-                            print("[AssemblyAI Live] Session began successfully")
+                        case "SessionBegins", "Begin":
+                            print("[AssemblyAI Live] ✅ Session began successfully")
                             DispatchQueue.main.async {
                                 self.isConnected = true
                             }
-                        case "SessionTerminated":
-                            print("[AssemblyAI Live] Session terminated")
+                        case "SessionTerminated", "Error":
+                            print("[AssemblyAI Live] Session terminated or error")
+                            if let errorMessage = jsonObject["error"] as? String {
+                                print("[AssemblyAI Live] Error message: \(errorMessage)")
+                            }
                             DispatchQueue.main.async {
                                 self.isConnected = false
                             }
@@ -241,7 +287,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                             print("[AssemblyAI Live] Unknown message type: \(messageType)")
                         }
                     } else {
-                        print("[AssemblyAI Live] No message_type in response: \(jsonObject)")
+                        print("[AssemblyAI Live] No message type field in response: \(jsonObject)")
                     }
                 }
             } catch {
@@ -293,15 +339,20 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             let inputSampleRate = recordingFormat.sampleRate
             let targetSampleRate = self.sampleRate
 
-            if inputSampleRate == targetSampleRate && recordingFormat.channelCount == 1 && recordingFormat.commonFormat == .pcmFormatFloat32 {
-                // No conversion needed - use buffer directly
-                print("[AssemblyAI Live] No conversion needed, using buffer directly")
+            // AssemblyAI Universal-Streaming requires PCM16, mono audio
+            let needsConversion = recordingFormat.channelCount != 1 ||
+                                recordingFormat.commonFormat != .pcmFormatInt16 ||
+                                !([8000, 16000, 22050, 44100, 48000].contains(inputSampleRate))
+
+            if !needsConversion {
+                // Use input format directly - already mono, PCM16, and supported sample rate
+                print("[AssemblyAI Live] Using input format directly: \(inputSampleRate)Hz, \(recordingFormat.channelCount) channel(s)")
                 self.sendAudioData(buffer)
             } else {
-                // Convert to the format AssemblyAI expects (Float32, mono, 44.1kHz)
+                // Convert to the format AssemblyAI Universal-Streaming expects (PCM16, mono, target sample rate)
                 print("[AssemblyAI Live] Converting from \(inputSampleRate)Hz to \(targetSampleRate)Hz")
 
-                guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                                      sampleRate: targetSampleRate,
                                                      channels: 1,
                                                      interleaved: false) else {
@@ -316,7 +367,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
 
                 // Calculate the output frame capacity for sample rate conversion
                 let ratio = targetSampleRate / inputSampleRate
-                let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameCapacity) * ratio)
+                let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
 
                 guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFrameCapacity) else {
                     print("[AssemblyAI Live] Failed to create converted buffer with capacity \(outputFrameCapacity)")
@@ -324,8 +375,18 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 }
 
                 var error: NSError?
-                let status = converter.convert(to: convertedBuffer, error: &error) { _, _ in
+                let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
+                    outStatus.pointee = AVAudioConverterInputStatus.haveData
                     return buffer
+                }
+
+                // Ensure the converted buffer has the correct frame length
+                if status == .haveData || status == .endOfStream {
+                    // The converter should have set the frameLength, but let's verify it's not 0
+                    if convertedBuffer.frameLength == 0 {
+                        print("[AssemblyAI Live] Warning: Converter produced 0 frames, calculating expected length")
+                        convertedBuffer.frameLength = outputFrameCapacity
+                    }
                 }
 
                 if let error = error {
@@ -352,27 +413,53 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData?[0] else {
-            print("[AssemblyAI Live] No channel data available in buffer")
-            return
-        }
         guard isConnected else {
             print("[AssemblyAI Live] Not connected, skipping audio data")
             return
         }
 
         let frameLength = Int(buffer.frameLength)
-
         if frameLength == 0 {
             print("[AssemblyAI Live] ⚠️ Trying to send empty audio buffer")
             return
         }
 
-        let data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
+        // Handle both PCM16 and Float32 formats
+        let data: Data
+        let audioLevel: Float
 
-        print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames)")
+        if buffer.format.commonFormat == .pcmFormatInt16 {
+            // PCM16 format (preferred for Universal-Streaming)
+            guard let channelData = buffer.int16ChannelData?[0] else {
+                print("[AssemblyAI Live] No PCM16 channel data available in buffer")
+                return
+            }
 
-        // Send binary audio data directly (AssemblyAI expects binary data, not base64 JSON)
+            data = Data(bytes: channelData, count: frameLength * 2) // 2 bytes per sample for 16-bit int
+
+            // Calculate audio level for PCM16
+            audioLevel = (0..<frameLength).reduce(0.0) { sum, i in
+                sum + Float(abs(channelData[i])) / 32768.0 // Normalize to 0-1 range
+            } / Float(frameLength)
+
+        } else {
+            // Float32 format (fallback)
+            guard let channelData = buffer.floatChannelData?[0] else {
+                print("[AssemblyAI Live] No Float32 channel data available in buffer")
+                return
+            }
+
+            data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
+
+            // Calculate audio level for Float32
+            audioLevel = (0..<frameLength).reduce(0.0) { sum, i in
+                sum + abs(channelData[i])
+            } / Float(frameLength)
+        }
+
+        print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames) from \(buffer.format.channelCount) channel(s), format: \(buffer.format.commonFormat.rawValue), avg level: \(String(format: "%.6f", audioLevel))")
+
+        // Send binary audio data directly (AssemblyAI Universal-Streaming expects PCM16 binary data)
         webSocketTask?.send(.data(data)) { error in
             if let error = error {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
@@ -404,8 +491,10 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         print("[AssemblyAI Live] Closing WebSocket connection")
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
-        DispatchQueue.main.async {
-            self.isConnected = false
+
+        // Use weak self to avoid crash during deallocation
+        DispatchQueue.main.async { [weak self] in
+            self?.isConnected = false
         }
     }
     
