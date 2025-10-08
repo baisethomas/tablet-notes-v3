@@ -30,6 +30,7 @@ struct MainAppView: View {
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
     @State private var currentRecordingServiceType: String? = nil // Track what type of service is being recorded
+    @State private var cancellables = Set<AnyCancellable>() // Store Combine subscriptions for mini player
     @StateObject private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
@@ -189,6 +190,10 @@ struct MainAppView: View {
                                         let audioURL = recordingService.stopRecording()
                                         print("[MiniPlayer] Recording stopped")
 
+                                        // Stop transcription service
+                                        transcriptionService.stopTranscription()
+                                        print("[MiniPlayer] Transcription stopped")
+
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
                                                 // Create title and date for processing
@@ -196,7 +201,6 @@ struct MainAppView: View {
                                                 let date = Date()
 
                                                 // Process the recording just like in RecordingView
-                                                let transcriptionService = TranscriptionService()
                                                 transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
                                                     DispatchQueue.main.async {
                                                         switch result {
@@ -231,7 +235,6 @@ struct MainAppView: View {
                                                             summaryService.generateSummary(for: text, type: serviceType)
 
                                                             // Update sermon when summary completes
-                                                            var cancellables = Set<AnyCancellable>()
                                                             summaryService.summaryPublisher
                                                                 .combineLatest(summaryService.statusPublisher)
                                                                 .sink { summaryText, status in
@@ -250,9 +253,10 @@ struct MainAppView: View {
                                                                             summaryStatus: "complete",
                                                                             id: sermonId
                                                                         )
+                                                                        print("[MiniPlayer] Summary saved successfully")
                                                                     }
                                                                 }
-                                                                .store(in: &cancellables)
+                                                                .store(in: &self.cancellables)
 
                                                             print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                             sermonService.fetchSermons()
@@ -358,6 +362,10 @@ struct MainAppView: View {
                                 let audioURL = recordingService.stopRecording()
                                 print("[MiniPlayer] Recording stopped")
 
+                                // Stop transcription service
+                                transcriptionService.stopTranscription()
+                                print("[MiniPlayer] Transcription stopped")
+
                                 await MainActor.run {
                                     if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
                                         // Create title and date for processing
@@ -365,7 +373,6 @@ struct MainAppView: View {
                                         let date = Date()
 
                                         // Process the recording just like in RecordingView
-                                        let transcriptionService = TranscriptionService()
                                         transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
                                             DispatchQueue.main.async {
                                                 switch result {
@@ -400,7 +407,6 @@ struct MainAppView: View {
                                                     summaryService.generateSummary(for: text, type: serviceType)
 
                                                     // Update sermon when summary completes
-                                                    var cancellables = Set<AnyCancellable>()
                                                     summaryService.summaryPublisher
                                                         .combineLatest(summaryService.statusPublisher)
                                                         .sink { summaryText, status in
@@ -419,9 +425,10 @@ struct MainAppView: View {
                                                                     summaryStatus: "complete",
                                                                     id: sermonId
                                                                 )
+                                                                print("[MiniPlayer] Summary saved successfully")
                                                             }
                                                         }
-                                                        .store(in: &cancellables)
+                                                        .store(in: &self.cancellables)
 
                                                     print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                     sermonService.fetchSermons()

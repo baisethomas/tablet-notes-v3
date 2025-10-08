@@ -492,9 +492,13 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
 
-        // Use weak self to avoid crash during deallocation
-        DispatchQueue.main.async { [weak self] in
-            self?.isConnected = false
+        // Set isConnected directly if on main thread, otherwise skip during deallocation
+        if Thread.isMainThread {
+            isConnected = false
+        } else {
+            // Don't dispatch to main thread during deallocation - can cause crashes
+            // The published property will be cleaned up with the object
+            print("[AssemblyAI Live] Skipping isConnected update (not on main thread)")
         }
     }
     
