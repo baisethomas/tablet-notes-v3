@@ -58,34 +58,88 @@ class RecordingService: NSObject, ObservableObject {
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
-        
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillEnterForeground),
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+
+        // Handle audio session interruptions
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: recordingSession
+        )
     }
-    
+
     @objc private func appDidEnterBackground() {
-        // Ensure audio session remains active in background
+        // Ensure audio session remains active in background with background audio mode
         if isRecording {
             do {
+                // Set audio session to allow background recording
+                try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers])
                 try recordingSession.setActive(true)
+                print("[RecordingService] Audio session configured for background recording")
             } catch {
                 print("[RecordingService] Failed to maintain audio session in background: \(error)")
             }
         }
     }
-    
+
     @objc private func appWillEnterForeground() {
         // Reactivate audio session when returning to foreground
         if isRecording {
             do {
                 try recordingSession.setActive(true)
+
+                // Check if recorder is still valid, if not resume it
+                if let recorder = audioRecorder {
+                    if !recorder.isRecording && !isPaused {
+                        print("[RecordingService] Recorder stopped during backgrounding, resuming...")
+                        recorder.record()
+                    }
+                } else {
+                    print("[RecordingService] Audio recorder was deallocated, cannot resume")
+                }
             } catch {
                 print("[RecordingService] Failed to reactivate audio session: \(error)")
             }
+        }
+    }
+
+    @objc private func handleAudioSessionInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            print("[RecordingService] Audio session interrupted (phone call, alarm, etc.)")
+            // iOS will pause the recorder automatically
+
+        case .ended:
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                return
+            }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+
+            if options.contains(.shouldResume) && isRecording && !isPaused {
+                print("[RecordingService] Resuming recording after interruption")
+                do {
+                    try recordingSession.setActive(true)
+                    audioRecorder?.record()
+                } catch {
+                    print("[RecordingService] Failed to resume after interruption: \(error)")
+                }
+            }
+
+        @unknown default:
+            break
         }
     }
     

@@ -40,9 +40,22 @@
 		BBA138EB2E2CE80A004EEFEE /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BBE8020A2E9F0CA1008167E0 /* Exceptions for "TabletNotes" folder in "TabletNotes" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BB281F032DF2CC32007326CB /* TabletNotes */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BB281F062DF2CC32007326CB /* TabletNotes */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BBE8020A2E9F0CA1008167E0 /* Exceptions for "TabletNotes" folder in "TabletNotes" target */,
+			);
 			path = TabletNotes;
 			sourceTree = "<group>";
 		};
@@ -317,6 +330,7 @@
 				DEVELOPMENT_TEAM = 6G6W9N2YC6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TabletNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tablet Notes";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app requires access to the microphone to record sermons.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app uses speech recognition to transcribe sermons in real time.";
@@ -356,6 +370,7 @@
 				DEVELOPMENT_TEAM = 6G6W9N2YC6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TabletNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tablet Notes";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app requires access to the microphone to record sermons.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "This app uses speech recognition to transcribe sermons in real time.";

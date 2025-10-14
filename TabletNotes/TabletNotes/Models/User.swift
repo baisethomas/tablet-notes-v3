@@ -9,7 +9,7 @@ final class User {
     var profileImageURL: String?
     var createdAt: Date
     var isEmailVerified: Bool
-    var subscriptionTier: String // "free", "pro", "premium"
+    var subscriptionTier: String // "free", "premium"
     var subscriptionStatus: String // "active", "expired", "cancelled", "pending", "failed", "free"
     var subscriptionExpiry: Date?
     var subscriptionProductId: String? // StoreKit product ID
@@ -36,7 +36,7 @@ final class User {
         profileImageURL: String? = nil,
         createdAt: Date = Date(),
         isEmailVerified: Bool = false,
-        subscriptionTier: String = "pro",
+        subscriptionTier: String = "premium",
         subscriptionStatus: String = "active",
         subscriptionExpiry: Date? = Calendar.current.date(byAdding: .day, value: 14, to: Date()),
         subscriptionProductId: String? = nil,

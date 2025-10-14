@@ -490,8 +490,18 @@ struct RecordingView: View {
         } message: {
             Text(permissionMessage)
         }
-        .onReceive(recordingService.isRecordingPublisher) { isRecording in
+        .onReceive(recordingService.isRecordingPublisher) { recording in
             // Handle recording state changes
+            if !recording && isRecordingStarted {
+                // Recording stopped unexpectedly (backgrounding issue)
+                DispatchQueue.main.async {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isRecordingStarted = false
+                        isPaused = false
+                        transcriptProcessingError = "Recording was interrupted. The audio may have been saved."
+                    }
+                }
+            }
         }
         .onReceive(recordingService.recordingStoppedPublisher) { (audioURL, wasAutoStopped) in
             if wasAutoStopped {
@@ -679,8 +689,15 @@ struct RecordingView: View {
             if recordingService.isRecording {
                 print("[RecordingView] Recording already in progress, setting up UI state")
                 isRecordingStarted = true
+                isPaused = recordingService.isPaused
                 try? transcriptionService.startTranscription()
                 // Timer auto-starts with RecordingService
+            } else if isRecordingStarted {
+                // Recording was in progress but is no longer valid (backgrounding issue)
+                print("[RecordingView] Recording state mismatch detected, resetting UI")
+                isRecordingStarted = false
+                isPaused = false
+                transcriptProcessingError = "Recording was interrupted. Please start a new recording."
             }
         }
         #else

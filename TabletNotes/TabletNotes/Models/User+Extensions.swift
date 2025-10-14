@@ -103,22 +103,35 @@ extension User {
     /// Fixes subscription data inconsistencies by assigning appropriate product IDs
     /// Call this when a user has a valid subscription tier but missing product ID
     func fixSubscriptionDataInconsistency() {
+        // MIGRATION: Convert legacy "pro" tier to "premium"
+        if subscriptionTier == "pro" {
+            print("[User] Migrating legacy 'pro' tier to 'premium' for user: \(email)")
+            subscriptionTier = "premium"
+
+            // Update product ID if it was a pro product ID
+            if let productId = subscriptionProductId {
+                if productId.contains("pro.monthly") {
+                    subscriptionProductId = SubscriptionPlan.premiumMonthly.productId
+                    print("[User] Migrated pro monthly to premium monthly product ID")
+                } else if productId.contains("pro.annual") {
+                    subscriptionProductId = SubscriptionPlan.premiumAnnual.productId
+                    print("[User] Migrated pro annual to premium annual product ID")
+                }
+            }
+        }
+
         // Only fix if user has a valid paid tier but missing product ID
         guard isPaidUser && subscriptionProductId == nil else { return }
-        
+
         print("[User] Fixing subscription data inconsistency for user: \(email)")
         print("[User] Current tier: \(subscriptionTier), missing product ID")
-        
+
         // Assign the popular (annual) product ID for the user's tier
         switch subscriptionTierEnum {
-        case .pro:
-            subscriptionProductId = SubscriptionPlan.proAnnual.productId
-            print("[User] Assigned Pro Annual product ID: \(SubscriptionPlan.proAnnual.productId)")
-            
         case .premium:
             subscriptionProductId = SubscriptionPlan.premiumAnnual.productId
             print("[User] Assigned Premium Annual product ID: \(SubscriptionPlan.premiumAnnual.productId)")
-            
+
         case .free:
             // Free users shouldn't have inconsistent data, but just in case
             subscriptionProductId = nil

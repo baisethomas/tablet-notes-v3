@@ -4,37 +4,30 @@ import StoreKit
 // MARK: - Subscription Tiers
 enum SubscriptionTier: String, CaseIterable {
     case free = "free"
-    case pro = "pro"
     case premium = "premium"
-    
+
     var displayName: String {
         switch self {
         case .free:
             return "Free"
-        case .pro:
-            return "Pro"
         case .premium:
             return "Premium"
         }
     }
-    
+
     var description: String {
         switch self {
         case .free:
             return "Basic features with limitations"
-        case .pro:
-            return "All features with cloud sync"
         case .premium:
-            return "Everything in Pro plus priority support"
+            return "All features with extended recording time"
         }
     }
-    
+
     var color: String {
         switch self {
         case .free:
             return "gray"
-        case .pro:
-            return "blue"
         case .premium:
             return "purple"
         }
@@ -164,29 +157,20 @@ struct UsageLimits {
     let maxStorageGB: Double?      // nil = unlimited
     let maxNotesPerRecording: Int? // nil = unlimited
     let maxExportsPerMonth: Int?   // nil = unlimited
-    
+
     static let free = UsageLimits(
         maxRecordings: 5,
-        maxRecordingMinutes: 180, // 3 hours total per month (6 x 30min recordings)
+        maxRecordingMinutes: 150, // 2.5 hours total per month (5 x 30min recordings)
         maxRecordingDurationMinutes: 30, // 30 minutes per recording
         maxStorageGB: 1.0,
         maxNotesPerRecording: 20,
         maxExportsPerMonth: 3
     )
-    
-    static let pro = UsageLimits(
-        maxRecordings: nil,
-        maxRecordingMinutes: nil, // unlimited monthly total
-        maxRecordingDurationMinutes: 120, // 2 hours per recording
-        maxStorageGB: nil,
-        maxNotesPerRecording: nil,
-        maxExportsPerMonth: nil
-    )
-    
+
     static let premium = UsageLimits(
         maxRecordings: nil,
         maxRecordingMinutes: nil, // unlimited monthly total
-        maxRecordingDurationMinutes: 120, // 2 hours per recording
+        maxRecordingDurationMinutes: 90, // 90 minutes per recording
         maxStorageGB: nil,
         maxNotesPerRecording: nil,
         maxExportsPerMonth: nil
@@ -203,15 +187,13 @@ struct SubscriptionPlan {
     let features: [SubscriptionFeature]
     let limits: UsageLimits
     let isPopular: Bool
-    
+
     static let allPlans: [SubscriptionPlan] = [
         .free,
-        .proMonthly,
-        .proAnnual,
         .premiumMonthly,
         .premiumAnnual
     ]
-    
+
     static let free = SubscriptionPlan(
         tier: .free,
         productId: "free",
@@ -226,85 +208,43 @@ struct SubscriptionPlan {
         limits: .free,
         isPopular: false
     )
-    
-    static let proMonthly = SubscriptionPlan(
-        tier: .pro,
-        productId: "com.tabletnotes.pro.monthly",
-        displayPrice: "$4.99",
-        actualPrice: 4.99,
-        period: .monthly,
-        features: [
-            .audioRecording,
-            .basicNotes,
-            .localStorage,
-            .cloudSync,
-            .unlimitedRecordings,
-            .backgroundSync,
-            .autoBackup,
-            .priorityTranscription
-        ],
-        limits: .pro,
-        isPopular: false
-    )
-    
-    static let proAnnual = SubscriptionPlan(
-        tier: .pro,
-        productId: "com.tabletnotes.pro.annual",
-        displayPrice: "$39.99",
-        actualPrice: 39.99,
-        period: .annual,
-        features: [
-            .audioRecording,
-            .basicNotes,
-            .localStorage,
-            .cloudSync,
-            .unlimitedRecordings,
-            .backgroundSync,
-            .autoBackup,
-            .priorityTranscription
-        ],
-        limits: .pro,
-        isPopular: true
-    )
-    
+
     static let premiumMonthly = SubscriptionPlan(
         tier: .premium,
         productId: "com.tabletnotes.premium.monthly",
-        displayPrice: "$9.99",
-        actualPrice: 9.99,
+        displayPrice: "$4.99",
+        actualPrice: 4.99,
         period: .monthly,
         features: SubscriptionFeature.allCases,
         limits: .premium,
         isPopular: false
     )
-    
+
     static let premiumAnnual = SubscriptionPlan(
         tier: .premium,
         productId: "com.tabletnotes.premium.annual",
-        displayPrice: "$79.99",
-        actualPrice: 79.99,
+        displayPrice: "$39.99",
+        actualPrice: 39.99,
         period: .annual,
         features: SubscriptionFeature.allCases,
         limits: .premium,
-        isPopular: false
+        isPopular: true
     )
-    
+
     var annualSavings: String? {
         guard period == .annual else { return nil }
-        
+
         let monthlyEquivalent: Decimal
         switch tier {
-        case .pro:
-            monthlyEquivalent = SubscriptionPlan.proMonthly.actualPrice * 12
         case .premium:
             monthlyEquivalent = SubscriptionPlan.premiumMonthly.actualPrice * 12
         case .free:
             return nil
         }
-        
+
         let savings = monthlyEquivalent - actualPrice
         let savingsPercentage = (savings / monthlyEquivalent) * 100
-        
+
         return "\(Int(NSDecimalNumber(decimal: savingsPercentage).intValue))% off"
     }
 }
