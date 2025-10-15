@@ -9,8 +9,10 @@ struct SupabaseProfile: Codable {
     let createdAt: Date
     let isEmailVerified: Bool
     let subscriptionTier: String
+    let subscriptionStatus: String
     let subscriptionExpiry: Date?
-    
+    let subscriptionProductId: String?
+
     enum CodingKeys: String, CodingKey {
         case id
         case email
@@ -19,9 +21,11 @@ struct SupabaseProfile: Codable {
         case createdAt = "created_at"
         case isEmailVerified = "is_email_verified"
         case subscriptionTier = "subscription_tier"
+        case subscriptionStatus = "subscription_status"
         case subscriptionExpiry = "subscription_expiry"
+        case subscriptionProductId = "subscription_product_id"
     }
-    
+
     // Convert to SwiftData User model
     func toUser() -> User {
         return User(
@@ -32,7 +36,9 @@ struct SupabaseProfile: Codable {
             createdAt: createdAt,
             isEmailVerified: isEmailVerified,
             subscriptionTier: subscriptionTier,
-            subscriptionExpiry: subscriptionExpiry
+            subscriptionStatus: subscriptionStatus,
+            subscriptionExpiry: subscriptionExpiry,
+            subscriptionProductId: subscriptionProductId
         )
     }
 }

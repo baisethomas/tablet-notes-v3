@@ -6,7 +6,7 @@ CREATE TABLE profiles (
     profile_image_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     is_email_verified BOOLEAN DEFAULT FALSE,
-    subscription_tier TEXT DEFAULT 'pro',
+    subscription_tier TEXT DEFAULT 'premium',
     subscription_status TEXT DEFAULT 'active',
     subscription_expiry TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '14 days'),
     subscription_product_id TEXT,
