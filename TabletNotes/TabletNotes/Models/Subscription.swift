@@ -286,7 +286,7 @@ enum SubscriptionStatus: String {
     case pending = "pending"
     case failed = "failed"
     case free = "free"
-    
+
     var displayName: String {
         switch self {
         case .active:
@@ -303,7 +303,7 @@ enum SubscriptionStatus: String {
             return "Free"
         }
     }
-    
+
     var color: String {
         switch self {
         case .active:
@@ -314,6 +314,48 @@ enum SubscriptionStatus: String {
             return "orange"
         case .free:
             return "gray"
+        }
+    }
+}
+
+// MARK: - Subscription Trial State
+enum SubscriptionTrialState: Equatable {
+    case free
+    case trialActive(daysLeft: Int)
+    case trialExpiringSoon(daysLeft: Int)
+    case trialExpired
+    case paidActive
+
+    var displayMessage: String {
+        switch self {
+        case .free:
+            return "Free Plan"
+        case .trialActive(let days):
+            return "\(days) days left in trial"
+        case .trialExpiringSoon(let days):
+            return "Trial expires in \(days) day\(days == 1 ? "" : "s")"
+        case .trialExpired:
+            return "Trial expired"
+        case .paidActive:
+            return "Premium Active"
+        }
+    }
+
+    var shouldShowBanner: Bool {
+        switch self {
+        case .trialExpiringSoon, .trialExpired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var shouldShowModal: Bool {
+        switch self {
+        case .trialExpired:
+            return true
+        default:
+            return false
         }
     }
 }

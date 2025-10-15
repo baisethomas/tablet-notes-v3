@@ -9,6 +9,33 @@ extension User {
     var subscriptionStatusEnum: SubscriptionStatus {
         return SubscriptionStatus(rawValue: subscriptionStatus) ?? .free
     }
+
+    var trialState: SubscriptionTrialState {
+        // If user has a paid subscription, no trial state applies
+        if subscriptionStatusEnum == .active && subscriptionTierEnum != .free {
+            if let productId = subscriptionProductId, !productId.isEmpty {
+                return .paidActive
+            }
+        }
+
+        // Check trial status
+        guard let expiry = subscriptionExpiry else {
+            return .free
+        }
+
+        let now = Date()
+        let daysRemaining = Calendar.current.dateComponents([.day], from: now, to: expiry).day ?? 0
+
+        if now >= expiry {
+            return .trialExpired
+        } else if daysRemaining <= 2 {
+            return .trialExpiringSoon(daysLeft: daysRemaining)
+        } else if subscriptionTierEnum == .premium && subscriptionStatusEnum == .active {
+            return .trialActive(daysLeft: daysRemaining)
+        }
+
+        return .free
+    }
     
     var isPaidUser: Bool {
         print("[User] isPaidUser check - tier: \(subscriptionTier), tierEnum: \(subscriptionTierEnum), status: \(subscriptionStatus), statusEnum: \(subscriptionStatusEnum)")

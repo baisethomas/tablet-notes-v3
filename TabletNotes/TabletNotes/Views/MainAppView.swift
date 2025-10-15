@@ -35,6 +35,9 @@ struct MainAppView: View {
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
     @StateObject private var transcriptionService = TranscriptionService()
+    @StateObject private var trialPromptManager = TrialPromptManager.shared
+    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var showTrialPrompt = false
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -473,6 +476,45 @@ struct MainAppView: View {
             .ignoresSafeArea(edges: .bottom)
             .background(Color.adaptiveBackground)
             .customColorScheme(settingsService.appTheme.colorScheme)
+            .overlay(alignment: .top) {
+                // Trial expiring soon banner
+                if let user = authManager.currentUser,
+                   case .trialExpiringSoon(let daysLeft) = user.trialState {
+                    TrialExpiringBanner(daysLeft: daysLeft) {
+                        currentScreen = .settings
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .overlay {
+                // Trial expired modal
+                if showTrialPrompt, let user = authManager.currentUser {
+                    SubscriptionPromptModal(
+                        trialState: user.trialState,
+                        onDismiss: {
+                            withAnimation {
+                                showTrialPrompt = false
+                                trialPromptManager.recordDismissal()
+                            }
+                        },
+                        onSubscribe: {
+                            withAnimation {
+                                showTrialPrompt = false
+                            }
+                            currentScreen = .settings
+                        }
+                    )
+                    .transition(.opacity)
+                }
+            }
+            .onAppear {
+                checkTrialStatus()
+            }
+            .onChange(of: authManager.currentUser) { _, newUser in
+                if newUser != nil {
+                    checkTrialStatus()
+                }
+            }
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
                     Text("Select Service Type")
@@ -568,6 +610,19 @@ struct MainAppView: View {
             return true
         default:
             return false
+        }
+    }
+
+    private func checkTrialStatus() {
+        guard let user = authManager.currentUser else { return }
+
+        let trialState = user.trialState
+
+        // Check if we should show the trial prompt
+        if trialPromptManager.shouldShowPrompt(for: trialState) {
+            withAnimation {
+                showTrialPrompt = true
+            }
         }
     }
 }
