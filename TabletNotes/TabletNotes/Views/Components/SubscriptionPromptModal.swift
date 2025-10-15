@@ -38,25 +38,25 @@ struct SubscriptionPromptModal: View {
 
                 // Features list
                 VStack(alignment: .leading, spacing: 16) {
-                    FeatureRow(
+                    SubscriptionFeatureRow(
                         icon: "timer",
                         title: "90-Minute Recordings",
                         description: "Extended recording time for longer sermons"
                     )
 
-                    FeatureRow(
+                    SubscriptionFeatureRow(
                         icon: "infinity",
                         title: "Unlimited Recordings",
                         description: "Record as many sermons as you need"
                     )
 
-                    FeatureRow(
+                    SubscriptionFeatureRow(
                         icon: "icloud.fill",
                         title: "Cloud Sync",
                         description: "Access your sermons from any device"
                     )
 
-                    FeatureRow(
+                    SubscriptionFeatureRow(
                         icon: "waveform.path.ecg",
                         title: "AI Transcription & Summaries",
                         description: "Automatic transcription and smart summaries"
@@ -117,8 +117,8 @@ struct SubscriptionPromptModal: View {
     }
 }
 
-// MARK: - Feature Row Component
-struct FeatureRow: View {
+// MARK: - Subscription Feature Row Component
+private struct SubscriptionFeatureRow: View {
     let icon: String
     let title: String
     let description: String
