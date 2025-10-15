@@ -415,6 +415,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             }
             
             print("[SupabaseAuthService] Successfully fetched profile for: \(profile.name)")
+            print("[SupabaseAuthService] Subscription details - Tier: \(profile.subscriptionTier), Status: \(profile.subscriptionStatus), Expiry: \(profile.subscriptionExpiry?.description ?? "none")")
             return profile.toUser()
             
         } catch {

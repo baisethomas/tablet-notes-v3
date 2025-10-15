@@ -683,9 +683,8 @@ struct SubscriptionPromptView: View {
                                 .fontWeight(.semibold)
                             
                             VStack(spacing: 12) {
-                                StaticPricingCard(plan: .proMonthly)
-                                StaticPricingCard(plan: .proAnnual, isRecommended: true)
-                                StaticPricingCard(plan: .premiumAnnual)
+                                StaticPricingCard(plan: .premiumMonthly)
+                                StaticPricingCard(plan: .premiumAnnual, isRecommended: true)
                             }
                         }
                         .padding(.horizontal, 24)

@@ -11,15 +11,26 @@ extension User {
     }
     
     var isPaidUser: Bool {
-        guard subscriptionTierEnum != .free else { return false }
-        guard subscriptionStatusEnum == .active else { return false }
-        
+        print("[User] isPaidUser check - tier: \(subscriptionTier), tierEnum: \(subscriptionTierEnum), status: \(subscriptionStatus), statusEnum: \(subscriptionStatusEnum)")
+
+        guard subscriptionTierEnum != .free else {
+            print("[User] isPaidUser = false (tier is free)")
+            return false
+        }
+        guard subscriptionStatusEnum == .active else {
+            print("[User] isPaidUser = false (status is not active: \(subscriptionStatusEnum))")
+            return false
+        }
+
         // Check if subscription is still valid
         if let expiry = subscriptionExpiry {
-            return Date() < expiry
+            let isValid = Date() < expiry
+            print("[User] isPaidUser = \(isValid) (expiry check: \(expiry))")
+            return isValid
         }
-        
+
         // If no expiry date, assume it's valid (for legacy users)
+        print("[User] isPaidUser = true (no expiry, status is active)")
         return subscriptionStatusEnum == .active
     }
     
@@ -53,7 +64,9 @@ extension User {
     }
     
     var usageLimits: UsageLimits {
-        return currentPlan.limits
+        let limits = currentPlan.limits
+        print("[User] Usage limits for \(email): tier=\(subscriptionTier), maxDuration=\(limits.maxRecordingDurationMinutes ?? -1) minutes")
+        return limits
     }
     
     // MARK: - Feature Access
