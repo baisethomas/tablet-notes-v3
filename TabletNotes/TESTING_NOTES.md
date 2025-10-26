@@ -2,6 +2,75 @@
 
 ---
 
+## Update 3 - Network Disconnection Fix
+**Build Date:** October 25, 2025
+
+### What Was Fixed
+Fixed a critical crash that occurred when:
+1. Recording was in progress with live transcription active
+2. WiFi/network was turned off or lost connection
+3. App would crash or become unresponsive
+
+### What Changed
+- Live transcription now gracefully handles network disconnections
+- Audio recording continues uninterrupted when network is lost
+- Added 10-second timeout to network requests to prevent hanging
+- WebSocket connections close cleanly when network fails
+- User sees friendly error message instead of crash
+
+### What to Test
+
+**Test 1: WiFi Disconnection During Recording**
+1. Start a new recording
+2. Let it record for ~30 seconds with live transcription active
+3. Turn OFF WiFi on your phone
+4. **Expected:**
+   - App does NOT crash
+   - Recording continues
+   - Live transcription stops
+   - Message shown: "Network connection lost. Recording continues, but live transcription is paused."
+5. Turn WiFi back ON
+6. Stop recording normally
+7. **Expected:** Audio file is complete with no gaps
+
+**Test 2: Airplane Mode During Recording**
+1. Start recording
+2. Enable Airplane Mode after 1 minute
+3. **Expected:** Same graceful behavior as Test 1
+4. Continue recording for another minute
+5. Disable Airplane Mode
+6. Stop recording
+7. **Expected:** Full audio captured, no data loss
+
+**Test 3: Poor Network Conditions**
+1. Start recording in area with spotty WiFi
+2. Let network drop and reconnect naturally
+3. **Expected:** App handles intermittent connection without crashing
+4. Recording remains stable throughout
+
+**Test 4: Network Loss During Startup**
+1. Turn OFF WiFi before opening app
+2. Open app and try to start recording
+3. **Expected:**
+   - Recording still works (local only)
+   - Transcription may not start or shows error
+   - No crash or hang
+
+### Known Behaviors
+- Live transcription requires active network connection
+- When network is lost, transcription pauses but recording continues
+- Audio is saved locally and can be transcribed later
+- Reconnecting network does NOT auto-resume live transcription (must stop/start recording)
+
+### What to Report
+If you encounter any issues:
+1. When did the network loss occur (during recording start, middle, end)?
+2. Did the app crash, freeze, or show an error message?
+3. Was the audio file saved completely?
+4. Any error messages displayed?
+
+---
+
 ## Update 2 - Trial System & Subscription Changes
 **Build Date:** October 15, 2025
 
