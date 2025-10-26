@@ -70,6 +70,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10 // 10 second timeout to prevent hanging
 
         // Try to add authentication if available, but don't require it for free users
         do {
@@ -113,6 +114,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10 // 10 second timeout to prevent hanging
 
         let requestBody = [
             "expires_in": 3600 // 1 hour
@@ -188,11 +190,30 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 self?.startListeningForMessages()
             case .failure(let error):
                 print("[AssemblyAI Live] WebSocket error: \(error)")
-                DispatchQueue.main.async {
-                    self?.isConnected = false
-                    self?.error = error.localizedDescription
-                }
+                self?.handleWebSocketDisconnection(error: error)
                 // Don't continue listening on failure
+            }
+        }
+    }
+
+    private func handleWebSocketDisconnection(error: Error) {
+        print("[AssemblyAI Live] Handling WebSocket disconnection: \(error.localizedDescription)")
+
+        // Stop audio capture immediately to prevent further send attempts
+        stopAudioCapture()
+
+        // Close the WebSocket connection
+        closeWebSocketConnection()
+
+        DispatchQueue.main.async {
+            self.isConnected = false
+
+            // Determine if it's a network error
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain {
+                self.error = "Network connection lost. Recording continues, but live transcription is paused."
+            } else {
+                self.error = error.localizedDescription
             }
         }
     }
@@ -413,8 +434,8 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func sendAudioData(_ buffer: AVAudioPCMBuffer) {
-        guard isConnected else {
-            print("[AssemblyAI Live] Not connected, skipping audio data")
+        guard isConnected, webSocketTask != nil else {
+            // Silently skip if not connected or WebSocket is nil
             return
         }
 
