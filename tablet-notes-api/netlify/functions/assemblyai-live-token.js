@@ -79,16 +79,12 @@ exports.handler = withLogging('assemblyai-live-token', async (event, context) =>
     
     // Generate temporary session token from AssemblyAI with circuit breaker
     const tokenRequestWithTimeout = withTimeout(
-      () => assemblyAIBreaker.execute(() => fetch('https://api.assemblyai.com/v2/realtime/token', {
-        method: 'POST',
+      () => assemblyAIBreaker.execute(() => fetch(`https://streaming.assemblyai.com/v3/token?expires_in_seconds=3600`, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${assemblyaiApiKey}`,
-          'Content-Type': 'application/json',
+          'Authorization': assemblyaiApiKey,
           'User-Agent': 'TabletNotes/1.0'
-        },
-        body: JSON.stringify({
-          expires_in: 3600 // 1 hour
-        })
+        }
       })),
       10000 // 10 second timeout
     );
@@ -107,15 +103,15 @@ exports.handler = withLogging('assemblyai-live-token', async (event, context) =>
     }
 
     const tokenData = await response.json();
-    
+
     logger.info('Session token generated successfully', {
       userId: user.id,
-      expiresIn: tokenData.expires_in
+      expiresIn: tokenData.expires_in_seconds
     });
-    
+
     const responseData = {
       sessionToken: tokenData.token,
-      expiresIn: tokenData.expires_in,
+      expiresIn: tokenData.expires_in_seconds,
       userId: user.id,
       metadata: {
         generatedAt: new Date().toISOString(),
