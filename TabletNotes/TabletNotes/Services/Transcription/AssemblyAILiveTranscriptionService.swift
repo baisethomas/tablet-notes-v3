@@ -106,20 +106,15 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             throw NSError(domain: "APIKeyError", code: 1, userInfo: [NSLocalizedDescriptionKey: "AssemblyAI API key not configured. Please add your API key to AssemblyAIKey.swift"])
         }
 
-        guard let url = URL(string: "\(AssemblyAIConfig.baseURL)/realtime/token") else {
+        // Use v3 streaming API endpoint with query parameters
+        guard let url = URL(string: "https://streaming.assemblyai.com/v3/token?expires_in_seconds=600&max_session_duration_seconds=10800") else {
             throw NSError(domain: "InvalidURL", code: 1, userInfo: nil)
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpMethod = "GET"
         request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10 // 10 second timeout to prevent hanging
-
-        let requestBody = [
-            "expires_in": 3600 // 1 hour
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -138,6 +133,11 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func startWebSocketConnection() async throws {
+        // Ensure we have a session token
+        guard let token = sessionToken else {
+            throw NSError(domain: "NoSessionToken", code: 1, userInfo: [NSLocalizedDescriptionKey: "No session token available"])
+        }
+
         // Determine the actual sample rate we'll be sending
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
@@ -147,26 +147,27 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         let supportedRates: [Double] = [8000, 16000, 22050, 44100, 48000]
         let actualSampleRate = supportedRates.contains(inputSampleRate) ? inputSampleRate : sampleRate
 
-        // Try Universal-Streaming v3 first, then fallback to v2
+        // Connect to Universal-Streaming v3 using the session token
         var urlComponents = URLComponents(string: "wss://streaming.assemblyai.com/v3/ws")!
         urlComponents.queryItems = [
             URLQueryItem(name: "sample_rate", value: String(Int(actualSampleRate))),
-            URLQueryItem(name: "encoding", value: "pcm_s16le")
+            URLQueryItem(name: "encoding", value: "pcm_s16le"),
+            URLQueryItem(name: "token", value: token)
         ]
 
         guard let url = urlComponents.url else {
             throw NSError(domain: "InvalidWebSocketURL", code: 1, userInfo: nil)
         }
 
-        print("[AssemblyAI Live] Connecting to Universal-Streaming v3 with \(Int(actualSampleRate))Hz: \(url)")
+        print("[AssemblyAI Live] Connecting to Universal-Streaming v3 with \(Int(actualSampleRate))Hz using session token")
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 300
         let session = URLSession(configuration: config)
 
-        var request = URLRequest(url: url)
-        request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
+        let request = URLRequest(url: url)
+        // No Authorization header needed when using token query parameter
 
         webSocketTask = session.webSocketTask(with: request)
 
