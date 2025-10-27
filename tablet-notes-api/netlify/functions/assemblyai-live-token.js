@@ -78,8 +78,9 @@ exports.handler = withLogging('assemblyai-live-token', async (event, context) =>
     logger.apiCall('AssemblyAI', 'realtime/token', { userId: user.id });
     
     // Generate temporary session token from AssemblyAI with circuit breaker
+    // Note: v3 API max is 600 seconds (10 minutes)
     const tokenRequestWithTimeout = withTimeout(
-      () => assemblyAIBreaker.execute(() => fetch(`https://streaming.assemblyai.com/v3/token?expires_in_seconds=3600`, {
+      () => assemblyAIBreaker.execute(() => fetch(`https://streaming.assemblyai.com/v3/token?expires_in_seconds=600`, {
         method: 'GET',
         headers: {
           'Authorization': assemblyaiApiKey,
