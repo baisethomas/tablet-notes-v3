@@ -9,17 +9,23 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     private var fullTranscript: String = ""
     private var sessionToken: String?
     private let supabase = SupabaseService.shared
-    
-    var transcriptPublisher: AnyPublisher<String, Never> { 
-        transcriptSubject.eraseToAnyPublisher() 
+    private var wasInterrupted = false
+
+    var transcriptPublisher: AnyPublisher<String, Never> {
+        transcriptSubject.eraseToAnyPublisher()
     }
-    
+
     @Published var isConnected = false
     @Published var error: String?
-    
+
     private let sampleRate: Double = 44100 // Use higher quality audio
     private var connectionAttempts = 0
     private let maxConnectionAttempts = 3
+
+    override init() {
+        super.init()
+        setupAudioInterruptionObserver()
+    }
     
     func startLiveTranscription() async throws {
         guard !isConnected else { return }
@@ -524,7 +530,71 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         }
     }
     
+    private func setupAudioInterruptionObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleAudioSessionInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            print("[AssemblyAI Live] Audio session interrupted (phone call, alarm, etc.)")
+            if isConnected && audioEngine.isRunning {
+                // Mark that we were interrupted
+                wasInterrupted = true
+
+                // Stop the audio engine
+                audioEngine.stop()
+                audioEngine.inputNode.removeTap(onBus: 0)
+                print("[AssemblyAI Live] Audio engine stopped due to interruption")
+            }
+
+        case .ended:
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                print("[AssemblyAI Live] Interruption ended but no options provided")
+                return
+            }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+
+            if options.contains(.shouldResume) && wasInterrupted && isConnected {
+                print("[AssemblyAI Live] Resuming audio engine after interruption")
+                do {
+                    // Reactivate audio session
+                    try AVAudioSession.sharedInstance().setActive(true)
+
+                    // Restart audio capture
+                    try startAudioCapture()
+
+                    wasInterrupted = false
+                    print("[AssemblyAI Live] Audio engine resumed successfully")
+                } catch {
+                    print("[AssemblyAI Live] Failed to resume audio engine after interruption: \(error)")
+                    DispatchQueue.main.async {
+                        self.error = "Failed to resume live transcription after interruption"
+                    }
+                }
+            } else {
+                print("[AssemblyAI Live] Interruption ended but should not resume")
+                wasInterrupted = false
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
     deinit {
+        NotificationCenter.default.removeObserver(self)
         stopLiveTranscription()
     }
 }

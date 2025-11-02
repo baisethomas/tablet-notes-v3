@@ -120,22 +120,47 @@ class RecordingService: NSObject, ObservableObject {
         switch type {
         case .began:
             print("[RecordingService] Audio session interrupted (phone call, alarm, etc.)")
-            // iOS will pause the recorder automatically
+            // iOS will pause the recorder automatically, but we need to update our state
+            if isRecording && !isPaused {
+                // Stop the duration timer since recording is paused
+                stopDurationTimer()
+
+                // Update the paused state
+                Task { @MainActor in
+                    isPaused = true
+                }
+                isPausedSubject.send(true)
+                print("[RecordingService] Recording paused due to interruption")
+            }
 
         case .ended:
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                print("[RecordingService] Interruption ended but no options provided")
                 return
             }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
 
-            if options.contains(.shouldResume) && isRecording && !isPaused {
+            if options.contains(.shouldResume) && isRecording && isPaused {
                 print("[RecordingService] Resuming recording after interruption")
                 do {
                     try recordingSession.setActive(true)
                     audioRecorder?.record()
+
+                    // Resume the duration timer
+                    startDurationTimer()
+
+                    // Update the paused state
+                    Task { @MainActor in
+                        isPaused = false
+                    }
+                    isPausedSubject.send(false)
+                    print("[RecordingService] Recording resumed successfully")
                 } catch {
                     print("[RecordingService] Failed to resume after interruption: \(error)")
+                    // Keep paused state since we couldn't resume
                 }
+            } else {
+                print("[RecordingService] Interruption ended but should not resume: shouldResume=\(options.contains(.shouldResume)), isRecording=\(isRecording), isPaused=\(isPaused)")
             }
 
         @unknown default:
