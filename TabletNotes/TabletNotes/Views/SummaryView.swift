@@ -17,6 +17,7 @@ struct SummaryView: View {
     let noteService: NoteService
     var onNext: (() -> Void)?
     @StateObject private var summaryService = SummaryService()
+    @State private var title: String? = nil
     @State private var summary: String? = nil
     @State private var status: String = "idle"
     @State private var cancellables = Set<AnyCancellable>()
@@ -93,6 +94,12 @@ struct SummaryView: View {
         .ignoresSafeArea(edges: .bottom)
         .onAppear {
             summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
+            summaryService.titlePublisher
+                .receive(on: RunLoop.main)
+                .sink { value in
+                    title = value
+                }
+                .store(in: &cancellables)
             summaryService.summaryPublisher
                 .receive(on: RunLoop.main)
                 .sink { value in
@@ -110,10 +117,11 @@ struct SummaryView: View {
 
     private func saveSermonAndContinue() {
         guard let summaryText = summary else { onNext?(); return }
-        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        // Use AI-generated title if available, otherwise fall back to date-based title
+        let sermonTitle = title ?? "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         let notes = noteService.currentNotes // Use the current notes array from noteService
-        let summaryModel = Summary(text: summaryText, type: serviceType, status: status)
+        let summaryModel = Summary(title: sermonTitle, text: summaryText, type: serviceType, status: status)
         guard let audioFileURL = audioFileURL else {
             print("[SummaryView] No audioFileURL provided!")
             return
@@ -123,11 +131,11 @@ struct SummaryView: View {
             print("[SummaryView] No transcript provided!")
             return
         }
-        sermonService.saveSermon(title: title, audioFileURL: audioFileURL, date: date, serviceType: serviceType, speaker: nil, transcript: transcript, notes: notes, summary: summaryModel)
-        
+        sermonService.saveSermon(title: sermonTitle, audioFileURL: audioFileURL, date: date, serviceType: serviceType, speaker: nil, transcript: transcript, notes: notes, summary: summaryModel)
+
         // Clear the session notes after successfully saving to sermon
         noteService.clearSession()
-        
+
         onNext?()
     }
     

@@ -3,8 +3,10 @@ import Combine
 import Supabase
 
 class SummaryService: ObservableObject, SummaryServiceProtocol {
+    private let titleSubject = CurrentValueSubject<String?, Never>(nil)
     private let summarySubject = CurrentValueSubject<String?, Never>(nil)
     let statusSubject = CurrentValueSubject<String, Never>("idle") // idle, pending, complete, failed
+    var titlePublisher: AnyPublisher<String?, Never> { titleSubject.eraseToAnyPublisher() }
     var summaryPublisher: AnyPublisher<String?, Never> { summarySubject.eraseToAnyPublisher() }
     var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
     private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
@@ -65,6 +67,7 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         }
         
         statusSubject.send("pending")
+        titleSubject.send(nil)
         summarySubject.send(nil)
         
         Task {
@@ -163,13 +166,16 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
             
             // Check if response has nested structure with success/data
             let summary: String
+            let title: String?
             if let success = json["success"] as? Bool, success,
                let data = json["data"] as? [String: Any],
                let summaryText = data["summary"] as? String {
                 summary = summaryText
+                title = data["title"] as? String
             } else if let summaryText = json["summary"] as? String {
                 // Fallback to flat structure
                 summary = summaryText
+                title = json["title"] as? String
             } else {
                 print("[SummaryService] ERROR: No summary found in response structure")
                 DispatchQueue.main.async {
@@ -180,7 +186,11 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
                 return
             }
             print("[SummaryService] Summary content received (first 200 chars): \(summary.prefix(200))...")
+            if let title = title {
+                print("[SummaryService] Title received: \(title)")
+            }
             DispatchQueue.main.async {
+                self.titleSubject.send(title?.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.summarySubject.send(summary.trimmingCharacters(in: .whitespacesAndNewlines))
                 self.statusSubject.send("complete")
                 self.errorSubject.send(nil)
@@ -214,11 +224,21 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
     func generateBasicSummary(for transcript: String, type: String) {
         print("[SummaryService] Generating basic summary as fallback")
         statusSubject.send("pending")
-        
+
         // Create a basic extractive summary
         let sentences = transcript.components(separatedBy: ". ")
         let wordCount = transcript.components(separatedBy: " ").count
-        
+
+        // Generate a basic title
+        let basicTitle: String
+        if let firstSentence = sentences.first?.trimmingCharacters(in: .whitespacesAndNewlines), !firstSentence.isEmpty {
+            // Use first sentence, truncated if needed
+            let truncated = firstSentence.prefix(60)
+            basicTitle = String(truncated) + (firstSentence.count > 60 ? "..." : "")
+        } else {
+            basicTitle = "\(type) Summary"
+        }
+
         let basicSummary: String
         if wordCount < 100 {
             basicSummary = "Brief \(type.lowercased()): \(transcript)"
@@ -227,25 +247,26 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
             let firstSentences = Array(sentences.prefix(3)).joined(separator: ". ")
             let keyPoints = sentences.filter { sentence in
                 let lowercased = sentence.lowercased()
-                return lowercased.contains("god") || lowercased.contains("jesus") || 
+                return lowercased.contains("god") || lowercased.contains("jesus") ||
                        lowercased.contains("christ") || lowercased.contains("lord") ||
                        lowercased.contains("scripture") || lowercased.contains("bible") ||
                        lowercased.contains("prayer") || lowercased.contains("faith")
             }
-            
+
             let keyPointsText = Array(keyPoints.prefix(2)).joined(separator: ". ")
             basicSummary = """
             **\(type) Summary**
-            
+
             **Opening:** \(firstSentences)
-            
+
             **Key Points:** \(keyPointsText.isEmpty ? "Main themes focus on faith and spiritual growth." : keyPointsText)
-            
+
             **Note:** This is a basic summary generated offline. For a more detailed AI-powered summary, please try again when the summarization service is available.
             """
         }
-        
+
         DispatchQueue.main.async {
+            self.titleSubject.send(basicTitle)
             self.summarySubject.send(basicSummary)
             self.statusSubject.send("complete")
         }

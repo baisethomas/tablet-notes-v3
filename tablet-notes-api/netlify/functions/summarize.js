@@ -192,6 +192,8 @@ exports.handler = withLogging('summarize', async (event, context) => {
 
 You are a theological assistant designed to create accurate, faithful summaries of Christian messages based on transcripts. Your role is to serve attendees who were present during the live recording by providing a structured summary that captures exactly what was taught, tailored to both the service type and user tier.
 
+**CRITICAL REQUIREMENT**: You MUST begin your response with a concise, descriptive title (5-10 words) on the first line, formatted as "TITLE: [Your Title Here]", followed by a blank line, then the full summary content. The title should capture the essence of the message, main theme, or key scripture reference.
+
 **User Tier: ${userTier}**
 **Service Type: ${actualServiceType}**
 
@@ -411,16 +413,35 @@ Before finalizing, ensure that everything in your summary can be directly traced
     
     const completion = await completionWithTimeout();
 
-    const summary = completion.choices[0].message.content;
-    
+    const fullContent = completion.choices[0].message.content;
+
+    // Extract title from the response
+    let title = null;
+    let summary = fullContent;
+
+    // Check if response starts with "TITLE: "
+    const titleMatch = fullContent.match(/^TITLE:\s*(.+?)(?:\n\n|\n)/);
+    if (titleMatch) {
+      title = titleMatch[1].trim();
+      // Remove the title line and any following blank lines from the summary
+      summary = fullContent.substring(titleMatch[0].length).trim();
+    } else {
+      // Fallback: use first 60 characters or first sentence as title
+      const firstLine = fullContent.split('\n')[0];
+      const firstSentence = fullContent.split(/[.!?]\s/)[0];
+      title = (firstLine.length <= 60 ? firstLine : firstSentence.substring(0, 60) + '...').trim();
+    }
+
     logger.info('Summarization completed successfully', {
       userId: user.id,
+      title: title,
       summaryLength: summary.length,
       tokensUsed: completion.usage?.total_tokens,
       model: 'gpt-3.5-turbo'
     });
-    
+
     const responseData = {
+      title,
       summary,
       usage: completion.usage,
       userId: user.id,
@@ -430,7 +451,8 @@ Before finalizing, ensure that everything in your summary can be directly traced
         includeScripture,
         tone,
         originalTextLength: sanitizedText.length,
-        summaryLength: summary.length
+        summaryLength: summary.length,
+        titleLength: title?.length || 0
       }
     };
     
