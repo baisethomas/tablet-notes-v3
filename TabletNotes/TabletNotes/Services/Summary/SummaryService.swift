@@ -62,7 +62,7 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
             do {
                 let refreshedSession = try await supabase.auth.refreshSession()
                 print("[SummaryService] Token refreshed successfully")
-                return refreshedSession.session.accessToken
+                return refreshedSession.accessToken
             } catch {
                 print("[SummaryService] Token refresh failed: \(error.localizedDescription)")
                 throw SummaryError.auth("Authentication failed. Please sign in again.")

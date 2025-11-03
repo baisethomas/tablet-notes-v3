@@ -97,7 +97,7 @@ class AssemblyAITranscriptionService: ObservableObject {
             do {
                 let refreshedSession = try await supabase.auth.refreshSession()
                 print("[API] Token refreshed successfully")
-                return refreshedSession.session.accessToken
+                return refreshedSession.accessToken
             } catch {
                 print("[API] Token refresh failed: \(error.localizedDescription)")
                 throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "Authentication failed. Please sign in again."])
