@@ -2,6 +2,77 @@
 
 ---
 
+## Update 4 - AssemblyAI Live Transcription Fix
+**Build Date:** November 2, 2025
+
+### What Was Fixed
+Fixed critical issues preventing live transcription from working:
+1. Users were getting 401 Unauthorized errors when trying to use live transcription
+2. AssemblyAI API had changed from v2 to v3, breaking token generation
+3. iOS app wasn't properly using session tokens for WebSocket authentication
+
+### What Changed
+**Backend (Netlify Function):**
+- Updated to AssemblyAI v3 streaming API endpoint
+- Changed from POST to GET request for token generation
+- Token expiration set to 10 minutes (600 seconds)
+- Session duration extended to 3 hours (10,800 seconds) for long recordings
+
+**iOS App:**
+- WebSocket now uses session token for authentication
+- Updated direct API fallback to use v3 endpoint
+- Removed hardcoded API key from WebSocket connection (more secure)
+
+### What to Test
+
+**Test 1: Basic Live Transcription**
+1. Start a new recording
+2. **Expected:**
+   - Live transcription connects within 1-2 seconds
+   - Transcript appears in real-time as you speak
+   - No error messages about authorization
+
+**Test 2: Extended Recording (10+ Minutes)**
+1. Start a recording with live transcription
+2. Let it run for at least 12-15 minutes while speaking periodically
+3. **Expected:**
+   - Transcription continues working past the 10-minute mark
+   - No disconnections or token expiration errors
+   - Session remains active for the full duration
+
+**Test 3: Long Recording (30+ Minutes)**
+1. Start a recording with live transcription
+2. Let it run for 30+ minutes (simulate a sermon)
+3. **Expected:**
+   - Transcription works continuously
+   - No interruptions in service
+   - Full transcript captured
+
+**Test 4: Network Reconnection**
+1. Start recording with live transcription
+2. Turn OFF WiFi briefly (10-15 seconds)
+3. Turn WiFi back ON
+4. **Expected:**
+   - Recording continues (as before)
+   - Live transcription may pause during disconnection
+   - Audio is still captured locally
+
+### What to Report
+If you encounter any issues:
+1. What error message did you see (if any)?
+2. How long was the recording when the issue occurred?
+3. Did live transcription work at all, or fail immediately?
+4. Are you on WiFi or cellular data?
+5. Screenshot of any error messages
+
+### Known Behaviors
+- Session tokens expire after 10 minutes, but sessions can last up to 3 hours
+- First-time connection may take 2-3 seconds
+- Network connection required for live transcription (not for basic recording)
+- If Netlify function fails, app will use direct API key as fallback
+
+---
+
 ## Update 3 - Network Disconnection Fix
 **Build Date:** October 25, 2025
 

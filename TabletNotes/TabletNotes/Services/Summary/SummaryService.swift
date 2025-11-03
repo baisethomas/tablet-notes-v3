@@ -46,11 +46,30 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
     
     private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
     private let supabase: SupabaseClient
-    
+
     init(supabase: SupabaseClient = SupabaseService.shared.client) {
         self.supabase = supabase
     }
-    
+
+    // Helper function to get auth token with automatic refresh
+    private func getAuthToken() async throws -> String {
+        do {
+            let session = try await supabase.auth.session
+            return session.accessToken
+        } catch {
+            // Token might be expired, try to refresh
+            print("[SummaryService] Session expired or invalid, attempting to refresh token...")
+            do {
+                let refreshedSession = try await supabase.auth.refreshSession()
+                print("[SummaryService] Token refreshed successfully")
+                return refreshedSession.session.accessToken
+            } catch {
+                print("[SummaryService] Token refresh failed: \(error.localizedDescription)")
+                throw SummaryError.auth("Authentication failed. Please sign in again.")
+            }
+        }
+    }
+
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
         lastTranscript = transcript
@@ -69,17 +88,17 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         statusSubject.send("pending")
         titleSubject.send(nil)
         summarySubject.send(nil)
-        
+
         Task {
             do {
-                // Get authentication token
-                let session = try await supabase.auth.session
-                
+                // Get authentication token with automatic refresh
+                let accessToken = try await getAuthToken()
+
                 let requestBody: [String: Any] = [
                     "text": transcript,
                     "serviceType": type
                 ]
-                
+
                 // Debug logging
                 print("[SummaryService] Request details:")
                 print("- Transcript length: \(transcript.count) characters")
@@ -100,7 +119,7 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
                 request.httpBody = httpBody
                 request.timeoutInterval = 60.0 // Increase timeout to 60 seconds
                 print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")

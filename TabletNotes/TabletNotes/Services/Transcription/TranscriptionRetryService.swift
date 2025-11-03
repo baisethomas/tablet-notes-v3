@@ -270,14 +270,16 @@ class TranscriptionRetryService: ObservableObject {
         
         // Subscribe to summary completion
         summaryService.statusPublisher
-            .combineLatest(summaryService.summaryPublisher)
-            .sink { (status, summaryText) in
+            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+            .sink { (status, titleText, summaryText) in
                 DispatchQueue.main.async {
                     switch status {
                     case "complete":
                         if let summaryText = summaryText {
-                            // Create Summary object
+                            // Create Summary object with AI-generated title
+                            let summaryTitle = titleText ?? "Sermon Summary"
                             let summary = Summary(
+                                title: summaryTitle,
                                 text: summaryText,
                                 type: "devotional", // Default type
                                 status: "complete"
@@ -287,14 +289,14 @@ class TranscriptionRetryService: ObservableObject {
                         } else {
                             sermon.summaryStatus = "failed"
                         }
-                        
+
                     case "failed":
                         sermon.summaryStatus = "failed"
-                        
+
                     default:
                         break
                     }
-                    
+
                     // Save changes
                     if let context = self.modelContext {
                         try? context.save()
