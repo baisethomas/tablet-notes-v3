@@ -21,10 +21,8 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
     private var updateListenerTask: Task<Void, Error>?
     private var cancellables = Set<AnyCancellable>()
     
-    // Product IDs for StoreKit
+    // Product IDs for StoreKit (must match App Store Connect)
     private let productIds: Set<String> = [
-        "com.tabletnotes.pro.monthly",
-        "com.tabletnotes.pro.annual",
         "com.tabletnotes.premium.monthly",
         "com.tabletnotes.premium.annual"
     ]
