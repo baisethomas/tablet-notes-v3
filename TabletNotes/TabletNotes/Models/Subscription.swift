@@ -211,9 +211,9 @@ struct SubscriptionPlan {
 
     static let premiumMonthly = SubscriptionPlan(
         tier: .premium,
-        productId: "com.tabletnotes.premium.monthly",
-        displayPrice: "$4.99",
-        actualPrice: 4.99,
+        productId: "prod_TLzieewv6f0Qmi",
+        displayPrice: "$9.99",
+        actualPrice: 9.99,
         period: .monthly,
         features: SubscriptionFeature.allCases,
         limits: .premium,
@@ -222,9 +222,9 @@ struct SubscriptionPlan {
 
     static let premiumAnnual = SubscriptionPlan(
         tier: .premium,
-        productId: "com.tabletnotes.premium.annual",
-        displayPrice: "$39.99",
-        actualPrice: 39.99,
+        productId: "prod_TLzkM04Ab0R8yG",
+        displayPrice: "$79.99",
+        actualPrice: 79.99,
         period: .annual,
         features: SubscriptionFeature.allCases,
         limits: .premium,
