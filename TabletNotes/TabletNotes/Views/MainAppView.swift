@@ -514,6 +514,9 @@ struct MainAppView: View {
                 }
             }
             .onAppear {
+                // Inject syncService into sermonService
+                sermonService.setSyncService(syncService)
+
                 checkTrialStatus()
 
                 // Trigger sync when app launches

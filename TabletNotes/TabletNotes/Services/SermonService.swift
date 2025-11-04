@@ -43,11 +43,17 @@ class SermonService: ObservableObject {
         self.syncService = syncService
         self.subscriptionService = subscriptionService
         fetchSermons()
-        
+
         // Listen for auth state changes to refresh sermons
         Task { @MainActor in
             setupAuthStateObserver()
         }
+    }
+
+    // Allow injecting sync service after initialization
+    func setSyncService(_ syncService: any SyncServiceProtocol) {
+        self.syncService = syncService
+        print("[SermonService] SyncService injected")
     }
     
     @MainActor

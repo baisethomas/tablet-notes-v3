@@ -44,30 +44,44 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     
     @MainActor
     private func performFullSync() async {
+        print("[SyncService] 🔄 Starting full sync...")
+
         // Check if user can sync
-        guard let currentUser = authService.currentUser,
-              currentUser.canSync else {
+        guard let currentUser = authService.currentUser else {
+            print("[SyncService] ❌ No current user - cannot sync")
             syncError = SyncError.subscriptionRequired
             return
         }
-        
+
+        print("[SyncService] Current user: \(currentUser.email), canSync: \(currentUser.canSync)")
+
+        guard currentUser.canSync else {
+            print("[SyncService] ❌ User cannot sync (requires Premium subscription)")
+            syncError = SyncError.subscriptionRequired
+            return
+        }
+
         syncStatus = "syncing"
         syncError = nil
-        
+
         do {
             // 1. Push local changes to cloud
+            print("[SyncService] 📤 Pushing local changes...")
             try await pushLocalChanges()
-            
+
             // 2. Pull cloud changes to local
+            print("[SyncService] 📥 Pulling cloud changes...")
             try await pullCloudChanges()
-            
+
             syncStatus = "synced"
+            print("[SyncService] ✅ Sync completed successfully")
         } catch {
             syncStatus = "error"
             syncError = error
+            print("[SyncService] ❌ Sync failed: \(error.localizedDescription)")
         }
     }
-    
+
     private func pushLocalChanges() async throws {
         // Get all local sermons that need syncing
         let descriptor = FetchDescriptor<Sermon>(
@@ -75,8 +89,9 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 sermon.needsSync == true || sermon.remoteId == nil
             }
         )
-        
+
         let sermonsToSync = try modelContext.fetch(descriptor)
+        print("[SyncService] Found \(sermonsToSync.count) sermons to sync")
         
         for sermon in sermonsToSync {
             try await syncSermonToCloud(sermon)
