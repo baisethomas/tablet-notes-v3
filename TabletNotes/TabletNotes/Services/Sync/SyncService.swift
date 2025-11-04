@@ -283,12 +283,14 @@ extension SyncService {
         let audioFileName = data.audioFileURL.lastPathComponent
         print("[SyncService] Uploading audio file: \(audioFileName)")
 
+        // Get file size
+        let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
+        print("[SyncService] File size: \(fileSize) bytes")
+
         let audioFileURL: URL
         do {
             // Get signed upload URL
             print("[SyncService] Getting signed upload URL...")
-            let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
-            print("[SyncService] File size: \(fileSize) bytes")
 
             let (uploadURL, _) = try await supabaseService.getSignedUploadURL(
                 for: audioFileName,
@@ -313,19 +315,20 @@ extension SyncService {
             throw error
         }
 
-        // Prepare request payload
+        // Prepare request payload (using camelCase as expected by API)
         let payload: [String: Any] = [
-            "local_id": data.id.uuidString,
+            "localId": data.id.uuidString,
             "title": data.title,
-            "audio_file_path": audioFileName,
-            "audio_file_url": audioFileURL.absoluteString,
-            "audio_file_name": audioFileName,
+            "audioFilePath": audioFileName,
+            "audioFileUrl": audioFileURL.absoluteString,
+            "audioFileName": audioFileName,
+            "audioFileSizeBytes": fileSize,
             "date": ISO8601DateFormatter().string(from: data.date),
-            "service_type": data.serviceType,
+            "serviceType": data.serviceType,
             "speaker": data.speaker as Any,
-            "transcription_status": data.transcriptionStatus,
-            "summary_status": data.summaryStatus,
-            "is_archived": data.isArchived
+            "transcriptionStatus": data.transcriptionStatus,
+            "summaryStatus": data.summaryStatus,
+            "isArchived": data.isArchived
         ]
 
         // Call Netlify function
