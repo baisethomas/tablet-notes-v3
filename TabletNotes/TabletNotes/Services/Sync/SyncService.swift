@@ -350,6 +350,14 @@ extension SyncService {
 
             print("[SyncService] API response status: \(httpResponse.statusCode)")
 
+            // Handle 409 Conflict (sermon already exists) - treat as success
+            if httpResponse.statusCode == 409 {
+                print("[SyncService] ⚠️ Sermon already exists in cloud, treating as success...")
+                // Query the database to get the existing sermon's remote ID
+                // For now, return empty string and let pullCloudChanges handle it
+                return ""
+            }
+
             guard (200...299).contains(httpResponse.statusCode) else {
                 if let responseString = String(data: responseData, encoding: .utf8) {
                     print("[SyncService] ❌ API error response: \(responseString)")
