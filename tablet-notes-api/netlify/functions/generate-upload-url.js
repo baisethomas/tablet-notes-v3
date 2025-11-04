@@ -100,9 +100,9 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
     
     // Create signed URL with circuit breaker and timeout
     const createSignedUrlWithTimeout = withTimeout(
-      () => supabaseStorageBreaker.execute(() => 
+      () => supabaseStorageBreaker.execute(() =>
         supabase.storage
-          .from('audio-files')
+          .from('sermon-audio')
           .createSignedUploadUrl(filePath, {
             upsert: false // Prevent overwriting
           })
@@ -116,7 +116,7 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
       logger.error('Failed to create signed upload URL', {
         userId: user.id,
         filePath,
-        bucketName: 'audio-files'
+        bucketName: 'sermon-audio'
       }, error);
       throw error;
     }
