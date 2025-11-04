@@ -52,9 +52,12 @@ class SupabaseService: SupabaseServiceProtocol {
     ///   - fileSize: The size of the file in bytes.
     /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
     func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
+        print("[SupabaseService] getSignedUploadURL called for: \(fileName)")
+
         // Get authentication token
         let session = try await supabase.auth.session
-        
+        print("[SupabaseService] Got auth session")
+
         let url = URL(string: "\(apiBaseUrl)/api/generate-upload-url")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -69,13 +72,20 @@ class SupabaseService: SupabaseServiceProtocol {
         ] as [String : Any]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+        print("[SupabaseService] Calling generate-upload-url API...")
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("[SupabaseService] ❌ No HTTP response")
             throw URLError(.badServerResponse)
         }
-        
+
+        print("[SupabaseService] API response status: \(httpResponse.statusCode)")
+
         guard httpResponse.statusCode == 200 else {
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("[SupabaseService] ❌ API error response: \(responseString)")
+            }
             if httpResponse.statusCode == 401 {
                 throw URLError(.userAuthenticationRequired)
             }
@@ -83,15 +93,20 @@ class SupabaseService: SupabaseServiceProtocol {
         }
 
         let decodedResponse = try JSONDecoder().decode(SignedUploadURLResponse.self, from: data)
-        
+
         guard decodedResponse.success else {
+            print("[SupabaseService] ❌ Response success=false")
             throw URLError(.badServerResponse)
         }
-        
+
         guard let uploadUrl = URL(string: decodedResponse.data.uploadUrl) else {
+            print("[SupabaseService] ❌ Invalid upload URL")
             throw URLError(.badURL)
         }
-        
+
+        print("[SupabaseService] ✅ Upload URL: \(uploadUrl)")
+        print("[SupabaseService] ✅ Path: \(decodedResponse.data.path)")
+
         return (uploadUrl, decodedResponse.data.path)
     }
     
