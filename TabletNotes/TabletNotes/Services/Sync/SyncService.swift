@@ -358,8 +358,14 @@ extension SyncService {
             }
 
             let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-            guard let sermonId = json?["id"] as? String else {
+
+            // API returns: { "success": true, "data": { "id": "...", ... } }
+            guard let data = json?["data"] as? [String: Any],
+                  let sermonId = data["id"] as? String else {
                 print("[SyncService] ❌ No sermon ID in response")
+                if let jsonString = String(data: responseData, encoding: .utf8) {
+                    print("[SyncService] Response JSON: \(jsonString)")
+                }
                 throw SyncError.dataCorruption
             }
 
