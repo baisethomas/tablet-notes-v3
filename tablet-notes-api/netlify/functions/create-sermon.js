@@ -60,9 +60,12 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
       audio_file_name: body.audioFileName,
       audio_file_url: body.audioFileUrl || null,
       audio_file_size_bytes: body.audioFileSizeBytes || null,
+      audio_file_path: body.audioFilePath || body.audioFileName,
+      duration: body.duration || 0,
       transcription_status: body.transcriptionStatus || 'pending',
       summary_status: body.summaryStatus || 'pending',
       is_archived: body.isArchived || false,
+      sync_status: 'synced',
       updated_at: body.updatedAt || new Date().toISOString()
     };
 
