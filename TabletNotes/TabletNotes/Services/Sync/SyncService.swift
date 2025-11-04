@@ -84,16 +84,19 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
     private func pushLocalChanges() async throws {
         // Get all local sermons that need syncing
+        // Only sync sermons that are explicitly marked needsSync=true
+        // (Don't sync old sermons that just have remoteId=nil)
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
-                sermon.needsSync == true || sermon.remoteId == nil
+                sermon.needsSync == true
             }
         )
 
         let sermonsToSync = try modelContext.fetch(descriptor)
-        print("[SyncService] Found \(sermonsToSync.count) sermons to sync")
-        
+        print("[SyncService] Found \(sermonsToSync.count) sermons marked for sync")
+
         for sermon in sermonsToSync {
+            print("[SyncService] Syncing sermon: \(sermon.title)")
             try await syncSermonToCloud(sermon)
         }
     }

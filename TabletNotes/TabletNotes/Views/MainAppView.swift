@@ -548,18 +548,25 @@ struct MainAppView: View {
 
                 // Trigger sync when app launches
                 Task {
-                    showSyncDebug = true
-                    if let user = authManager.currentUser {
-                        syncDebugMessage = "Syncing as \(user.email)... canSync: \(user.canSync)"
-                    } else {
-                        syncDebugMessage = "No user logged in"
+                    // Small delay to ensure UI is ready
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+
+                    await MainActor.run {
+                        showSyncDebug = true
+                        if let user = authManager.currentUser {
+                            syncDebugMessage = "Syncing as \(user.email)... canSync: \(user.canSync)"
+                        } else {
+                            syncDebugMessage = "No user logged in"
+                        }
                     }
 
                     await syncService.syncAllData()
 
-                    // Hide after 3 seconds
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    showSyncDebug = false
+                    // Hide after 5 seconds
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    await MainActor.run {
+                        showSyncDebug = false
+                    }
                 }
             }
             .onChange(of: authManager.currentUser?.id) { _, newUserId in
