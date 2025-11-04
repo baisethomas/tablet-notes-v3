@@ -2,6 +2,143 @@
 
 ---
 
+## Update 5 - Cross-Device Sync Implementation
+**Build Date:** November 3, 2025
+
+### What's New
+🎉 **Sermons now sync across all your devices!** When you sign in with the same account on your iPhone and iPad, your sermons, notes, transcripts, and summaries automatically sync between devices.
+
+### How It Works
+- **Record on iPhone** → Sermon automatically uploads to cloud
+- **Open iPad** → Sermon appears in your list with full audio
+- **Make changes on any device** → Updates sync to all devices
+- **AI-generated titles** → Summaries now include smart titles (e.g., "Faith in Difficult Times" instead of "Sermon on Nov 3")
+
+### What Changed
+
+#### Backend Infrastructure
+- **Supabase Database:** Added sync metadata to all tables (sermons, notes, transcripts, summaries)
+- **Row Level Security:** Your data is protected - users can only access their own sermons
+- **Audio Storage:** Sermon audio files stored securely in Supabase Storage
+- **Conflict Resolution:** Last-write-wins strategy prevents sync conflicts
+- **API Endpoints:** Three new Netlify functions for creating, updating, and fetching sermons
+
+#### iOS App
+- **Automatic Sync:** App syncs when launched and when user logs in
+- **Background Upload:** Audio files upload automatically after recording
+- **Download on Demand:** Audio files download when needed on new device
+- **Sync Status Tracking:** Each sermon tracks whether it's synced to cloud
+- **AI Title Generation:** OpenAI generates descriptive sermon titles automatically
+
+### What to Test
+
+**Test 1: Basic Cross-Device Sync**
+1. Sign in on your iPhone with your account
+2. Record a new sermon (can be just 30 seconds)
+3. Let the sermon finish processing (transcription + summary)
+4. Sign in on your iPad with the SAME account
+5. **Expected:**
+   - Sermon appears in your sermon list on iPad
+   - Tap sermon to view details
+   - Audio plays correctly
+   - Transcript and summary are visible
+   - All notes you took appear
+
+**Test 2: AI-Generated Titles**
+1. Record a sermon on any device
+2. Let AI summary complete
+3. View the sermon details
+4. **Expected:**
+   - Title is descriptive (e.g., "Walking in Faith") NOT "Sermon on [date]"
+   - Title relates to sermon content
+   - Title appears on both devices after sync
+
+**Test 3: Archive Sync**
+1. Record sermon on iPhone
+2. Wait for sync (open iPad to verify it appears)
+3. On iPhone: Archive the sermon
+4. Close and reopen iPad app
+5. **Expected:**
+   - Sermon is archived on iPad too
+   - Archive status syncs within a few seconds
+
+**Test 4: Edit Sync**
+1. Record sermon on Device A
+2. On Device B: View sermon and edit the title or notes
+3. Return to Device A, close and reopen app
+4. **Expected:**
+   - Changes from Device B appear on Device A
+   - Edits sync bidirectionally
+
+**Test 5: Multiple Sermons**
+1. Record 3-5 sermons on iPhone over several days
+2. Sign in on iPad for the first time
+3. **Expected:**
+   - All sermons appear on iPad
+   - Audio files download automatically or on-demand
+   - Newest sermons appear first
+
+**Test 6: Offline Recording → Online Sync**
+1. Turn OFF WiFi on iPhone
+2. Record a sermon (works locally)
+3. Stop recording, let it save
+4. Turn WiFi back ON
+5. Wait 30-60 seconds
+6. Open iPad
+7. **Expected:**
+   - Sermon syncs to cloud automatically when online
+   - Appears on iPad after sync completes
+
+**Test 7: Delete Doesn't Sync (Currently)**
+⚠️ **Known Limitation:** Deleting a sermon on one device does NOT delete it on other devices yet. This will be addressed in a future update.
+
+### What to Report
+
+If you encounter sync issues:
+1. **Sermon not appearing on second device?**
+   - How long did you wait after recording?
+   - Is WiFi connected on both devices?
+   - Are you signed in with the same account email on both devices?
+
+2. **Audio won't play on second device?**
+   - Does the sermon show in the list but audio won't load?
+   - Any error message displayed?
+   - Check Settings → Account to verify Premium subscription (sync requires Premium)
+
+3. **Wrong title or missing AI title?**
+   - What does the title say?
+   - Did the summary generate successfully?
+   - Screenshot the sermon details screen
+
+4. **Sync seems stuck?**
+   - Close app completely (swipe up from app switcher)
+   - Reopen app and wait 30 seconds
+   - If still not syncing, report the issue
+
+### Known Behaviors
+- **Sync requires Premium subscription** (active trial or paid premium)
+- **Initial sync may take 30-60 seconds** depending on audio file size
+- **Large audio files (20+ min sermons) may take 2-3 minutes** to upload on slower WiFi
+- **Sync happens automatically** on app launch and after recording
+- **Audio downloads on-demand** when you open a synced sermon for the first time
+- **Deletes don't sync yet** - will be added in future update
+- **Conflict resolution:** If sermon edited on multiple devices simultaneously, last edit wins
+
+### Requirements for Sync
+✅ **Premium subscription** (trial or paid)
+✅ **Internet connection** (WiFi or cellular)
+✅ **Same account** on all devices
+✅ **iOS 17+** on all devices
+
+### Technical Details (For Debugging)
+- Sermons sync via Supabase database
+- Audio files stored in Supabase Storage bucket: `sermon-audio`
+- Sync endpoint: `https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/`
+- Each sermon has `remoteId` (cloud ID) and `localId` (device ID)
+- Sync status tracked: `localOnly`, `syncing`, `synced`, `error`
+
+---
+
 ## Update 4 - AssemblyAI Live Transcription Fix
 **Build Date:** November 2, 2025
 
