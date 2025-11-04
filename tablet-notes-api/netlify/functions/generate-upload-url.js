@@ -82,8 +82,9 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
       });
       return createErrorResponse(new Error(`File validation failed: ${fileValidation.errors.map(e => e.message).join(', ')}`), 400);
     }
-    
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+    // Use service role key to bypass RLS for creating signed upload URLs
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
     // Generate a unique path for the file using user ID for organization
     const fileExt = fileName.split('.').pop().toLowerCase();
