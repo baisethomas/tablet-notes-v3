@@ -266,31 +266,52 @@ extension SyncService {
     }
     
     private func createRemoteSermon(data: SermonSyncData) async throws -> String {
+        print("[SyncService] Creating remote sermon: \(data.title)")
+
         guard let supabaseService = self.supabaseService as? SupabaseService else {
+            print("[SyncService] ❌ SupabaseService not available")
             throw SyncError.networkError
         }
 
         // Get auth token
+        print("[SyncService] Getting auth session...")
         let session = try await supabaseService.client.auth.session
         let token = session.accessToken
+        print("[SyncService] ✅ Got auth token")
 
         // Upload audio file to Supabase Storage first
         let audioFileName = data.audioFileURL.lastPathComponent
+        print("[SyncService] Uploading audio file: \(audioFileName)")
 
-        // Get signed upload URL
-        let (uploadURL, _) = try await supabaseService.getSignedUploadURL(
-            for: audioFileName,
-            contentType: "audio/m4a",
-            fileSize: try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
-        )
+        let audioFileURL: URL
+        do {
+            // Get signed upload URL
+            print("[SyncService] Getting signed upload URL...")
+            let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
+            print("[SyncService] File size: \(fileSize) bytes")
 
-        // Upload the file
-        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: uploadURL)
+            let (uploadURL, _) = try await supabaseService.getSignedUploadURL(
+                for: audioFileName,
+                contentType: "audio/m4a",
+                fileSize: fileSize
+            )
+            print("[SyncService] ✅ Got upload URL: \(uploadURL)")
 
-        // Get public URL
-        let audioFileURL = try supabaseService.client.storage
-            .from("sermon-audio")
-            .getPublicURL(path: audioFileName)
+            // Upload the file
+            print("[SyncService] Uploading file to storage...")
+            try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: uploadURL)
+            print("[SyncService] ✅ Audio file uploaded successfully")
+
+            // Get public URL
+            print("[SyncService] Getting public URL...")
+            audioFileURL = try supabaseService.client.storage
+                .from("sermon-audio")
+                .getPublicURL(path: audioFileName)
+            print("[SyncService] ✅ Public URL: \(audioFileURL)")
+        } catch {
+            print("[SyncService] ❌ Failed to upload audio: \(error.localizedDescription)")
+            throw error
+        }
 
         // Prepare request payload
         let payload: [String: Any] = [
@@ -308,6 +329,7 @@ extension SyncService {
         ]
 
         // Call Netlify function
+        print("[SyncService] Calling create-sermon API...")
         let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -315,19 +337,35 @@ extension SyncService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (responseData, response) = try await URLSession.shared.data(for: request)
+        do {
+            let (responseData, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw SyncError.networkError
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[SyncService] ❌ No HTTP response")
+                throw SyncError.networkError
+            }
+
+            print("[SyncService] API response status: \(httpResponse.statusCode)")
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                if let responseString = String(data: responseData, encoding: .utf8) {
+                    print("[SyncService] ❌ API error response: \(responseString)")
+                }
+                throw SyncError.networkError
+            }
+
+            let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+            guard let sermonId = json?["id"] as? String else {
+                print("[SyncService] ❌ No sermon ID in response")
+                throw SyncError.dataCorruption
+            }
+
+            print("[SyncService] ✅ Sermon created with ID: \(sermonId)")
+            return sermonId
+        } catch {
+            print("[SyncService] ❌ create-sermon API call failed: \(error.localizedDescription)")
+            throw error
         }
-
-        let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-        guard let sermonId = json?["id"] as? String else {
-            throw SyncError.dataCorruption
-        }
-
-        return sermonId
     }
     
     private func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
