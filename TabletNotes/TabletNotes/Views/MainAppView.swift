@@ -39,6 +39,8 @@ struct MainAppView: View {
     @StateObject private var authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
+    @State private var showSyncDebug = false
+    @State private var syncDebugMessage = ""
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -512,6 +514,31 @@ struct MainAppView: View {
                     )
                     .transition(.opacity)
                 }
+
+                // Debug sync status banner
+                if showSyncDebug {
+                    VStack {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .foregroundColor(.white)
+                            Text(syncDebugMessage)
+                                .foregroundColor(.white)
+                                .font(.caption)
+                            Spacer()
+                            Button("✕") {
+                                showSyncDebug = false
+                            }
+                            .foregroundColor(.white)
+                        }
+                        .padding()
+                        .background(Color.blue.opacity(0.9))
+                        .cornerRadius(10)
+                        .shadow(radius: 5)
+                        .padding()
+                        Spacer()
+                    }
+                    .transition(.move(edge: .top))
+                }
             }
             .onAppear {
                 // Inject syncService into sermonService
@@ -521,11 +548,22 @@ struct MainAppView: View {
 
                 // Trigger sync when app launches
                 Task {
+                    showSyncDebug = true
+                    if let user = authManager.currentUser {
+                        syncDebugMessage = "Syncing as \(user.email)... canSync: \(user.canSync)"
+                    } else {
+                        syncDebugMessage = "No user logged in"
+                    }
+
                     await syncService.syncAllData()
+
+                    // Hide after 3 seconds
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    showSyncDebug = false
                 }
             }
-            .onChange(of: authManager.currentUser) { _, newUser in
-                if newUser != nil {
+            .onChange(of: authManager.currentUser?.id) { _, newUserId in
+                if newUserId != nil {
                     checkTrialStatus()
 
                     // Trigger sync when user changes (login/logout)

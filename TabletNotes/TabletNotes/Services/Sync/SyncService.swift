@@ -100,11 +100,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     
     private func pullCloudChanges() async throws {
         guard let currentUser = await authService.currentUser else { return }
-        
+
         // Fetch all remote sermons for current user
         let remoteSermons = try await fetchRemoteSermons(for: currentUser.id)
-        
+        print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
+
         for remoteSermon in remoteSermons {
+            print("[SyncService] Syncing remote sermon: \(remoteSermon.title)")
             try await syncSermonFromCloud(remoteSermon)
         }
     }
