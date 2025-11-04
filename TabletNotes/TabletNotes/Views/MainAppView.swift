@@ -38,14 +38,20 @@ struct MainAppView: View {
     @StateObject private var trialPromptManager = TrialPromptManager.shared
     @StateObject private var authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
+    @StateObject private var syncService: SyncService
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
-        
+        _syncService = StateObject(wrappedValue: SyncService(
+            modelContext: modelContext,
+            supabaseService: SupabaseService.shared,
+            authService: AuthenticationManager.shared
+        ))
+
         // Initialize TranscriptionRetryService with ModelContext
         TranscriptionRetryService.shared.setModelContext(modelContext)
-        
+
         // Check if user has seen onboarding before
         if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
             _currentScreen = State(initialValue: .onboarding)
@@ -509,10 +515,20 @@ struct MainAppView: View {
             }
             .onAppear {
                 checkTrialStatus()
+
+                // Trigger sync when app launches
+                Task {
+                    await syncService.syncAllData()
+                }
             }
             .onChange(of: authManager.currentUser) { _, newUser in
                 if newUser != nil {
                     checkTrialStatus()
+
+                    // Trigger sync when user changes (login/logout)
+                    Task {
+                        await syncService.syncAllData()
+                    }
                 }
             }
             .sheet(isPresented: $showServiceTypeModal) {

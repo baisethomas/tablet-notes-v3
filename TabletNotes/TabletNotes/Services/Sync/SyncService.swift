@@ -3,14 +3,14 @@ import Combine
 import SwiftData
 import Supabase
 
-class SyncService: SyncServiceProtocol {
-    
+class SyncService: ObservableObject, SyncServiceProtocol {
+
     // MARK: - Properties
-    
+
     private let modelContext: ModelContext
     private let supabaseService: SupabaseServiceProtocol
     private let authService: AuthenticationManager
-    
+
     @Published private var syncStatus: String = "idle"
     @Published private var syncError: Error?
     
@@ -246,13 +246,105 @@ extension SyncService {
     }
     
     private func createRemoteSermon(data: SermonSyncData) async throws -> String {
-        // This would call your Netlify function to create a sermon
-        // Return the remote ID
-        return UUID().uuidString
+        guard let supabaseService = self.supabaseService as? SupabaseService else {
+            throw SyncError.networkError
+        }
+
+        // Get auth token
+        let session = try await supabaseService.client.auth.session
+        let token = session.accessToken
+
+        // Upload audio file to Supabase Storage first
+        let audioFileName = data.audioFileURL.lastPathComponent
+
+        // Get signed upload URL
+        let (uploadURL, _) = try await supabaseService.getSignedUploadURL(
+            for: audioFileName,
+            contentType: "audio/m4a",
+            fileSize: try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
+        )
+
+        // Upload the file
+        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: uploadURL)
+
+        // Get public URL
+        let audioFileURL = try supabaseService.client.storage
+            .from("sermon-audio")
+            .getPublicURL(path: audioFileName)
+
+        // Prepare request payload
+        let payload: [String: Any] = [
+            "local_id": data.id.uuidString,
+            "title": data.title,
+            "audio_file_path": audioFileName,
+            "audio_file_url": audioFileURL.absoluteString,
+            "audio_file_name": audioFileName,
+            "date": ISO8601DateFormatter().string(from: data.date),
+            "service_type": data.serviceType,
+            "speaker": data.speaker as Any,
+            "transcription_status": data.transcriptionStatus,
+            "summary_status": data.summaryStatus,
+            "is_archived": data.isArchived
+        ]
+
+        // Call Netlify function
+        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/create-sermon")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SyncError.networkError
+        }
+
+        let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+        guard let sermonId = json?["id"] as? String else {
+            throw SyncError.dataCorruption
+        }
+
+        return sermonId
     }
     
     private func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
-        // This would call your Netlify function to update a sermon
+        guard let supabaseService = self.supabaseService as? SupabaseService else {
+            throw SyncError.networkError
+        }
+
+        // Get auth token
+        let session = try await supabaseService.client.auth.session
+        let token = session.accessToken
+
+        // Prepare request payload
+        let payload: [String: Any] = [
+            "id": remoteId,
+            "title": data.title,
+            "service_type": data.serviceType,
+            "speaker": data.speaker as Any,
+            "transcription_status": data.transcriptionStatus,
+            "summary_status": data.summaryStatus,
+            "is_archived": data.isArchived,
+            "updated_at": ISO8601DateFormatter().string(from: data.updatedAt)
+        ]
+
+        // Call Netlify function
+        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/update-sermon")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SyncError.networkError
+        }
     }
     
     private func deleteAllRemoteData(for userId: UUID) async throws {
@@ -260,9 +352,21 @@ extension SyncService {
     }
     
     private func downloadAudioFile(from url: URL) async throws -> URL {
-        // Download audio file to local storage
-        // Return local URL
-        return url // Placeholder
+        guard let supabaseService = self.supabaseService as? SupabaseService else {
+            throw SyncError.networkError
+        }
+
+        // Download file from Supabase Storage
+        let (data, _) = try await URLSession.shared.data(from: url)
+
+        // Save to local Documents directory
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileName = url.lastPathComponent
+        let localURL = documentsPath.appendingPathComponent(fileName)
+
+        try data.write(to: localURL)
+
+        return localURL
     }
     
     private func syncNoteToCloud(_ note: Note, sermonId: String) async throws {

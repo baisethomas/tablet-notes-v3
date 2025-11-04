@@ -32,19 +32,50 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       return createErrorResponse(new Error('Missing userId'), 400);
     }
 
-    // Fetch all sermons for the user
+    // Fetch all sermons for the user with related data
     const { data, error } = await supabase
       .from('sermons')
-      .select('*')
-      .eq('userId', userId);
+      .select(`
+        id,
+        local_id,
+        title,
+        audio_file_url,
+        audio_file_path,
+        audio_file_name,
+        date,
+        service_type,
+        speaker,
+        transcription_status,
+        summary_status,
+        is_archived,
+        user_id,
+        updated_at,
+        created_at
+      `)
+      .eq('user_id', userId)
+      .order('date', { ascending: false });
 
     if (error) {
       return createErrorResponse(new Error(error.message), 500);
     }
 
-    // Optionally, map/transform data to match RemoteSermonData if needed
-    // For now, return as-is
-    return createSuccessResponse(data, 200);
+    // Transform data to match RemoteSermonData structure
+    const sermons = data.map(sermon => ({
+      id: sermon.id,
+      localId: sermon.local_id,
+      title: sermon.title,
+      audioFileURL: sermon.audio_file_url,
+      date: sermon.date,
+      serviceType: sermon.service_type,
+      speaker: sermon.speaker,
+      transcriptionStatus: sermon.transcription_status,
+      summaryStatus: sermon.summary_status,
+      isArchived: sermon.is_archived,
+      userId: sermon.user_id,
+      updatedAt: sermon.updated_at
+    }));
+
+    return createSuccessResponse(sermons, 200);
   } catch (error) {
     return createErrorResponse(error, 500);
   }
