@@ -97,7 +97,7 @@ exports.handler = withLogging('transcribe', async (event, context) => {
         
         logger.info('File ownership verified', { userId: user.id, filePath });
 
-        const bucketName = 'audio-files';
+        const bucketName = 'sermon-audio';
         logger.info('Downloading file from storage', { bucket: bucketName, filePath });
         
         // Download file with timeout
