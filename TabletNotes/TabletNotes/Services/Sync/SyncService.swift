@@ -323,6 +323,7 @@ extension SyncService {
             "audioFileUrl": audioFileURL.absoluteString,
             "audioFileName": audioFileName,
             "audioFileSizeBytes": fileSize,
+            "duration": 0, // Default duration - iOS doesn't track this yet
             "date": ISO8601DateFormatter().string(from: data.date),
             "serviceType": data.serviceType,
             "speaker": data.speaker as Any,
