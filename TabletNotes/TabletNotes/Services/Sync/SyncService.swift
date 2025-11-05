@@ -131,8 +131,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
         // Upload to Supabase
         if let remoteId = sermon.remoteId {
-            // Update existing record
-            try await updateRemoteSermon(remoteId: remoteId, data: sermonData)
+            // Update existing record - pass full sermon to include notes/transcript/summary
+            try await updateRemoteSermon(sermon: sermon, remoteId: remoteId, data: sermonData)
         } else {
             // Create new record - pass full sermon to include notes/transcript/summary
             let newRemoteId = try await createRemoteSermon(sermon: sermon, data: sermonData)
@@ -144,8 +144,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         sermon.needsSync = false
         sermon.syncStatus = "synced"
 
-        // Sync related data (for updates to existing sermons)
-        try await syncRelatedData(for: sermon)
+        // Related data is now included in create/update payloads
+        // No need to call syncRelatedData separately
 
         try modelContext.save()
     }
@@ -509,7 +509,9 @@ extension SyncService {
         }
     }
     
-    private func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+    private func updateRemoteSermon(sermon: Sermon, remoteId: String, data: SermonSyncData) async throws {
+        print("[SyncService] Updating remote sermon: \(data.title) (remoteId: \(remoteId))")
+
         guard let supabaseService = self.supabaseService as? SupabaseService else {
             throw SyncError.networkError
         }
@@ -518,32 +520,88 @@ extension SyncService {
         let session = try await supabaseService.client.auth.session
         let token = session.accessToken
 
-        // Prepare request payload
-        let payload: [String: Any] = [
-            "id": remoteId,
+        // Prepare request payload with basic sermon data
+        var payload: [String: Any] = [
+            "remoteId": remoteId,
             "title": data.title,
-            "service_type": data.serviceType,
+            "serviceType": data.serviceType,
             "speaker": data.speaker as Any,
-            "transcription_status": data.transcriptionStatus,
-            "summary_status": data.summaryStatus,
-            "is_archived": data.isArchived,
-            "updated_at": ISO8601DateFormatter().string(from: data.updatedAt)
+            "transcriptionStatus": data.transcriptionStatus,
+            "summaryStatus": data.summaryStatus,
+            "isArchived": data.isArchived,
+            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
         ]
 
+        // Add notes if present
+        if !sermon.notes.isEmpty {
+            print("[SyncService] Including \(sermon.notes.count) notes in update payload")
+            let notesArray = sermon.notes.map { note in
+                return [
+                    "id": note.id.uuidString,
+                    "text": note.text,
+                    "timestamp": note.timestamp
+                ]
+            }
+            payload["notes"] = notesArray
+        }
+
+        // Add transcript if present
+        if let transcript = sermon.transcript {
+            print("[SyncService] Including transcript in update payload")
+            payload["transcript"] = [
+                "id": transcript.remoteId ?? UUID().uuidString,
+                "text": transcript.text,
+                "segments": NSNull(),
+                "status": "complete"
+            ]
+        }
+
+        // Add summary if present
+        if let summary = sermon.summary {
+            print("[SyncService] Including summary in update payload: \(summary.title)")
+            payload["summary"] = [
+                "id": summary.id.uuidString,
+                "title": summary.title,
+                "text": summary.text,
+                "type": summary.type,
+                "status": summary.status
+            ]
+        }
+
         // Call Netlify function
+        print("[SyncService] Calling update-sermon API...")
         let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/update-sermon")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let jsonData = try JSONSerialization.data(withJSONObject: payload)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        // Log the actual JSON being sent
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("[SyncService] Update JSON payload: \(jsonString)")
+        }
+
+        request.httpBody = jsonData
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("[SyncService] ❌ No HTTP response from update-sermon")
             throw SyncError.networkError
         }
+
+        print("[SyncService] Update-sermon response status: \(httpResponse.statusCode)")
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let responseString = String(data: responseData, encoding: .utf8) {
+                print("[SyncService] ❌ Update error response: \(responseString)")
+            }
+            throw SyncError.networkError
+        }
+
+        print("[SyncService] ✅ Remote sermon updated successfully")
     }
     
     private func deleteAllRemoteData(for userId: UUID) async throws {
