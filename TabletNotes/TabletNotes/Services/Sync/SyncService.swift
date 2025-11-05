@@ -151,22 +151,46 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
     
     private func syncSermonFromCloud(_ remoteSermon: RemoteSermonData) async throws {
-        // Find existing local sermon
+        print("[SyncService] 📥 Syncing sermon from cloud: \(remoteSermon.title)")
+
+        // Find existing local sermon by remoteId
         let remoteId = remoteSermon.id
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
                 sermon.remoteId == remoteId
             }
         )
-        
+
         let existingSermons = try modelContext.fetch(descriptor)
-        
+
         if let existingSermon = existingSermons.first {
+            print("[SyncService] Found existing local sermon with remoteId: \(remoteId)")
+
+            // Download audio file if it doesn't exist locally
+            if !existingSermon.audioFileExists {
+                print("[SyncService] Audio file missing locally, attempting download...")
+                do {
+                    let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL)
+                    existingSermon.audioFileName = localAudioURL.lastPathComponent
+                    print("[SyncService] ✅ Audio file downloaded successfully")
+                } catch {
+                    print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
+                    // Continue with sync even if audio download fails
+                    // The sermon metadata will still be synced
+                }
+            }
+
             // Update existing sermon if remote is newer
             if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
+                print("[SyncService] Remote sermon is newer, updating local copy")
                 updateLocalSermon(existingSermon, with: remoteSermon)
+            } else {
+                print("[SyncService] Local sermon is up to date")
             }
+
+            try modelContext.save()
         } else {
+            print("[SyncService] No existing local sermon found, creating new one")
             // Create new local sermon
             try await createLocalSermon(from: remoteSermon)
         }
@@ -227,28 +251,38 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
     
     private func createLocalSermon(from remoteData: RemoteSermonData) async throws {
+        print("[SyncService] 📥 Creating local sermon from remote data: \(remoteData.title)")
+        print("[SyncService] Remote audio URL: \(remoteData.audioFileURL)")
+
         // Download audio file if needed
-        let localAudioURL = try await downloadAudioFile(from: remoteData.audioFileURL)
-        
-        let sermon = Sermon(
-            id: remoteData.localId,
-            title: remoteData.title,
-            audioFileURL: localAudioURL,
-            date: remoteData.date,
-            serviceType: remoteData.serviceType,
-            speaker: remoteData.speaker,
-            syncStatus: "synced",
-            transcriptionStatus: remoteData.transcriptionStatus,
-            summaryStatus: remoteData.summaryStatus,
-            isArchived: remoteData.isArchived,
-            userId: remoteData.userId,
-            lastSyncedAt: Date(),
-            remoteId: remoteData.id,
-            updatedAt: remoteData.updatedAt
-        )
-        
-        modelContext.insert(sermon)
-        try modelContext.save()
+        do {
+            let localAudioURL = try await downloadAudioFile(from: remoteData.audioFileURL)
+            print("[SyncService] ✅ Audio file downloaded to: \(localAudioURL.path)")
+
+            let sermon = Sermon(
+                id: remoteData.localId,
+                title: remoteData.title,
+                audioFileURL: localAudioURL,
+                date: remoteData.date,
+                serviceType: remoteData.serviceType,
+                speaker: remoteData.speaker,
+                syncStatus: "synced",
+                transcriptionStatus: remoteData.transcriptionStatus,
+                summaryStatus: remoteData.summaryStatus,
+                isArchived: remoteData.isArchived,
+                userId: remoteData.userId,
+                lastSyncedAt: Date(),
+                remoteId: remoteData.id,
+                updatedAt: remoteData.updatedAt
+            )
+
+            modelContext.insert(sermon)
+            try modelContext.save()
+            print("[SyncService] ✅ Local sermon created and saved: \(sermon.title)")
+        } catch {
+            print("[SyncService] ❌ Failed to create local sermon: \(error.localizedDescription)")
+            throw error
+        }
     }
 }
 
@@ -334,12 +368,22 @@ extension SyncService {
 
         // Call Netlify function
         print("[SyncService] Calling create-sermon API...")
+        print("[SyncService] Payload: \(payload)")
+
         let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let jsonData = try JSONSerialization.data(withJSONObject: payload)
+
+        // Log the actual JSON being sent
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("[SyncService] JSON payload: \(jsonString)")
+        }
+
+        request.httpBody = jsonData
 
         do {
             let (responseData, response) = try await URLSession.shared.data(for: request)
@@ -428,21 +472,38 @@ extension SyncService {
     }
     
     private func downloadAudioFile(from url: URL) async throws -> URL {
+        print("[SyncService] 📥 Downloading audio file from: \(url)")
+
         guard let supabaseService = self.supabaseService as? SupabaseService else {
+            print("[SyncService] ❌ SupabaseService not available")
             throw SyncError.networkError
         }
 
-        // Download file from Supabase Storage
-        let (data, _) = try await URLSession.shared.data(from: url)
-
-        // Save to local Documents directory
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // Extract filename from URL
         let fileName = url.lastPathComponent
-        let localURL = documentsPath.appendingPathComponent(fileName)
+        print("[SyncService] Extracted filename: \(fileName)")
 
-        try data.write(to: localURL)
+        // Prepare local destination path in AudioRecordings directory
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let audioRecordingsPath = documentsPath.appendingPathComponent("AudioRecordings")
+        let localURL = audioRecordingsPath.appendingPathComponent(fileName)
 
-        return localURL
+        print("[SyncService] Target local path: \(localURL.path)")
+
+        do {
+            // Use SupabaseService's downloadAudioFile which handles authentication and tries multiple buckets
+            let downloadedURL = try await supabaseService.downloadAudioFile(
+                filename: fileName,
+                localURL: localURL,
+                remotePath: nil // Let it try different bucket/path combinations
+            )
+
+            print("[SyncService] ✅ Audio file downloaded successfully to: \(downloadedURL.path)")
+            return downloadedURL
+        } catch {
+            print("[SyncService] ❌ Audio download failed: \(error.localizedDescription)")
+            throw error
+        }
     }
     
     private func syncNoteToCloud(_ note: Note, sermonId: String) async throws {

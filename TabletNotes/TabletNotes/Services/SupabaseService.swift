@@ -279,7 +279,7 @@ class SupabaseService: SupabaseServiceProtocol {
         }
         
         // Try different bucket names and paths
-        let bucketOptions = ["audio-recordings", "audio-files", "recordings"]
+        let bucketOptions = ["sermon-audio", "audio-recordings", "audio-files", "recordings"]
         
         var pathOptions: [String] = []
         
@@ -340,22 +340,94 @@ class SupabaseService: SupabaseServiceProtocol {
 
     /// Fetches all remote sermons for a user from the Netlify API
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
+        print("[SupabaseService] fetchRemoteSermons called for userId: \(userId.uuidString)")
+
         let url = URL(string: "\(apiBaseUrl)/api/get-sermons?userId=\(userId.uuidString)")!
+        print("[SupabaseService] API URL: \(url.absoluteString)")
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+
         // Get authentication token
         let session = try await supabase.auth.session
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        print("[SupabaseService] Request configured with auth token")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+
+        // Log raw response
+        if let jsonString = String(data: data, encoding: .utf8) {
+            print("[SupabaseService] 📦 Raw JSON response: \(jsonString)")
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("[SupabaseService] ❌ Response is not HTTPURLResponse")
             throw URLError(.badServerResponse)
         }
-        // Decode the array of RemoteSermonData
+
+        print("[SupabaseService] HTTP Status: \(httpResponse.statusCode)")
+
+        guard httpResponse.statusCode == 200 else {
+            print("[SupabaseService] ❌ Bad status code: \(httpResponse.statusCode)")
+            throw URLError(.badServerResponse)
+        }
+
+        // Decode the wrapped response: {"success": true, "data": [...]}
+        print("[SupabaseService] Attempting to decode JSON...")
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let sermons = try decoder.decode([RemoteSermonData].self, from: data)
-        return sermons
+
+        // Custom date decoder to handle multiple ISO8601 formats including +00:00 timezone
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+
+            // Try multiple ISO8601 formats
+            let formatters = [
+                ISO8601DateFormatter(), // Standard: 2025-11-02T19:54:30Z
+                {
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    return formatter
+                }(), // With fractional seconds
+                {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ" // Handles +00:00
+                    formatter.locale = Locale(identifier: "en_US_POSIX")
+                    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                    return formatter
+                }()
+            ]
+
+            for formatter in formatters {
+                if let iso8601Formatter = formatter as? ISO8601DateFormatter,
+                   let date = iso8601Formatter.date(from: dateString) {
+                    return date
+                } else if let dateFormatter = formatter as? DateFormatter,
+                          let date = dateFormatter.date(from: dateString) {
+                    return date
+                }
+            }
+
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date string: \(dateString)")
+        }
+
+        do {
+            // First decode as dictionary to extract the "data" array
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sermonsArray = json["data"] as? [[String: Any]] else {
+                print("[SupabaseService] ❌ Failed to extract data array from response")
+                throw URLError(.cannotParseResponse)
+            }
+
+            // Re-encode the sermons array and decode as [RemoteSermonData]
+            let sermonsData = try JSONSerialization.data(withJSONObject: sermonsArray)
+            let sermons = try decoder.decode([RemoteSermonData].self, from: sermonsData)
+            print("[SupabaseService] ✅ Successfully decoded \(sermons.count) sermons")
+            return sermons
+        } catch {
+            print("[SupabaseService] ❌ JSON decode error: \(error)")
+            throw error
+        }
     }
 } 
