@@ -283,7 +283,12 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             if let remoteNotes = remoteData.notes {
                 print("[SyncService] Creating \(remoteNotes.count) notes")
                 for noteData in remoteNotes {
-                    let note = Note(id: noteData.localId, text: noteData.text, timestamp: noteData.timestamp)
+                    let note = Note(
+                        id: noteData.localId,
+                        text: noteData.text,
+                        timestamp: noteData.timestamp,
+                        remoteId: noteData.id
+                    )
                     sermon.notes.append(note)
                 }
             }
@@ -291,9 +296,9 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             if let transcriptData = remoteData.transcript {
                 print("[SyncService] Creating transcript")
                 let transcript = Transcript(
-                    id: transcriptData.localId,
                     text: transcriptData.text,
-                    status: transcriptData.status
+                    segments: [],
+                    remoteId: transcriptData.id
                 )
                 sermon.transcript = transcript
             }
@@ -305,7 +310,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     title: summaryData.title,
                     text: summaryData.text,
                     type: summaryData.type,
-                    status: summaryData.status
+                    status: summaryData.status,
+                    remoteId: summaryData.id
                 )
                 sermon.summary = summary
             }
