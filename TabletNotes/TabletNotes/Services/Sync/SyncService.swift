@@ -279,6 +279,37 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 updatedAt: remoteData.updatedAt
             )
 
+            // Create related records
+            if let remoteNotes = remoteData.notes {
+                print("[SyncService] Creating \(remoteNotes.count) notes")
+                for noteData in remoteNotes {
+                    let note = Note(id: noteData.localId, text: noteData.text, timestamp: noteData.timestamp)
+                    sermon.notes.append(note)
+                }
+            }
+
+            if let transcriptData = remoteData.transcript {
+                print("[SyncService] Creating transcript")
+                let transcript = Transcript(
+                    id: transcriptData.localId,
+                    text: transcriptData.text,
+                    status: transcriptData.status
+                )
+                sermon.transcript = transcript
+            }
+
+            if let summaryData = remoteData.summary {
+                print("[SyncService] Creating summary: \(summaryData.title)")
+                let summary = Summary(
+                    id: summaryData.localId,
+                    title: summaryData.title,
+                    text: summaryData.text,
+                    type: summaryData.type,
+                    status: summaryData.status
+                )
+                sermon.summary = summary
+            }
+
             modelContext.insert(sermon)
             try modelContext.save()
             print("[SyncService] ✅ Local sermon created and saved: \(sermon.title)")
@@ -558,6 +589,33 @@ struct RemoteSermonData: Codable {
     let isArchived: Bool
     let userId: UUID
     let updatedAt: Date
+    let notes: [RemoteNoteData]?
+    let transcript: RemoteTranscriptData?
+    let summary: RemoteSummaryData?
+}
+
+struct RemoteNoteData: Codable {
+    let id: String
+    let localId: UUID
+    let text: String
+    let timestamp: TimeInterval
+}
+
+struct RemoteTranscriptData: Codable {
+    let id: String
+    let localId: UUID
+    let text: String
+    let segments: String? // JSON string
+    let status: String
+}
+
+struct RemoteSummaryData: Codable {
+    let id: String
+    let localId: UUID
+    let title: String
+    let text: String
+    let type: String
+    let status: String
 }
 
 // MARK: - Sync Errors

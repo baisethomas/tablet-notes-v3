@@ -50,7 +50,28 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
         is_archived,
         user_id,
         updated_at,
-        created_at
+        created_at,
+        notes (
+          id,
+          local_id,
+          text,
+          timestamp
+        ),
+        transcripts (
+          id,
+          local_id,
+          text,
+          segments,
+          status
+        ),
+        summaries (
+          id,
+          local_id,
+          title,
+          text,
+          type,
+          status
+        )
       `)
       .eq('user_id', userId)
       .order('date', { ascending: false });
@@ -73,7 +94,10 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       summaryStatus: sermon.summary_status,
       isArchived: sermon.is_archived,
       userId: sermon.user_id,
-      updatedAt: sermon.updated_at
+      updatedAt: sermon.updated_at,
+      notes: sermon.notes || [],
+      transcript: sermon.transcripts && sermon.transcripts.length > 0 ? sermon.transcripts[0] : null,
+      summary: sermon.summaries && sermon.summaries.length > 0 ? sermon.summaries[0] : null
     }));
 
     return createSuccessResponse(sermons, 200);

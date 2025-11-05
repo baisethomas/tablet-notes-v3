@@ -39,17 +39,20 @@ struct MainAppView: View {
     @StateObject private var authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
+    @StateObject private var backgroundSyncManager: BackgroundSyncManager
     @State private var showSyncDebug = false
     @State private var syncDebugMessage = ""
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
-        _syncService = StateObject(wrappedValue: SyncService(
+        let syncSvc = SyncService(
             modelContext: modelContext,
             supabaseService: SupabaseService.shared,
             authService: AuthenticationManager.shared
-        ))
+        )
+        _syncService = StateObject(wrappedValue: syncSvc)
+        _backgroundSyncManager = StateObject(wrappedValue: BackgroundSyncManager(syncService: syncSvc))
 
         // Initialize TranscriptionRetryService with ModelContext
         TranscriptionRetryService.shared.setModelContext(modelContext)
