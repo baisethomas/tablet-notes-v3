@@ -1,4 +1,5 @@
 [build]
+  base = "tablet-notes-api"
   functions = "netlify/functions"
 
 [[redirects]]
