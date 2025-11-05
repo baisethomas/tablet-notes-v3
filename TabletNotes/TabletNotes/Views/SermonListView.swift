@@ -356,16 +356,18 @@ struct SectionHeaderView: View {
 
 struct SermonListView: View {
     @ObservedObject var sermonService: SermonService
+    var syncService: SyncServiceProtocol?
     var onSermonSelected: (Sermon) -> Void
     var onSettings: (() -> Void)? = nil
     var onStartRecording: (() -> Void)? = nil
-    
+
     @State private var isLoading = true
     @State private var showingDeleteAlert = false
     @State private var sermonToDelete: Sermon?
     @State private var sortOrder: SortOrder = .newestFirst
     @State private var showingSortOptions = false
     @State private var showingSearch = false
+    @State private var isRefreshing = false
     
     enum SortOrder: String, CaseIterable {
         case newestFirst = "Newest First"
@@ -712,9 +714,11 @@ struct SermonListView: View {
                             // Add haptic feedback for refresh
                             let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                             impactFeedback.impactOccurred()
-                            
-                            // Simulate refresh delay
-                            try? await Task.sleep(nanoseconds: 500_000_000)
+
+                            // Trigger sync to fetch latest from cloud
+                            await syncService?.syncAllData()
+
+                            // Refresh local sermon list
                             sermonService.fetchSermons()
                         }
                     }

@@ -94,6 +94,7 @@ struct MainAppView: View {
                 case .home:
                     AnyView(SermonListView(
                         sermonService: sermonService,
+                        syncService: syncService,
                         onSermonSelected: { sermon in
                             currentScreen = .sermonDetail(sermon: sermon)
                         },
@@ -131,6 +132,7 @@ struct MainAppView: View {
                 case .sermons:
                     AnyView(SermonListView(
                         sermonService: sermonService,
+                        syncService: syncService,
                         onSermonSelected: { sermon in
                             currentScreen = .sermonDetail(sermon: sermon)
                         },

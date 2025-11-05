@@ -151,8 +151,8 @@ class BackgroundSyncManager: ObservableObject {
     // MARK: - Periodic Sync
     
     private func setupPeriodicSync() {
-        // Sync every 5 minutes when app is active
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        // Sync every 1 minute when app is active for more responsive cross-device experience
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.schedulePeriodicSync()
         }
     }

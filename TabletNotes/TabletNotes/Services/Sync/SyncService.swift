@@ -128,25 +128,25 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             userId: sermon.userId,
             updatedAt: sermon.updatedAt ?? Date()
         )
-        
+
         // Upload to Supabase
         if let remoteId = sermon.remoteId {
             // Update existing record
             try await updateRemoteSermon(remoteId: remoteId, data: sermonData)
         } else {
-            // Create new record
-            let newRemoteId = try await createRemoteSermon(data: sermonData)
+            // Create new record - pass full sermon to include notes/transcript/summary
+            let newRemoteId = try await createRemoteSermon(sermon: sermon, data: sermonData)
             sermon.remoteId = newRemoteId
         }
-        
+
         // Update local sync metadata
         sermon.lastSyncedAt = Date()
         sermon.needsSync = false
         sermon.syncStatus = "synced"
-        
-        // Sync related data
+
+        // Sync related data (for updates to existing sermons)
         try await syncRelatedData(for: sermon)
-        
+
         try modelContext.save()
     }
     
@@ -339,7 +339,7 @@ extension SyncService {
         return sermons
     }
     
-    private func createRemoteSermon(data: SermonSyncData) async throws -> String {
+    private func createRemoteSermon(sermon: Sermon, data: SermonSyncData) async throws -> String {
         print("[SyncService] Creating remote sermon: \(data.title)")
 
         guard let supabaseService = self.supabaseService as? SupabaseService else {
@@ -393,7 +393,7 @@ extension SyncService {
         }
 
         // Prepare request payload (using camelCase as expected by API)
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "localId": data.id.uuidString,
             "title": data.title,
             "audioFilePath": storagePath, // Full storage path (e.g., "userId/filename.m4a")
@@ -408,6 +408,42 @@ extension SyncService {
             "summaryStatus": data.summaryStatus,
             "isArchived": data.isArchived
         ]
+
+        // Add notes if present
+        if !sermon.notes.isEmpty {
+            print("[SyncService] Including \(sermon.notes.count) notes in payload")
+            let notesArray = sermon.notes.map { note in
+                return [
+                    "id": note.id.uuidString,
+                    "text": note.text,
+                    "timestamp": note.timestamp
+                ]
+            }
+            payload["notes"] = notesArray
+        }
+
+        // Add transcript if present
+        if let transcript = sermon.transcript {
+            print("[SyncService] Including transcript in payload")
+            payload["transcript"] = [
+                "id": transcript.remoteId ?? "",
+                "text": transcript.text,
+                "segments": NSNull(), // TODO: serialize segments if needed
+                "status": "complete"
+            ]
+        }
+
+        // Add summary if present
+        if let summary = sermon.summary {
+            print("[SyncService] Including summary in payload: \(summary.title)")
+            payload["summary"] = [
+                "id": summary.id.uuidString,
+                "title": summary.title,
+                "text": summary.text,
+                "type": summary.type,
+                "status": summary.status
+            ]
+        }
 
         // Call Netlify function
         print("[SyncService] Calling create-sermon API...")
