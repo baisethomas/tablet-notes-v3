@@ -170,7 +170,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             if !existingSermon.audioFileExists {
                 print("[SyncService] Audio file missing locally, attempting download...")
                 do {
-                    let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL)
+                    let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL, remotePath: remoteSermon.audioFilePath)
                     existingSermon.audioFileName = localAudioURL.lastPathComponent
                     print("[SyncService] ✅ Audio file downloaded successfully")
                 } catch {
@@ -253,10 +253,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     private func createLocalSermon(from remoteData: RemoteSermonData) async throws {
         print("[SyncService] 📥 Creating local sermon from remote data: \(remoteData.title)")
         print("[SyncService] Remote audio URL: \(remoteData.audioFileURL)")
+        if let path = remoteData.audioFilePath {
+            print("[SyncService] Remote audio path: \(path)")
+        }
 
         // Download audio file if needed
         do {
-            let localAudioURL = try await downloadAudioFile(from: remoteData.audioFileURL)
+            let localAudioURL = try await downloadAudioFile(from: remoteData.audioFileURL, remotePath: remoteData.audioFilePath)
             print("[SyncService] ✅ Audio file downloaded to: \(localAudioURL.path)")
 
             let sermon = Sermon(
@@ -322,27 +325,30 @@ extension SyncService {
         print("[SyncService] File size: \(fileSize) bytes")
 
         let audioFileURL: URL
+        let storagePath: String
         do {
             // Get signed upload URL
             print("[SyncService] Getting signed upload URL...")
 
-            let (uploadURL, _) = try await supabaseService.getSignedUploadURL(
+            let (uploadURL, path) = try await supabaseService.getSignedUploadURL(
                 for: audioFileName,
                 contentType: "audio/m4a",
                 fileSize: fileSize
             )
+            storagePath = path
             print("[SyncService] ✅ Got upload URL: \(uploadURL)")
+            print("[SyncService] ✅ Storage path: \(storagePath)")
 
             // Upload the file
             print("[SyncService] Uploading file to storage...")
             try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: uploadURL)
             print("[SyncService] ✅ Audio file uploaded successfully")
 
-            // Get public URL
-            print("[SyncService] Getting public URL...")
+            // Get public URL using the actual storage path
+            print("[SyncService] Getting public URL for path: \(storagePath)")
             audioFileURL = try supabaseService.client.storage
                 .from("sermon-audio")
-                .getPublicURL(path: audioFileName)
+                .getPublicURL(path: storagePath)
             print("[SyncService] ✅ Public URL: \(audioFileURL)")
         } catch {
             print("[SyncService] ❌ Failed to upload audio: \(error.localizedDescription)")
@@ -353,7 +359,7 @@ extension SyncService {
         let payload: [String: Any] = [
             "localId": data.id.uuidString,
             "title": data.title,
-            "audioFilePath": audioFileName,
+            "audioFilePath": storagePath, // Full storage path (e.g., "userId/filename.m4a")
             "audioFileUrl": audioFileURL.absoluteString,
             "audioFileName": audioFileName,
             "audioFileSizeBytes": fileSize,
@@ -471,8 +477,11 @@ extension SyncService {
         // This would call your Netlify function to delete all user data
     }
     
-    private func downloadAudioFile(from url: URL) async throws -> URL {
+    private func downloadAudioFile(from url: URL, remotePath: String? = nil) async throws -> URL {
         print("[SyncService] 📥 Downloading audio file from: \(url)")
+        if let remotePath = remotePath {
+            print("[SyncService] Using storage path: \(remotePath)")
+        }
 
         guard let supabaseService = self.supabaseService as? SupabaseService else {
             print("[SyncService] ❌ SupabaseService not available")
@@ -495,7 +504,7 @@ extension SyncService {
             let downloadedURL = try await supabaseService.downloadAudioFile(
                 filename: fileName,
                 localURL: localURL,
-                remotePath: nil // Let it try different bucket/path combinations
+                remotePath: remotePath // Use provided path if available
             )
 
             print("[SyncService] ✅ Audio file downloaded successfully to: \(downloadedURL.path)")
@@ -540,6 +549,7 @@ struct RemoteSermonData: Codable {
     let localId: UUID
     let title: String
     let audioFileURL: URL
+    let audioFilePath: String? // Storage path (e.g., "userId/filename.m4a")
     let date: Date
     let serviceType: String
     let speaker: String?

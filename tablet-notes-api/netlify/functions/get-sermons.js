@@ -65,6 +65,7 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       localId: sermon.local_id,
       title: sermon.title,
       audioFileURL: sermon.audio_file_url,
+      audioFilePath: sermon.audio_file_path,
       date: sermon.date,
       serviceType: sermon.service_type,
       speaker: sermon.speaker,
