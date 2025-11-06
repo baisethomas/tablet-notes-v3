@@ -239,6 +239,9 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     // MARK: - Helper Methods
     
     private func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
+        print("[SyncService] 🔄 Updating local sermon: \(remoteData.title)")
+
+        // Update basic fields
         sermon.title = remoteData.title
         sermon.serviceType = remoteData.serviceType
         sermon.speaker = remoteData.speaker
@@ -248,6 +251,75 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         sermon.updatedAt = remoteData.updatedAt
         sermon.lastSyncedAt = Date()
         sermon.syncStatus = "synced"
+
+        // Update notes
+        if let remoteNotes = remoteData.notes {
+            print("[SyncService] Updating \(remoteNotes.count) notes")
+
+            // Clear existing notes and add remote ones
+            // Using last-writer-wins strategy: remote data replaces local
+            sermon.notes.removeAll()
+
+            for noteData in remoteNotes {
+                let note = Note(
+                    id: noteData.localId,
+                    text: noteData.text,
+                    timestamp: noteData.timestamp,
+                    remoteId: noteData.id
+                )
+                sermon.notes.append(note)
+            }
+            print("[SyncService] ✅ Notes updated")
+        }
+
+        // Update transcript
+        if let transcriptData = remoteData.transcript {
+            print("[SyncService] Updating transcript")
+
+            if let existingTranscript = sermon.transcript {
+                // Update existing transcript
+                existingTranscript.text = transcriptData.text
+                existingTranscript.segments = [] // TODO: deserialize segments from JSON if needed
+                existingTranscript.remoteId = transcriptData.id
+                print("[SyncService] ✅ Existing transcript updated")
+            } else {
+                // Create new transcript
+                let transcript = Transcript(
+                    text: transcriptData.text,
+                    segments: [],
+                    remoteId: transcriptData.id
+                )
+                sermon.transcript = transcript
+                print("[SyncService] ✅ New transcript created")
+            }
+        }
+
+        // Update summary
+        if let summaryData = remoteData.summary {
+            print("[SyncService] Updating summary: \(summaryData.title)")
+
+            if let existingSummary = sermon.summary {
+                // Update existing summary
+                existingSummary.title = summaryData.title
+                existingSummary.text = summaryData.text
+                existingSummary.type = summaryData.type
+                existingSummary.status = summaryData.status
+                existingSummary.remoteId = summaryData.id
+                print("[SyncService] ✅ Existing summary updated")
+            } else {
+                // Create new summary
+                let summary = Summary(
+                    id: summaryData.localId,
+                    title: summaryData.title,
+                    text: summaryData.text,
+                    type: summaryData.type,
+                    status: summaryData.status,
+                    remoteId: summaryData.id
+                )
+                sermon.summary = summary
+                print("[SyncService] ✅ New summary created")
+            }
+        }
     }
     
     private func createLocalSermon(from remoteData: RemoteSermonData) async throws {
