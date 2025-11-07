@@ -966,18 +966,18 @@ struct RecordingView: View {
                 id: sermonId
             )
             
-            // 🔥 TRIGGER SUMMARIZATION - This was missing!
+            // 🔥 TRIGGER SUMMARIZATION
             print("[RecordingView] Starting summarization for transcript length: \(text.count)")
-            let summaryService = SummaryService()
-            summaryService.generateSummary(for: text, type: serviceType)
-            
+            // Use the existing @StateObject summaryService instead of creating a new one
+            self.summaryService.generateSummary(for: text, type: serviceType)
+
             // Listen for summary completion and update the sermon
-            summaryService.summaryPublisher
-                .combineLatest(summaryService.statusPublisher)
+            self.summaryService.summaryPublisher
+                .combineLatest(self.summaryService.statusPublisher)
                 .sink { summaryText, status in
                     print("[RecordingView] Summary status update: \(status)")
                     if status == "complete", let summaryText = summaryText {
-                        print("[RecordingView] Summary completed, updating sermon...")
+                        print("[RecordingView] Summary completed, updating sermon (this will trigger sync)...")
                         let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
                         sermonService.saveSermon(
                             title: title,
@@ -993,7 +993,7 @@ struct RecordingView: View {
                             id: sermonId
                         )
                     } else if status == "failed" {
-                        print("[RecordingView] Summary failed, updating sermon status...")
+                        print("[RecordingView] Summary failed, updating sermon status (this will trigger sync)...")
                         let failedSummary = Summary(text: summaryText ?? "Summary generation failed", type: serviceType, status: "failed")
                         sermonService.saveSermon(
                             title: title,

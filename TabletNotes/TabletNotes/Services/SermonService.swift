@@ -150,20 +150,22 @@ class SermonService: ObservableObject {
             }
             try? modelContext.save()
             print("[SermonService] Sermon inserted/updated and modelContext saved.")
-            
+
             // Track usage for new sermons
             if isNewSermon {
                 subscriptionService?.incrementRecordingCount()
-                
+
                 // Calculate audio file size and update storage usage
                 if let fileSize = getFileSize(audioFileURL) {
                     let fileSizeGB = Double(fileSize) / 1_073_741_824 // Convert bytes to GB
                     subscriptionService?.incrementStorageUsage(fileSizeGB)
                 }
             }
-            
-            // Trigger sync if user has sync enabled
+
+            // ALWAYS trigger sync for ALL sermons (new or updated) if user has sync enabled
+            // This ensures notes, transcripts, and summaries are synced
             if let currentUser = authManager.currentUser, currentUser.canSync {
+                print("[SermonService] Marking sermon \(sermonID) for sync (isNew: \(isNewSermon))")
                 markSermonForSync(sermonID)
                 triggerSyncIfNeeded()
             }
