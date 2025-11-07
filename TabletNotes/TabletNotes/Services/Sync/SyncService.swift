@@ -252,9 +252,10 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         sermon.lastSyncedAt = Date()
         sermon.syncStatus = "synced"
 
-        // Update notes
-        if let remoteNotes = remoteData.notes {
-            print("[SyncService] Updating \(remoteNotes.count) notes")
+        // Update notes - ONLY if remote has notes OR local has no notes
+        // This prevents overwriting local data with empty remote data (backend bug workaround)
+        if let remoteNotes = remoteData.notes, !remoteNotes.isEmpty {
+            print("[SyncService] Updating \(remoteNotes.count) notes from remote")
 
             // Clear existing notes and add remote ones
             // Using last-writer-wins strategy: remote data replaces local
@@ -269,19 +270,24 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 )
                 sermon.notes.append(note)
             }
-            print("[SyncService] ✅ Notes updated")
+            print("[SyncService] ✅ Notes updated from remote")
+        } else if sermon.notes.isEmpty && remoteData.notes?.isEmpty == true {
+            print("[SyncService] ℹ️ Both local and remote notes are empty, no update needed")
+        } else {
+            print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote has no notes - likely backend bug)")
         }
 
-        // Update transcript
+        // Update transcript - ONLY if remote has transcript OR local has no transcript
+        // This prevents overwriting local transcript with null from backend
         if let transcriptData = remoteData.transcript {
-            print("[SyncService] Updating transcript")
+            print("[SyncService] Updating transcript from remote")
 
             if let existingTranscript = sermon.transcript {
                 // Update existing transcript
                 existingTranscript.text = transcriptData.text
                 existingTranscript.segments = [] // TODO: deserialize segments from JSON if needed
                 existingTranscript.remoteId = transcriptData.id
-                print("[SyncService] ✅ Existing transcript updated")
+                print("[SyncService] ✅ Existing transcript updated from remote")
             } else {
                 // Create new transcript
                 let transcript = Transcript(
@@ -290,13 +296,18 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     remoteId: transcriptData.id
                 )
                 sermon.transcript = transcript
-                print("[SyncService] ✅ New transcript created")
+                print("[SyncService] ✅ New transcript created from remote")
             }
+        } else if sermon.transcript != nil {
+            print("[SyncService] ⚠️ Preserving local transcript (remote has no transcript - likely backend bug)")
+        } else {
+            print("[SyncService] ℹ️ No transcript on local or remote")
         }
 
-        // Update summary
+        // Update summary - ONLY if remote has summary OR local has no summary
+        // This prevents overwriting local summary with null from backend
         if let summaryData = remoteData.summary {
-            print("[SyncService] Updating summary: \(summaryData.title)")
+            print("[SyncService] Updating summary from remote: \(summaryData.title)")
 
             if let existingSummary = sermon.summary {
                 // Update existing summary
@@ -305,7 +316,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 existingSummary.type = summaryData.type
                 existingSummary.status = summaryData.status
                 existingSummary.remoteId = summaryData.id
-                print("[SyncService] ✅ Existing summary updated")
+                print("[SyncService] ✅ Existing summary updated from remote")
             } else {
                 // Create new summary
                 let summary = Summary(
@@ -317,8 +328,12 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     remoteId: summaryData.id
                 )
                 sermon.summary = summary
-                print("[SyncService] ✅ New summary created")
+                print("[SyncService] ✅ New summary created from remote")
             }
+        } else if sermon.summary != nil {
+            print("[SyncService] ⚠️ Preserving local summary (remote has no summary - likely backend bug)")
+        } else {
+            print("[SyncService] ℹ️ No summary on local or remote")
         }
     }
     
