@@ -1,5 +1,4 @@
 const { createClient } = require('@supabase/supabase-js');
-const { randomUUID } = require('crypto');
 const {
   handleCORS,
   createAuthMiddleware,
@@ -100,10 +99,9 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
     }
 
     // Create related records if provided
-    // 1. Insert notes if provided
-    if (body.notes && Array.isArray(body.notes) && body.notes.length > 0) {
+    if (body.notes && Array.isArray(body.notes)) {
       const notesData = body.notes.map(note => ({
-        local_id: note.id || randomUUID(),
+        local_id: note.id,
         sermon_id: sermon.id,
         user_id: user.id,
         text: note.text,
@@ -119,19 +117,12 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
           sermonId: sermon.id,
           error: notesError.message
         });
-        // Don't fail the whole operation, but log it
-      } else {
-        logger.info('Created notes successfully', {
-          sermonId: sermon.id,
-          noteCount: notesData.length
-        });
       }
     }
 
-    // 2. Insert transcript if provided
-    if (body.transcript && body.transcript.text) {
+    if (body.transcript) {
       const transcriptData = {
-        local_id: body.transcript.id || randomUUID(),
+        local_id: body.transcript.id,
         sermon_id: sermon.id,
         user_id: user.id,
         text: body.transcript.text,
@@ -148,23 +139,17 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
           sermonId: sermon.id,
           error: transcriptError.message
         });
-        // Don't fail the whole operation, but log it
-      } else {
-        logger.info('Created transcript successfully', {
-          sermonId: sermon.id
-        });
       }
     }
 
-    // 3. Insert summary if provided
-    if (body.summary && body.summary.text) {
+    if (body.summary) {
       const summaryData = {
-        local_id: body.summary.id || randomUUID(),
+        local_id: body.summary.id,
         sermon_id: sermon.id,
         user_id: user.id,
         title: body.summary.title || '',
         text: body.summary.text,
-        type: body.summary.type || 'Sermon',
+        type: body.summary.type || 'devotional',
         status: body.summary.status || 'complete'
       };
 
@@ -176,11 +161,6 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         logger.warn('Failed to create summary', {
           sermonId: sermon.id,
           error: summaryError.message
-        });
-        // Don't fail the whole operation, but log it
-      } else {
-        logger.info('Created summary successfully', {
-          sermonId: sermon.id
         });
       }
     }
