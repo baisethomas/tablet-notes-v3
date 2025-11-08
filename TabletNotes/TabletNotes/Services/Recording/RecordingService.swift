@@ -306,7 +306,9 @@ class RecordingService: NSObject, ObservableObject {
     }
     
     func pauseRecording() throws {
-        guard isRecording, !isPaused else { return }
+        guard isRecording, !isPaused else {
+            throw RecordingError.pauseFailed
+        }
         audioRecorder?.pause()
         stopDurationTimer()
         Task { @MainActor in
@@ -316,13 +318,20 @@ class RecordingService: NSObject, ObservableObject {
     }
     
     func resumeRecording() throws {
-        guard isRecording, isPaused else { return }
-        audioRecorder?.record()
-        startDurationTimer()
-        Task { @MainActor in
-            isPaused = false
+        guard isRecording, isPaused else {
+            throw RecordingError.resumeFailed
         }
-        isPausedSubject.send(false)
+        do {
+            try recordingSession.setActive(true)
+            audioRecorder?.record()
+            startDurationTimer()
+            Task { @MainActor in
+                isPaused = false
+            }
+            isPausedSubject.send(false)
+        } catch {
+            throw RecordingError.resumeFailed
+        }
     }
     
     // MARK: - Duration Timer Management
@@ -408,17 +417,23 @@ enum RecordingError: LocalizedError {
     case permissionDenied
     case audioSessionFailed
     case recordingFailed
+    case pauseFailed
+    case resumeFailed
     
     var errorDescription: String? {
         switch self {
         case .limitExceeded(let reason):
             return reason
         case .permissionDenied:
-            return "Microphone permission denied"
+            return "Microphone permission denied. Please enable microphone access in Settings > Privacy & Security > Microphone."
         case .audioSessionFailed:
-            return "Failed to setup audio session"
+            return "Unable to set up audio recording. Please close other audio apps and try again."
         case .recordingFailed:
-            return "Recording failed"
+            return "Recording failed to start. Please try again or restart the app if the problem persists."
+        case .pauseFailed:
+            return "Unable to pause recording. Please try again."
+        case .resumeFailed:
+            return "Unable to resume recording. Please try again."
         }
     }
 }

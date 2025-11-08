@@ -20,8 +20,10 @@ class SupabaseService: SupabaseServiceProtocol {
         self.supabase = SupabaseClient(supabaseURL: supabaseURL, supabaseKey: supabaseKey)
     }
 
-    // Netlify API endpoint
-    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
+    // Netlify API endpoint (loaded from Config.plist)
+    private var apiBaseUrl: String {
+        return AppConfig.netlifyAPIBaseURL
+    }
 
     struct SignedUploadURLResponse: Codable {
         let success: Bool

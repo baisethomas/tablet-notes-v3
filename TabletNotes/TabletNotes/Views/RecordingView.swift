@@ -156,8 +156,7 @@ struct RecordingView: View {
     @ObservedObject var recordingService: RecordingService
     @ObservedObject var transcriptionService: TranscriptionService
     private let recordingSessionId = UUID().uuidString
-    @State private var showPermissionAlert = false
-    @State private var permissionMessage = ""
+    @State private var errorAlert: ErrorAlert? = nil
     #if canImport(AVFoundation) && os(iOS)
     @StateObject private var scriptureAnalysisService = ScriptureAnalysisService()
     // Timer removed - using RecordingService.recordingDuration for continuous timing
@@ -480,16 +479,7 @@ struct RecordingView: View {
             }
         }
         .ignoresSafeArea(edges: .bottom)
-        .alert("Permission Required", isPresented: $showPermissionAlert) {
-            Button("Settings") {
-                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(settingsUrl)
-                }
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text(permissionMessage)
-        }
+        .errorAlert($errorAlert)
         .onReceive(recordingService.isRecordingPublisher) { recording in
             // Handle recording state changes
             if !recording && isRecordingStarted {
@@ -498,8 +488,11 @@ struct RecordingView: View {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         isRecordingStarted = false
                         isPaused = false
-                        transcriptProcessingError = "Recording was interrupted. The audio may have been saved."
                     }
+                    errorAlert = .recordingError(
+                        message: "Recording was interrupted unexpectedly. The audio may have been saved.",
+                        retry: nil
+                    )
                 }
             }
         }
@@ -697,7 +690,10 @@ struct RecordingView: View {
                 print("[RecordingView] Recording state mismatch detected, resetting UI")
                 isRecordingStarted = false
                 isPaused = false
-                transcriptProcessingError = "Recording was interrupted. Please start a new recording."
+                errorAlert = .recordingError(
+                    message: "Recording was interrupted. The audio may have been saved, but you'll need to start a new recording.",
+                    retry: nil
+                )
             }
         }
         #else
@@ -739,8 +735,14 @@ struct RecordingView: View {
     private func handleMicrophonePermission(granted: Bool) {
         if !granted {
             print("[RecordingView] Microphone permission denied")
-            permissionMessage = "Microphone access is required to record sermons. Please enable it in Settings."
-            showPermissionAlert = true
+            errorAlert = .permissionError(
+                message: "Microphone access is required to record sermons. Please enable it in Settings > Privacy & Security > Microphone.",
+                openSettings: {
+                    if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(settingsUrl)
+                    }
+                }
+            )
             return
         }
 
@@ -759,8 +761,10 @@ struct RecordingView: View {
             let (canStart, reason) = await recordingService.canStartRecording()
             if !canStart {
                 await MainActor.run {
-                    permissionMessage = reason ?? "Recording limit exceeded"
-                    showPermissionAlert = true
+                    errorAlert = .recordingError(
+                        message: reason ?? "Recording limit exceeded. Please upgrade your subscription to record more sermons.",
+                        retry: nil
+                    )
                 }
                 return
             }
@@ -777,8 +781,18 @@ struct RecordingView: View {
                         }
                         // Timer removed - RecordingService handles duration tracking continuously
                     } catch {
-                        permissionMessage = "Failed to start transcription: \(error.localizedDescription)"
-                        showPermissionAlert = true
+                        errorAlert = ErrorMessageFormatter.errorAlert(
+                            from: error,
+                            retry: {
+                                // Retry transcription start
+                                do {
+                                    try transcriptionService.startTranscription()
+                                } catch {
+                                    // If retry fails, show error again
+                                    errorAlert = ErrorMessageFormatter.errorAlert(from: error)
+                                }
+                            }
+                        )
                     }
                 }
                 
@@ -792,14 +806,12 @@ struct RecordingView: View {
                 }
             } catch {
                 await MainActor.run {
-                    let errorMessage: String
-                    if let recordingError = error as? RecordingError {
-                        errorMessage = recordingError.localizedDescription
-                    } else {
-                        errorMessage = "Failed to start recording: \(error.localizedDescription)"
-                    }
-                    permissionMessage = errorMessage
-                    showPermissionAlert = true
+                    errorAlert = ErrorMessageFormatter.errorAlert(
+                        from: error,
+                        retry: {
+                            startRecording()
+                        }
+                    )
                     print("[RecordingView] Failed to start recording: \(error)")
                 }
             }
@@ -814,6 +826,12 @@ struct RecordingView: View {
             }
         } catch {
             print("[RecordingView] Failed to pause recording: \(error)")
+            errorAlert = ErrorMessageFormatter.errorAlert(
+                from: error,
+                retry: {
+                    pauseRecording()
+                }
+            )
         }
     }
     
@@ -825,6 +843,12 @@ struct RecordingView: View {
             }
         } catch {
             print("[RecordingView] Failed to resume recording: \(error)")
+            errorAlert = ErrorMessageFormatter.errorAlert(
+                from: error,
+                retry: {
+                    resumeRecording()
+                }
+            )
         }
     }
     
@@ -870,13 +894,19 @@ struct RecordingView: View {
                     print("[RecordingView] Transcription failed: \(error.localizedDescription)")
                     withAnimation(.easeInOut(duration: 0.5)) {
                         // Show user-friendly error message
+                        let message = ErrorMessageFormatter.userFriendlyMessage(from: error)
+                        transcriptProcessingError = message
+                        
+                        // Also show alert for critical errors
                         let nsError = error as NSError
-                        if nsError.domain == NSURLErrorDomain && 
-                           (nsError.code == NSURLErrorNotConnectedToInternet || 
-                            nsError.code == NSURLErrorNetworkConnectionLost) {
-                            transcriptProcessingError = "No internet connection. You can save this recording and process it later when you're back online."
-                        } else {
-                            transcriptProcessingError = error.localizedDescription
+                        if nsError.domain == NSURLErrorDomain {
+                            // Network errors - show alert
+                            errorAlert = ErrorMessageFormatter.errorAlert(
+                                from: error,
+                                retry: {
+                                    processTranscription(title: title, date: date, url: url)
+                                }
+                            )
                         }
                     }
                 }
@@ -945,13 +975,6 @@ struct RecordingView: View {
             
             // Get the latest notes from the service to ensure we have all notes
             let latestNotes = noteService.currentNotes
-            print("[DEBUG] handleTranscriptionResult: creating sermon with transcriptionStatus = complete")
-            print("[DEBUG] handleTranscriptionResult: Current notes array has \(notes.count) notes")
-            print("[DEBUG] handleTranscriptionResult: NoteService has \(latestNotes.count) notes")
-            print("[DEBUG] handleTranscriptionResult: Using latest notes from service")
-            for (index, note) in latestNotes.enumerated() {
-                print("[DEBUG] RecordingView Note \(index): '\(note.text)' at \(note.timestamp)s")
-            }
             sermonService.saveSermon(
                 title: title,
                 audioFileURL: url,
@@ -967,7 +990,6 @@ struct RecordingView: View {
             )
             
             // 🔥 TRIGGER SUMMARIZATION
-            print("[RecordingView] Starting summarization for transcript length: \(text.count)")
             // Use the existing @StateObject summaryService instead of creating a new one
             self.summaryService.generateSummary(for: text, type: serviceType)
 

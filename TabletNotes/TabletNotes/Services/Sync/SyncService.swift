@@ -44,19 +44,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     
     @MainActor
     private func performFullSync() async {
-        print("[SyncService] 🔄 Starting full sync...")
-
         // Check if user can sync
         guard let currentUser = authService.currentUser else {
-            print("[SyncService] ❌ No current user - cannot sync")
             syncError = SyncError.subscriptionRequired
             return
         }
 
-        print("[SyncService] Current user: \(currentUser.email), canSync: \(currentUser.canSync)")
-
         guard currentUser.canSync else {
-            print("[SyncService] ❌ User cannot sync (requires Premium subscription)")
             syncError = SyncError.subscriptionRequired
             return
         }
@@ -66,19 +60,15 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
         do {
             // 1. Push local changes to cloud
-            print("[SyncService] 📤 Pushing local changes...")
             try await pushLocalChanges()
 
             // 2. Pull cloud changes to local
-            print("[SyncService] 📥 Pulling cloud changes...")
             try await pullCloudChanges()
 
             syncStatus = "synced"
-            print("[SyncService] ✅ Sync completed successfully")
         } catch {
             syncStatus = "error"
             syncError = error
-            print("[SyncService] ❌ Sync failed: \(error.localizedDescription)")
         }
     }
 
@@ -94,10 +84,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         )
 
         let sermonsToSync = try modelContext.fetch(descriptor)
-        print("[SyncService] Found \(sermonsToSync.count) sermons marked for sync")
 
         for sermon in sermonsToSync {
-            print("[SyncService] Syncing sermon: \(sermon.title)")
             try await syncSermonToCloud(sermon)
         }
     }
@@ -107,10 +95,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
         // Fetch all remote sermons for current user
         let remoteSermons = try await fetchRemoteSermons(for: currentUser.id)
-        print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
 
         for remoteSermon in remoteSermons {
-            print("[SyncService] Syncing remote sermon: \(remoteSermon.title)")
             try await syncSermonFromCloud(remoteSermon)
         }
     }
@@ -152,8 +138,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
     
     private func syncSermonFromCloud(_ remoteSermon: RemoteSermonData) async throws {
-        print("[SyncService] 📥 Syncing sermon from cloud: \(remoteSermon.title)")
-
         // Find existing local sermon by remoteId
         let remoteId = remoteSermon.id
         let descriptor = FetchDescriptor<Sermon>(
@@ -165,17 +149,12 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         let existingSermons = try modelContext.fetch(descriptor)
 
         if let existingSermon = existingSermons.first {
-            print("[SyncService] Found existing local sermon with remoteId: \(remoteId)")
-
             // Download audio file if it doesn't exist locally
             if !existingSermon.audioFileExists {
-                print("[SyncService] Audio file missing locally, attempting download...")
                 do {
                     let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL, remotePath: remoteSermon.audioFilePath)
                     existingSermon.audioFileName = localAudioURL.lastPathComponent
-                    print("[SyncService] ✅ Audio file downloaded successfully")
                 } catch {
-                    print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
                     // Continue with sync even if audio download fails
                     // The sermon metadata will still be synced
                 }
@@ -183,15 +162,11 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
             // Update existing sermon if remote is newer
             if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
-                print("[SyncService] Remote sermon is newer, updating local copy")
                 updateLocalSermon(existingSermon, with: remoteSermon)
-            } else {
-                print("[SyncService] Local sermon is up to date")
             }
 
             try modelContext.save()
         } else {
-            print("[SyncService] No existing local sermon found, creating new one")
             // Create new local sermon
             try await createLocalSermon(from: remoteSermon)
         }
@@ -538,7 +513,7 @@ extension SyncService {
         print("[SyncService] Calling create-sermon API...")
         print("[SyncService] Payload: \(payload)")
 
-        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/create-sermon")!
+        let url = URL(string: "\(AppConfig.netlifyAPIBaseURL)/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -659,7 +634,7 @@ extension SyncService {
 
         // Call Netlify function
         print("[SyncService] Calling update-sermon API...")
-        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/update-sermon")!
+        let url = URL(string: "\(AppConfig.netlifyAPIBaseURL)/.netlify/functions/update-sermon")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

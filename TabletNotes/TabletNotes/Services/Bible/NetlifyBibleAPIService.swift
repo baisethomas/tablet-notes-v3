@@ -9,7 +9,10 @@ class NetlifyBibleAPIService: ObservableObject {
     @Published var isLoading = false
     
     private let session = URLSession.shared
-    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app/api"
+    // API base URL (loaded from Config.plist)
+    private var apiBaseUrl: String {
+        return "\(AppConfig.netlifyAPIBaseURL)/api"
+    }
     private let supabase: SupabaseClient
     
     init(supabase: SupabaseClient = SupabaseService.shared.client) {

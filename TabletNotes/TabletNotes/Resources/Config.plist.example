@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>SupabaseProjectURL</key>
+	<string>YOUR_SUPABASE_PROJECT_URL_HERE</string>
+	<key>SupabaseAnonKey</key>
+	<string>YOUR_SUPABASE_ANON_KEY_HERE</string>
+	<key>AssemblyAIAPIKey</key>
+	<string>YOUR_ASSEMBLYAI_API_KEY_HERE</string>
+	<key>NetlifyAPIBaseURL</key>
+	<string>YOUR_NETLIFY_API_BASE_URL_HERE</string>
+</dict>
+</plist>
+

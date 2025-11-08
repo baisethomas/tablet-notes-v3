@@ -74,10 +74,16 @@ struct AssemblyAIWord: Codable {
 }
 
 class AssemblyAITranscriptionService: ObservableObject {
-    // API endpoints
-    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
-    private lazy var generateUploadUrlEndpoint = "\(apiBaseUrl)/api/generate-upload-url"
-    private lazy var transcribeEndpoint = "\(apiBaseUrl)/api/transcribe"
+    // API endpoints (loaded from Config.plist)
+    private var apiBaseUrl: String {
+        return AppConfig.netlifyAPIBaseURL
+    }
+    private var generateUploadUrlEndpoint: String {
+        return "\(apiBaseUrl)/api/generate-upload-url"
+    }
+    private var transcribeEndpoint: String {
+        return "\(apiBaseUrl)/api/transcribe"
+    }
     
     // Supabase client for authentication
     private let supabase: SupabaseClient
@@ -281,7 +287,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                 // Get authentication token with automatic refresh
                 let accessToken = try await getAuthToken()
 
-                guard let statusUrl = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/api/transcribe-status") else {
+                guard let statusUrl = URL(string: "\(AppConfig.netlifyAPIBaseURL)/api/transcribe-status") else {
                     completion(.failure(NSError(domain: "InvalidStatusURL", code: 0, userInfo: nil)))
                     return
                 }

@@ -530,24 +530,6 @@ struct SermonListView: View {
                             }
                         )
                         
-                        #if DEBUG
-                        // Recovery button for debugging (only in debug builds)
-                        Button(action: {
-                            sermonService.checkForRecoverableRecordings()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.clockwise.circle.fill")
-                                Text("DEBUG: Recover Previous Recordings")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.adaptiveAccent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.adaptiveAccent.opacity(0.1))
-                            .cornerRadius(15)
-                        }
-                        .buttonStyle(.plain)
-                        #endif
                     }
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
                     // Empty state when search returns no results
@@ -765,7 +747,6 @@ struct SermonListView: View {
     // MARK: - Helper Methods
     private func regenerateSummary(for sermon: Sermon) {
         guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
-            print("Cannot regenerate summary: No transcript available")
             return
         }
         

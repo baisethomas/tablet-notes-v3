@@ -44,7 +44,10 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         }
     }
     
-    private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
+    // API endpoint (loaded from Config.plist)
+    private var endpoint: String {
+        return "\(AppConfig.netlifyAPIBaseURL)/api/summarize"
+    }
     private let supabase: SupabaseClient
 
     init(supabase: SupabaseClient = SupabaseService.shared.client) {

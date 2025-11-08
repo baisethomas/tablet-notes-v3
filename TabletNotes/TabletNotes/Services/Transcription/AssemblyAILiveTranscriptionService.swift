@@ -69,7 +69,7 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     }
     
     private func getSessionToken() async throws {
-        guard let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/assemblyai-live-token") else {
+        guard let url = URL(string: "\(AppConfig.netlifyAPIBaseURL)/.netlify/functions/assemblyai-live-token") else {
             throw NSError(domain: "InvalidURL", code: 1, userInfo: nil)
         }
 

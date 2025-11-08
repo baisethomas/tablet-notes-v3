@@ -134,14 +134,10 @@ class TranscriptionRetryService: ObservableObject {
         
         // Process one at a time to avoid overwhelming the service
         if let nextTranscription = pendingTranscriptions.first {
-            print("[TranscriptionRetryService] Processing pending transcription: \(nextTranscription.sermonTitle)")
-            
             transcriptionService.transcribeAudioFileWithResult(url: nextTranscription.audioFileURL) { [weak self] result in
                 DispatchQueue.main.async {
                     switch result {
                     case .success(let (text, segments)):
-                        print("[TranscriptionRetryService] Successfully processed pending transcription")
-                        
                         // Create the sermon with transcription
                         if let context = self?.modelContext {
                             let sermon = Sermon(
@@ -181,8 +177,6 @@ class TranscriptionRetryService: ObservableObject {
                             context.insert(sermon)
                             try? context.save()
 
-                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after transcript completion")
-
                             // Notify UI that transcription completed
                             NotificationCenter.default.post(
                                 name: TranscriptionRetryService.transcriptionCompletedNotification,
@@ -196,8 +190,6 @@ class TranscriptionRetryService: ObservableObject {
                         self?.removePendingTranscription(withId: nextTranscription.id)
                         
                     case .failure(let error):
-                        print("[TranscriptionRetryService] Failed to process pending transcription: \(error.localizedDescription)")
-                        
                         if nextTranscription.retryCount < maxRetries {
                             // Update retry count and move to end of queue
                             self?.removePendingTranscription(withId: nextTranscription.id)
@@ -206,7 +198,6 @@ class TranscriptionRetryService: ObservableObject {
                             self?.savePendingTranscriptions()
                         } else {
                             // Max retries reached, remove from queue
-                            print("[TranscriptionRetryService] Max retries reached for transcription, removing from queue")
                             self?.removePendingTranscription(withId: nextTranscription.id)
                         }
                     }
@@ -229,7 +220,7 @@ class TranscriptionRetryService: ObservableObject {
             let data = try JSONEncoder().encode(pendingTranscriptions)
             userDefaults.set(data, forKey: pendingTranscriptionsKey)
         } catch {
-            print("[TranscriptionRetryService] Failed to save pending transcriptions: \(error)")
+            // Handle error silently
         }
     }
     
@@ -238,9 +229,8 @@ class TranscriptionRetryService: ObservableObject {
         
         do {
             pendingTranscriptions = try JSONDecoder().decode([PendingTranscription].self, from: data)
-            print("[TranscriptionRetryService] Loaded \(pendingTranscriptions.count) pending transcriptions")
         } catch {
-            print("[TranscriptionRetryService] Failed to load pending transcriptions: \(error)")
+            // Handle error silently
         }
     }
     
@@ -253,13 +243,11 @@ class TranscriptionRetryService: ObservableObject {
         
         if pendingTranscriptions.count != originalCount {
             savePendingTranscriptions()
-            print("[TranscriptionRetryService] Cleaned up \(originalCount - pendingTranscriptions.count) old pending transcriptions")
         }
     }
     
     private func generateSummaryForSermon(_ sermon: Sermon) {
         guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
-            print("[TranscriptionRetryService] No transcript available for summary generation")
             return
         }
         
@@ -298,8 +286,6 @@ class TranscriptionRetryService: ObservableObject {
                             sermon.needsSync = true
                             sermon.updatedAt = Date()
                             sermon.syncStatus = "pending"
-
-                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after summary completion")
                         } else {
                             sermon.summaryStatus = "failed"
                         }
