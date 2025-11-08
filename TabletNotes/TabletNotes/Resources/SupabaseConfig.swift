@@ -3,18 +3,42 @@ import Foundation
 // MARK: - Supabase Configuration
 // This file contains configuration for the Supabase backend service
 // To use this service, you need to have a Supabase project set up
+// API keys are stored in Config.plist (not committed to version control)
 
 struct SupabaseConfig {
+    // MARK: - Configuration Loading
+    
+    private static func loadConfigValue(for key: String) -> String {
+        guard let path = Bundle.main.path(forResource: "Config", ofType: "plist"),
+              let plist = NSDictionary(contentsOfFile: path),
+              let value = plist[key] as? String else {
+            fatalError("❌ Failed to load \(key) from Config.plist. Please copy Config.plist.example to Config.plist and fill in your API keys.")
+        }
+        
+        // Check if placeholder values are still present
+        if value.contains("YOUR_") || value.isEmpty {
+            fatalError("❌ \(key) is not configured in Config.plist. Please add your API key.")
+        }
+        
+        return value
+    }
+    
     // MARK: - Supabase Configuration
 
-    // Your Supabase project URL
-    static let projectURL = "https://ubghnmenxbhhlpxvypea.supabase.co"
+    // Your Supabase project URL (loaded from Config.plist)
+    static var projectURL: String {
+        return loadConfigValue(for: "SupabaseProjectURL")
+    }
 
     // Alternative URL property for compatibility
-    static let url = projectURL
+    static var url: String {
+        return projectURL
+    }
 
-    // Your Supabase anonymous key
-    static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InViZ2hubWVueGJoaGxweHZ5cGVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0NTgzMzMsImV4cCI6MjA2NjAzNDMzM30.gAzL8N2vXA8FhcAIFR0gKV6K7WS0_WCnMyINOiXcDfs"
+    // Your Supabase anonymous key (loaded from Config.plist)
+    static var anonKey: String {
+        return loadConfigValue(for: "SupabaseAnonKey")
+    }
 
     // MARK: - Configuration Validation
 

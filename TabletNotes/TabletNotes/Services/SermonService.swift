@@ -53,7 +53,6 @@ class SermonService: ObservableObject {
     // Allow injecting sync service after initialization
     func setSyncService(_ syncService: any SyncServiceProtocol) {
         self.syncService = syncService
-        print("[SermonService] SyncService injected")
     }
     
     @MainActor
@@ -71,12 +70,9 @@ class SermonService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil) {
-        print("[SermonService] saveSermon called with title: \(title), date: \(date), serviceType: \(serviceType)")
-        
         Task { @MainActor in
             // Ensure user is authenticated
             guard let currentUser = authManager.currentUser else {
-                print("[SermonService] ERROR: No authenticated user found. Cannot save sermon.")
                 limitReachedMessage = "Please sign in to save sermons"
                 return
             }
@@ -98,17 +94,9 @@ class SermonService: ObservableObject {
             // Clear any previous limit messages
             limitReachedMessage = nil
             
-            print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
-            
             // First, ensure all notes are inserted into the context
             for note in notes {
                 modelContext.insert(note)
-            }
-            
-            // Add debugging for notes
-            print("[DEBUG] saveSermon: Processing \(notes.count) notes")
-            for (index, note) in notes.enumerated() {
-                print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s")
             }
             
             if let existing = sermons.first(where: { $0.id == sermonID }) {
@@ -126,7 +114,6 @@ class SermonService: ObservableObject {
                 existing.isArchived = isArchived
                 // Update userId to current user (in case of user changes)
                 existing.userId = currentUser.id
-                print("[DEBUG] saveSermon: updated existing sermon \(existing.id) with \(notes.count) notes for user \(currentUser.id)")
             } else {
                 // Insert new sermon
                 let sermon = Sermon(
@@ -146,10 +133,8 @@ class SermonService: ObservableObject {
                     userId: currentUser.id
                 )
                 modelContext.insert(sermon)
-                print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) with \(notes.count) notes for user \(currentUser.id)")
             }
             try? modelContext.save()
-            print("[SermonService] Sermon inserted/updated and modelContext saved.")
 
             // Track usage for new sermons
             if isNewSermon {
@@ -165,7 +150,6 @@ class SermonService: ObservableObject {
             // ALWAYS trigger sync for ALL sermons (new or updated) if user has sync enabled
             // This ensures notes, transcripts, and summaries are synced
             if let currentUser = authManager.currentUser, currentUser.canSync {
-                print("[SermonService] Marking sermon \(sermonID) for sync (isNew: \(isNewSermon))")
                 markSermonForSync(sermonID)
                 triggerSyncIfNeeded()
             }
@@ -175,24 +159,18 @@ class SermonService: ObservableObject {
     }
 
     func fetchSermons() {
-        print("[SermonService] fetchSermons called.")
-        
         Task { @MainActor in
             // If no user is authenticated, show all sermons (for migration compatibility)
             guard let currentUser = authManager.currentUser else {
-                print("[SermonService] No authenticated user - fetching all sermons")
                 let fetchDescriptor = FetchDescriptor<Sermon>()
                 if let results = try? modelContext.fetch(fetchDescriptor) {
                     sermons = results
-                    print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
                 } else {
                     sermons = []
                 }
                 applyFilters()
                 return
             }
-            
-            print("[SermonService] Fetching sermons for user: \(currentUser.name) (ID: \(currentUser.id))")
             
             // First, migrate any existing sermons without userId to current user
             migrateExistingSermons(to: currentUser.id)
@@ -213,10 +191,8 @@ class SermonService: ObservableObject {
             
             if let results = try? modelContext.fetch(fetchDescriptor) {
                 sermons = results
-                print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
                 applyFilters()
             } else {
-                print("[SermonService] fetch failed for user \(currentUser.id).")
                 sermons = []
                 applyFilters()
             }
@@ -225,8 +201,6 @@ class SermonService: ObservableObject {
     
     @MainActor
     private func migrateExistingSermons(to userId: UUID) {
-        print("[SermonService] Checking for sermons without userId to migrate...")
-        
         // Fetch sermons without userId
         let fetchDescriptor = FetchDescriptor<Sermon>()
         guard let allSermons = try? modelContext.fetch(fetchDescriptor) else { return }
@@ -234,22 +208,16 @@ class SermonService: ObservableObject {
         let sermonsToMigrate = allSermons.filter { $0.userId == nil }
         
         if !sermonsToMigrate.isEmpty {
-            print("[SermonService] Migrating \(sermonsToMigrate.count) sermons to user \(userId)")
-            
             for sermon in sermonsToMigrate {
                 sermon.userId = userId
-                print("[SermonService] Migrated sermon: \(sermon.title)")
             }
             
             try? modelContext.save()
-            print("[SermonService] Migration completed")
         }
     }
     
     @MainActor
     private func migrateAudioFilePaths() {
-        print("[SermonService] Checking for sermons with absolute audio file paths to migrate...")
-        
         // Fetch all sermons to check for old absolute path format
         let fetchDescriptor = FetchDescriptor<Sermon>()
         guard let allSermons = try? modelContext.fetch(fetchDescriptor) else { return }
@@ -261,21 +229,18 @@ class SermonService: ObservableObject {
                 // Extract just the filename from the stored path
                 let filename = sermon.audioFileName.components(separatedBy: "/").last ?? sermon.audioFileName
                 
-                print("[SermonService] Migrating sermon '\(sermon.title)' from path '\(sermon.audioFileName)' to filename '\(filename)'")
-                
                 // Update to store just the filename
                 sermon.audioFileName = filename
                 
                 // Check if the file actually exists at the new computed path
                 if !sermon.audioFileExists {
-                    print("[SermonService] WARNING: Audio file '\(filename)' not found at expected location for sermon '\(sermon.title)'")
                     // Try to find the file in the AudioRecordings directory
                     let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("AudioRecordings")
                     if let files = try? FileManager.default.contentsOfDirectory(at: audioDir, includingPropertiesForKeys: nil) {
                         if let foundFile = files.first(where: { $0.lastPathComponent == filename }) {
-                            print("[SermonService] Found audio file at: \(foundFile.path)")
+                            // File found at alternative location
                         } else {
-                            print("[SermonService] Audio file '\(filename)' not found in AudioRecordings directory")
+                            // File not found
                         }
                     }
                 }
@@ -285,10 +250,7 @@ class SermonService: ObservableObject {
         }
         
         if migratedCount > 0 {
-            print("[SermonService] Migrated \(migratedCount) sermons to use relative file paths")
             try? modelContext.save()
-        } else {
-            print("[SermonService] No sermons needed audio path migration")
         }
     }
     
@@ -397,10 +359,8 @@ class SermonService: ObservableObject {
             // Clear the local arrays
             sermons.removeAll()
             filteredSermons.removeAll()
-            
-            print("[SermonService] Successfully deleted all sermons")
         } catch {
-            print("[SermonService] Failed to delete all sermons: \(error)")
+            // Handle error silently
         }
     }
     
@@ -415,9 +375,8 @@ class SermonService: ObservableObject {
         // CRITICAL: Save the context to persist needsSync flag
         do {
             try modelContext.save()
-            print("[SermonService] ✅ Saved needsSync flag for sermon \(sermonId)")
         } catch {
-            print("[SermonService] ❌ Failed to save needsSync flag: \(error)")
+            // Handle error silently
         }
     }
     
@@ -500,7 +459,6 @@ class SermonService: ObservableObject {
     
     func checkForRecoverableRecordings() {
         Task { @MainActor in
-            print("[SermonService] Manual recovery triggered by user")
             checkForOrphanedAudioFiles()
         }
     }
@@ -512,7 +470,6 @@ class SermonService: ObservableObject {
             let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
             return fileAttributes[FileAttributeKey.size] as? Int64
         } catch {
-            print("[SermonService] Error getting file size: \(error)")
             return nil
         }
     }
@@ -533,8 +490,6 @@ class SermonService: ObservableObject {
     private func recoverFromMigration() {
         guard DataMigration.hasRecoverableAudioFiles() else { return }
         
-        print("[SermonService] Found recoverable audio files after migration, attempting recovery...")
-        
         let recoverableFiles = DataMigration.getRecoverableAudioFiles()
         performRecovery(from: recoverableFiles, source: "migration")
     }
@@ -547,8 +502,6 @@ class SermonService: ObservableObject {
             let allSermons = try modelContext.fetch(fetchDescriptor)
             
             if allSermons.isEmpty {
-                print("[SermonService] Empty database detected (direct query), checking for orphaned audio files...")
-                
                 let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("AudioRecordings")
                 
@@ -562,8 +515,6 @@ class SermonService: ObservableObject {
                 }
                 
                 if !sermonFiles.isEmpty {
-                    print("[SermonService] Found \(sermonFiles.count) orphaned audio files")
-                    
                     // Convert to recovery format
                     var recoverableFiles: [(filename: String, creationDate: Date, path: String)] = []
                     
@@ -580,11 +531,9 @@ class SermonService: ObservableObject {
                     
                     performRecovery(from: recoverableFiles, source: "orphaned files")
                 }
-            } else {
-                print("[SermonService] Database has \(allSermons.count) existing sermons, no recovery needed")
             }
         } catch {
-            print("[SermonService] Error checking database or audio files: \(error)")
+            // Handle error silently
         }
     }
     
@@ -628,7 +577,6 @@ class SermonService: ObservableObject {
                             recoveredNotes.append(note)
                         }
                     }
-                    print("[SermonService] Recovered \(recoveredNotes.count) notes for \(fileInfo.filename)")
                 }
                 
                 let sermon = Sermon(
@@ -649,15 +597,12 @@ class SermonService: ObservableObject {
                 
                 modelContext.insert(sermon)
                 recoveredCount += 1
-                
-                print("[SermonService] Recovered sermon: \(title) with \(recoveredNotes.count) notes")
             }
         }
         
         if recoveredCount > 0 {
             do {
                 try modelContext.save()
-                print("[SermonService] Successfully recovered \(recoveredCount) sermons from \(source)")
                 
                 // Clear recovery flags if from migration
                 if source == "migration" {
@@ -676,7 +621,7 @@ class SermonService: ObservableObject {
                 }
                 
             } catch {
-                print("[SermonService] Failed to save recovered sermons: \(error)")
+                // Handle error silently
             }
         }
     }

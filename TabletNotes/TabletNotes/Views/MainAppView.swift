@@ -40,8 +40,6 @@ struct MainAppView: View {
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
-    @State private var showSyncDebug = false
-    @State private var syncDebugMessage = ""
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -190,13 +188,11 @@ struct MainAppView: View {
                                     do {
                                         if recordingService.isPaused {
                                             try recordingService.resumeRecording()
-                                            print("[MiniPlayer] Recording resumed")
                                         } else {
                                             try recordingService.pauseRecording()
-                                            print("[MiniPlayer] Recording paused")
                                         }
                                     } catch {
-                                        print("[MiniPlayer] Failed to pause/resume recording: \(error)")
+                                        // Handle error silently
                                     }
                                 },
                                 onStop: {
@@ -204,11 +200,9 @@ struct MainAppView: View {
                                     Task {
                                         // Stop the recording and get the audio URL
                                         let audioURL = recordingService.stopRecording()
-                                        print("[MiniPlayer] Recording stopped")
 
                                         // Stop transcription service
                                         transcriptionService.stopTranscription()
-                                        print("[MiniPlayer] Transcription stopped")
 
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
@@ -269,16 +263,13 @@ struct MainAppView: View {
                                                                             summaryStatus: "complete",
                                                                             id: sermonId
                                                                         )
-                                                                        print("[MiniPlayer] Summary saved successfully")
                                                                     }
                                                                 }
                                                                 .store(in: &self.cancellables)
 
-                                                            print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                             sermonService.fetchSermons()
 
                                                         case .failure(let error):
-                                                            print("[MiniPlayer] Transcription failed: \(error)")
                                                             // Save recording for later processing
                                                             let noteService = NoteService(sessionId: currentRecordingSessionId)
                                                             let notes = noteService.currentNotes
@@ -325,13 +316,11 @@ struct MainAppView: View {
                                 do {
                                     if recordingService.isPaused {
                                         try recordingService.resumeRecording()
-                                        print("[MainAppView] Recording resumed")
                                     } else {
                                         try recordingService.pauseRecording()
-                                        print("[MainAppView] Recording paused")
                                     }
                                 } catch {
-                                    print("[MainAppView] Failed to pause/resume recording: \(error)")
+                                    // Handle error silently
                                 }
                             } else {
                                 // No recording in progress, show service type modal to start new recording
@@ -359,28 +348,24 @@ struct MainAppView: View {
                         },
                         onPlayPause: {
                             // Handle pause/resume
-                            do {
-                                if recordingService.isPaused {
-                                    try recordingService.resumeRecording()
-                                    print("[MiniPlayer] Recording resumed")
-                                } else {
-                                    try recordingService.pauseRecording()
-                                    print("[MiniPlayer] Recording paused")
+                                do {
+                                    if recordingService.isPaused {
+                                        try recordingService.resumeRecording()
+                                    } else {
+                                        try recordingService.pauseRecording()
+                                    }
+                                } catch {
+                                    // Handle error silently
                                 }
-                            } catch {
-                                print("[MiniPlayer] Failed to pause/resume recording: \(error)")
-                            }
                         },
                         onStop: {
                             // Stop recording and process
                             Task {
                                 // Stop the recording and get the audio URL
                                 let audioURL = recordingService.stopRecording()
-                                print("[MiniPlayer] Recording stopped")
 
                                 // Stop transcription service
                                 transcriptionService.stopTranscription()
-                                print("[MiniPlayer] Transcription stopped")
 
                                 await MainActor.run {
                                     if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
@@ -441,16 +426,13 @@ struct MainAppView: View {
                                                                     summaryStatus: "complete",
                                                                     id: sermonId
                                                                 )
-                                                                print("[MiniPlayer] Summary saved successfully")
                                                             }
                                                         }
                                                         .store(in: &self.cancellables)
 
-                                                    print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                     sermonService.fetchSermons()
 
                                                 case .failure(let error):
-                                                    print("[MiniPlayer] Transcription failed: \(error)")
                                                     // Save recording for later processing
                                                     let noteService = NoteService(sessionId: currentRecordingSessionId)
                                                     let notes = noteService.currentNotes
@@ -520,30 +502,6 @@ struct MainAppView: View {
                     .transition(.opacity)
                 }
 
-                // Debug sync status banner
-                if showSyncDebug {
-                    VStack {
-                        HStack {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.white)
-                            Text(syncDebugMessage)
-                                .foregroundColor(.white)
-                                .font(.caption)
-                            Spacer()
-                            Button("✕") {
-                                showSyncDebug = false
-                            }
-                            .foregroundColor(.white)
-                        }
-                        .padding()
-                        .background(Color.blue.opacity(0.9))
-                        .cornerRadius(10)
-                        .shadow(radius: 5)
-                        .padding()
-                        Spacer()
-                    }
-                    .transition(.move(edge: .top))
-                }
             }
             .onAppear {
                 // Inject syncService into sermonService
@@ -555,23 +513,7 @@ struct MainAppView: View {
                 Task {
                     // Small delay to ensure UI is ready
                     try? await Task.sleep(nanoseconds: 500_000_000)
-
-                    await MainActor.run {
-                        showSyncDebug = true
-                        if let user = authManager.currentUser {
-                            syncDebugMessage = "Syncing as \(user.email)... canSync: \(user.canSync)"
-                        } else {
-                            syncDebugMessage = "No user logged in"
-                        }
-                    }
-
                     await syncService.syncAllData()
-
-                    // Hide after 5 seconds
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    await MainActor.run {
-                        showSyncDebug = false
-                    }
                 }
             }
             .onChange(of: authManager.currentUser?.id) { _, newUserId in
@@ -600,7 +542,6 @@ struct MainAppView: View {
                                 // Check if user can start recording before navigating
                                 let (canStart, reason) = await recordingService.canStartRecording()
                                 if !canStart {
-                                    print("[MainAppView] Cannot start recording: \(reason ?? "Unknown limit")")
                                     // TODO: Show alert with reason
                                     return
                                 }
@@ -608,14 +549,6 @@ struct MainAppView: View {
                                 // Start recording immediately
                                 do {
                                     try await recordingService.startRecording(serviceType: type)
-                                    print("[MainAppView] Recording started immediately for \(type)")
-
-                                    // Log duration limit
-                                    let maxDuration = await recordingService.getMaxRecordingDuration()
-                                    if let maxDuration = maxDuration {
-                                        let maxMinutes = Int(maxDuration / 60)
-                                        print("[MainAppView] Recording limit: \(maxMinutes) minutes")
-                                    }
 
                                     await MainActor.run {
                                         // Track the current recording service type for mini-player
@@ -625,7 +558,6 @@ struct MainAppView: View {
                                         }
                                     }
                                 } catch {
-                                    print("[MainAppView] Failed to start recording: \(error)")
                                     // TODO: Show alert with error
                                     return
                                 }
