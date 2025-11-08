@@ -3,7 +3,7 @@ import SwiftData
 
 @Model
 final class Transcript {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
     var text: String
     @Relationship(deleteRule: .cascade) var segments: [TranscriptSegment]
 
