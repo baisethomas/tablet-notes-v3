@@ -77,45 +77,83 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       .order('date', { ascending: false });
 
     if (error) {
+      event.logger.error('Failed to fetch sermons', {
+        userId,
+        error: error.message,
+        code: error.code,
+        details: error.details
+      });
       return createErrorResponse(new Error(error.message), 500);
     }
 
+    // Handle null/undefined data
+    if (!data) {
+      event.logger.warn('No data returned from query', { userId });
+      return createSuccessResponse([], 200);
+    }
+
+    event.logger.info('Fetched sermons from database', {
+      userId,
+      count: data?.length || 0,
+      sermonIds: data?.map(s => s.id) || []
+    });
+
+    // Log raw data for debugging
+    if (data && data.length > 0) {
+      data.forEach(sermon => {
+        event.logger.info('Sermon raw data', {
+          sermonId: sermon.id,
+          title: sermon.title,
+          notesCount: sermon.notes?.length || 0,
+          transcriptsCount: sermon.transcripts?.length || 0,
+          summariesCount: sermon.summaries?.length || 0,
+          hasNotes: !!sermon.notes && sermon.notes.length > 0,
+          hasTranscripts: !!sermon.transcripts && sermon.transcripts.length > 0,
+          hasSummaries: !!sermon.summaries && sermon.summaries.length > 0,
+          notesArray: sermon.notes,
+          transcriptsArray: sermon.transcripts,
+          summariesArray: sermon.summaries
+        });
+      });
+    }
+
     // Transform data to match RemoteSermonData structure
-    const sermons = data.map(sermon => ({
-      id: sermon.id,
-      localId: sermon.local_id,
-      title: sermon.title,
-      audioFileURL: sermon.audio_file_url,
-      audioFilePath: sermon.audio_file_path,
-      date: sermon.date,
-      serviceType: sermon.service_type,
-      speaker: sermon.speaker,
-      transcriptionStatus: sermon.transcription_status,
-      summaryStatus: sermon.summary_status,
-      isArchived: sermon.is_archived,
-      userId: sermon.user_id,
-      updatedAt: sermon.updated_at,
-      notes: sermon.notes ? sermon.notes.map(note => ({
-        id: note.id,
-        localId: note.local_id,
-        text: note.text,
-        timestamp: note.timestamp
-      })) : [],
-      transcript: sermon.transcripts && sermon.transcripts.length > 0 ? {
-        id: sermon.transcripts[0].id,
-        localId: sermon.transcripts[0].local_id,
-        text: sermon.transcripts[0].text,
-        segments: sermon.transcripts[0].segments,
-        status: sermon.transcripts[0].status
-      } : null,
-      summary: sermon.summaries && sermon.summaries.length > 0 ? {
-        id: sermon.summaries[0].id,
-        localId: sermon.summaries[0].local_id,
-        title: sermon.summaries[0].title,
-        text: sermon.summaries[0].text,
-        type: sermon.summaries[0].type,
-        status: sermon.summaries[0].status
-      } : null
+    const sermons = data.map(sermon => {
+      const transformed = {
+        id: sermon.id,
+        localId: sermon.local_id,
+        title: sermon.title,
+        audioFileURL: sermon.audio_file_url,
+        audioFilePath: sermon.audio_file_path,
+        date: sermon.date,
+        serviceType: sermon.service_type,
+        speaker: sermon.speaker,
+        transcriptionStatus: sermon.transcription_status,
+        summaryStatus: sermon.summary_status,
+        isArchived: sermon.is_archived,
+        userId: sermon.user_id,
+        updatedAt: sermon.updated_at,
+        notes: sermon.notes ? sermon.notes.map(note => ({
+          id: note.id,
+          localId: note.local_id,
+          text: note.text,
+          timestamp: note.timestamp
+        })) : [],
+        transcript: sermon.transcripts && sermon.transcripts.length > 0 ? {
+          id: sermon.transcripts[0].id,
+          localId: sermon.transcripts[0].local_id,
+          text: sermon.transcripts[0].text,
+          segments: sermon.transcripts[0].segments,
+          status: sermon.transcripts[0].status
+        } : null,
+        summary: sermon.summaries && sermon.summaries.length > 0 ? {
+          id: sermon.summaries[0].id,
+          localId: sermon.summaries[0].local_id,
+          title: sermon.summaries[0].title,
+          text: sermon.summaries[0].text,
+          type: sermon.summaries[0].type,
+          status: sermon.summaries[0].status
+        } : null
       };
 
       // Log transformation result for debugging
@@ -143,6 +181,10 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
 
     return createSuccessResponse(sermons, 200);
   } catch (error) {
+    event.logger.error('Unexpected error in get-sermons', {
+      error: error.message,
+      stack: error.stack
+    }, error);
     return createErrorResponse(error, 500);
   }
 }); 
