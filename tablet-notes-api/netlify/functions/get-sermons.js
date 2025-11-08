@@ -134,12 +134,17 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
         isArchived: sermon.is_archived,
         userId: sermon.user_id,
         updatedAt: sermon.updated_at,
-        notes: sermon.notes ? sermon.notes.map(note => ({
+        notes: sermon.notes ? (Array.isArray(sermon.notes) ? sermon.notes.map(note => ({
           id: note.id,
           localId: note.local_id,
           text: note.text,
           timestamp: note.timestamp
-        })) : [],
+        })) : [{
+          id: sermon.notes.id,
+          localId: sermon.notes.local_id,
+          text: sermon.notes.text,
+          timestamp: sermon.notes.timestamp
+        }]) : [],
         transcript: sermon.transcripts && (Array.isArray(sermon.transcripts) ? sermon.transcripts.length > 0 : typeof sermon.transcripts === 'object') ? {
           id: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].id : sermon.transcripts.id,
           localId: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].local_id : sermon.transcripts.local_id,
