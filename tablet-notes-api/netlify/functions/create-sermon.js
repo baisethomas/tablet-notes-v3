@@ -106,7 +106,7 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         sermon_id: sermon.id,
         user_id: user.id,
         text: note.text,
-        timestamp: note.timestamp
+        timestamp: Math.round(note.timestamp) || 0 // Convert to integer
       }));
 
       const { data: insertedNotes, error: notesError } = await supabase
