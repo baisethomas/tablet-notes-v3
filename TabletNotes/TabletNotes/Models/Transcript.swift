@@ -3,15 +3,17 @@ import SwiftData
 
 @Model
 final class Transcript {
+    var id: UUID = UUID()
     var text: String
     @Relationship(deleteRule: .cascade) var segments: [TranscriptSegment]
-    
+
     // Sync metadata
     var remoteId: String?
     var updatedAt: Date?
     var needsSync: Bool = false
 
-    init(text: String, segments: [TranscriptSegment] = [], remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+    init(id: UUID = UUID(), text: String, segments: [TranscriptSegment] = [], remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+        self.id = id
         self.text = text
         self.segments = segments
         self.remoteId = remoteId

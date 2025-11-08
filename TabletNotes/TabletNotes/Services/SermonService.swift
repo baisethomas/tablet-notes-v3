@@ -411,6 +411,14 @@ class SermonService: ObservableObject {
         sermon.needsSync = true
         sermon.updatedAt = Date()
         sermon.syncStatus = "pending"
+
+        // CRITICAL: Save the context to persist needsSync flag
+        do {
+            try modelContext.save()
+            print("[SermonService] ✅ Saved needsSync flag for sermon \(sermonId)")
+        } catch {
+            print("[SermonService] ❌ Failed to save needsSync flag: \(error)")
+        }
     }
     
     private func triggerSyncIfNeeded() {
