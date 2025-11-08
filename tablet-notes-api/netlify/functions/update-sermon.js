@@ -109,11 +109,20 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
 
     // Update notes if provided
     if (body.notes && Array.isArray(body.notes)) {
+      logger.info('Updating notes', { count: body.notes.length, sermonId: body.remoteId });
       // Delete existing notes
-      await supabase
+      const { error: deleteError } = await supabase
         .from('notes')
         .delete()
-        .eq('sermon_id', body.remoteId);
+        .eq('sermon_id', body.remoteId)
+        .eq('user_id', user.id);
+
+      if (deleteError) {
+        logger.warn('Failed to delete existing notes', {
+          sermonId: body.remoteId,
+          error: deleteError.message
+        });
+      }
 
       // Insert new notes
       if (body.notes.length > 0) {
@@ -125,21 +134,34 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
           timestamp: note.timestamp
         }));
 
-        const { error: notesError } = await supabase
+        const { data: insertedNotes, error: notesError } = await supabase
           .from('notes')
-          .insert(notesData);
+          .insert(notesData)
+          .select();
 
         if (notesError) {
-          logger.warn('Failed to update notes', {
+          logger.error('Failed to update notes', {
             sermonId: body.remoteId,
-            error: notesError.message
+            error: notesError.message,
+            code: notesError.code,
+            details: notesError.details
+          });
+        } else {
+          logger.info('Successfully updated notes', {
+            sermonId: body.remoteId,
+            count: insertedNotes?.length || 0
           });
         }
       }
     }
 
     // Update transcript if provided
-    if (body.transcript) {
+    if (body.transcript && body.transcript.text) {
+      logger.info('Updating transcript', {
+        sermonId: body.remoteId,
+        textLength: body.transcript.text?.length || 0,
+        hasId: !!body.transcript.id
+      });
       const transcriptData = {
         local_id: body.transcript.id,
         sermon_id: body.remoteId,
@@ -149,22 +171,42 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
         status: body.transcript.status || 'complete'
       };
 
-      const { error: transcriptError } = await supabase
+      const { data: upsertedTranscript, error: transcriptError } = await supabase
         .from('transcripts')
         .upsert(transcriptData, {
           onConflict: 'sermon_id'
-        });
+        })
+        .select();
 
       if (transcriptError) {
-        logger.warn('Failed to update transcript', {
+        logger.error('Failed to update transcript', {
           sermonId: body.remoteId,
-          error: transcriptError.message
+          error: transcriptError.message,
+          code: transcriptError.code,
+          details: transcriptError.details
+        });
+      } else {
+        logger.info('Successfully updated transcript', {
+          sermonId: body.remoteId,
+          transcriptId: upsertedTranscript?.[0]?.id
         });
       }
+    } else {
+      logger.info('No transcript to update', {
+        sermonId: body.remoteId,
+        hasTranscript: !!body.transcript,
+        hasText: !!(body.transcript && body.transcript.text)
+      });
     }
 
     // Update summary if provided
-    if (body.summary) {
+    if (body.summary && body.summary.text) {
+      logger.info('Updating summary', {
+        sermonId: body.remoteId,
+        textLength: body.summary.text?.length || 0,
+        title: body.summary.title || '(no title)',
+        hasId: !!body.summary.id
+      });
       const summaryData = {
         local_id: body.summary.id,
         sermon_id: body.remoteId,
@@ -175,18 +217,32 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
         status: body.summary.status || 'complete'
       };
 
-      const { error: summaryError } = await supabase
+      const { data: upsertedSummary, error: summaryError } = await supabase
         .from('summaries')
         .upsert(summaryData, {
           onConflict: 'sermon_id'
-        });
+        })
+        .select();
 
       if (summaryError) {
-        logger.warn('Failed to update summary', {
+        logger.error('Failed to update summary', {
           sermonId: body.remoteId,
-          error: summaryError.message
+          error: summaryError.message,
+          code: summaryError.code,
+          details: summaryError.details
+        });
+      } else {
+        logger.info('Successfully updated summary', {
+          sermonId: body.remoteId,
+          summaryId: upsertedSummary?.[0]?.id
         });
       }
+    } else {
+      logger.info('No summary to update', {
+        sermonId: body.remoteId,
+        hasSummary: !!body.summary,
+        hasText: !!(body.summary && body.summary.text)
+      });
     }
 
     logger.info('Sermon updated successfully', {

@@ -99,7 +99,8 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
     }
 
     // Create related records if provided
-    if (body.notes && Array.isArray(body.notes)) {
+    if (body.notes && Array.isArray(body.notes) && body.notes.length > 0) {
+      logger.info('Creating notes', { count: body.notes.length, sermonId: sermon.id });
       const notesData = body.notes.map(note => ({
         local_id: note.id,
         sermon_id: sermon.id,
@@ -108,19 +109,32 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         timestamp: note.timestamp
       }));
 
-      const { error: notesError } = await supabase
+      const { data: insertedNotes, error: notesError } = await supabase
         .from('notes')
-        .insert(notesData);
+        .insert(notesData)
+        .select();
 
       if (notesError) {
-        logger.warn('Failed to create some notes', {
+        logger.error('Failed to create notes', {
           sermonId: sermon.id,
-          error: notesError.message
+          error: notesError.message,
+          code: notesError.code,
+          details: notesError.details
+        });
+      } else {
+        logger.info('Successfully created notes', {
+          sermonId: sermon.id,
+          count: insertedNotes?.length || 0
         });
       }
     }
 
-    if (body.transcript) {
+    if (body.transcript && body.transcript.text) {
+      logger.info('Creating transcript', {
+        sermonId: sermon.id,
+        textLength: body.transcript.text?.length || 0,
+        hasId: !!body.transcript.id
+      });
       const transcriptData = {
         local_id: body.transcript.id,
         sermon_id: sermon.id,
@@ -130,19 +144,39 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         status: body.transcript.status || 'complete'
       };
 
-      const { error: transcriptError } = await supabase
+      const { data: insertedTranscript, error: transcriptError } = await supabase
         .from('transcripts')
-        .insert(transcriptData);
+        .insert(transcriptData)
+        .select();
 
       if (transcriptError) {
-        logger.warn('Failed to create transcript', {
+        logger.error('Failed to create transcript', {
           sermonId: sermon.id,
-          error: transcriptError.message
+          error: transcriptError.message,
+          code: transcriptError.code,
+          details: transcriptError.details
+        });
+      } else {
+        logger.info('Successfully created transcript', {
+          sermonId: sermon.id,
+          transcriptId: insertedTranscript?.[0]?.id
         });
       }
+    } else {
+      logger.info('No transcript to create', {
+        sermonId: sermon.id,
+        hasTranscript: !!body.transcript,
+        hasText: !!(body.transcript && body.transcript.text)
+      });
     }
 
-    if (body.summary) {
+    if (body.summary && body.summary.text) {
+      logger.info('Creating summary', {
+        sermonId: sermon.id,
+        textLength: body.summary.text?.length || 0,
+        title: body.summary.title || '(no title)',
+        hasId: !!body.summary.id
+      });
       const summaryData = {
         local_id: body.summary.id,
         sermon_id: sermon.id,
@@ -153,16 +187,30 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         status: body.summary.status || 'complete'
       };
 
-      const { error: summaryError } = await supabase
+      const { data: insertedSummary, error: summaryError } = await supabase
         .from('summaries')
-        .insert(summaryData);
+        .insert(summaryData)
+        .select();
 
       if (summaryError) {
-        logger.warn('Failed to create summary', {
+        logger.error('Failed to create summary', {
           sermonId: sermon.id,
-          error: summaryError.message
+          error: summaryError.message,
+          code: summaryError.code,
+          details: summaryError.details
+        });
+      } else {
+        logger.info('Successfully created summary', {
+          sermonId: sermon.id,
+          summaryId: insertedSummary?.[0]?.id
         });
       }
+    } else {
+      logger.info('No summary to create', {
+        sermonId: sermon.id,
+        hasSummary: !!body.summary,
+        hasText: !!(body.summary && body.summary.text)
+      });
     }
 
     logger.info('Sermon created successfully', {
