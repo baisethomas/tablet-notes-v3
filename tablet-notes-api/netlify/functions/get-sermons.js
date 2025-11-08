@@ -95,9 +95,27 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       isArchived: sermon.is_archived,
       userId: sermon.user_id,
       updatedAt: sermon.updated_at,
-      notes: sermon.notes || [],
-      transcript: sermon.transcripts && sermon.transcripts.length > 0 ? sermon.transcripts[0] : null,
-      summary: sermon.summaries && sermon.summaries.length > 0 ? sermon.summaries[0] : null
+      notes: sermon.notes ? sermon.notes.map(note => ({
+        id: note.id,
+        localId: note.local_id,
+        text: note.text,
+        timestamp: note.timestamp
+      })) : [],
+      transcript: sermon.transcripts && sermon.transcripts.length > 0 ? {
+        id: sermon.transcripts[0].id,
+        localId: sermon.transcripts[0].local_id,
+        text: sermon.transcripts[0].text,
+        segments: sermon.transcripts[0].segments,
+        status: sermon.transcripts[0].status
+      } : null,
+      summary: sermon.summaries && sermon.summaries.length > 0 ? {
+        id: sermon.summaries[0].id,
+        localId: sermon.summaries[0].local_id,
+        title: sermon.summaries[0].title,
+        text: sermon.summaries[0].text,
+        type: sermon.summaries[0].type,
+        status: sermon.summaries[0].status
+      } : null
     }));
 
     return createSuccessResponse(sermons, 200);

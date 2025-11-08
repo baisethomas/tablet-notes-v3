@@ -289,6 +289,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             } else {
                 // Create new transcript
                 let transcript = Transcript(
+                    id: transcriptData.localId,
                     text: transcriptData.text,
                     segments: [],
                     remoteId: transcriptData.id
@@ -382,6 +383,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             if let transcriptData = remoteData.transcript {
                 print("[SyncService] Creating transcript")
                 let transcript = Transcript(
+                    id: transcriptData.localId,
                     text: transcriptData.text,
                     segments: [],
                     remoteId: transcriptData.id
@@ -510,9 +512,9 @@ extension SyncService {
 
         // Add transcript if present
         if let transcript = sermon.transcript {
-            print("[SyncService] Including transcript in payload")
+            print("[SyncService] Including transcript in payload (length: \(transcript.text.count) chars)")
             payload["transcript"] = [
-                "id": transcript.remoteId ?? "",
+                "id": transcript.id.uuidString,
                 "text": transcript.text,
                 "segments": NSNull(), // TODO: serialize segments if needed
                 "status": "complete"
@@ -633,9 +635,9 @@ extension SyncService {
 
         // Add transcript if present
         if let transcript = sermon.transcript {
-            print("[SyncService] Including transcript in update payload")
+            print("[SyncService] Including transcript in update payload (length: \(transcript.text.count) chars)")
             payload["transcript"] = [
-                "id": transcript.remoteId ?? UUID().uuidString,
+                "id": transcript.id.uuidString,
                 "text": transcript.text,
                 "segments": NSNull(),
                 "status": "complete"
