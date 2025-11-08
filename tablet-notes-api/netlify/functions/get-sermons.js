@@ -77,11 +77,40 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
       .order('date', { ascending: false });
 
     if (error) {
+      logger.error('Failed to fetch sermons', {
+        userId,
+        error: error.message,
+        code: error.code,
+        details: error.details
+      });
       return createErrorResponse(new Error(error.message), 500);
     }
 
+    logger.info('Fetched sermons from database', {
+      userId,
+      count: data?.length || 0,
+      sermonIds: data?.map(s => s.id) || []
+    });
+
+    // Log raw data for debugging
+    if (data && data.length > 0) {
+      data.forEach(sermon => {
+        logger.info('Sermon data', {
+          sermonId: sermon.id,
+          title: sermon.title,
+          notesCount: sermon.notes?.length || 0,
+          transcriptsCount: sermon.transcripts?.length || 0,
+          summariesCount: sermon.summaries?.length || 0,
+          hasNotes: !!sermon.notes && sermon.notes.length > 0,
+          hasTranscripts: !!sermon.transcripts && sermon.transcripts.length > 0,
+          hasSummaries: !!sermon.summaries && sermon.summaries.length > 0
+        });
+      });
+    }
+
     // Transform data to match RemoteSermonData structure
-    const sermons = data.map(sermon => ({
+    const sermons = data.map(sermon => {
+      const transformed = {
       id: sermon.id,
       localId: sermon.local_id,
       title: sermon.title,
@@ -116,7 +145,28 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
         type: sermon.summaries[0].type,
         status: sermon.summaries[0].status
       } : null
-    }));
+      };
+
+      // Log transformation result for debugging
+      logger.info('Transformed sermon', {
+        sermonId: transformed.id,
+        notesCount: transformed.notes.length,
+        hasTranscript: !!transformed.transcript,
+        hasSummary: !!transformed.summary,
+        transcriptId: transformed.transcript?.id,
+        summaryId: transformed.summary?.id
+      });
+
+      return transformed;
+    });
+
+    logger.info('Returning sermons', {
+      userId,
+      count: sermons.length,
+      sermonsWithTranscript: sermons.filter(s => s.transcript).length,
+      sermonsWithSummary: sermons.filter(s => s.summary).length,
+      sermonsWithNotes: sermons.filter(s => s.notes.length > 0).length
+    });
 
     return createSuccessResponse(sermons, 200);
   } catch (error) {
