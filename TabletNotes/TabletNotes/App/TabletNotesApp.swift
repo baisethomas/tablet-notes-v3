@@ -29,7 +29,11 @@ struct TabletNotesApp: App {
             
             // Create configuration with migration options
             let url = URL.documentsDirectory.appending(path: "TabletNotes.store")
-            let configuration = ModelConfiguration(url: url, allowsSave: true)
+            let configuration = ModelConfiguration(
+                url: url,
+                allowsSave: true,
+                cloudKitDatabase: .none  // Explicit local-only to avoid CloudKit conflicts during migration
+            )
             container = try ModelContainer(for: schema, configurations: configuration)
         } catch {
             // If migration fails due to schema changes, preserve audio files and reset database
