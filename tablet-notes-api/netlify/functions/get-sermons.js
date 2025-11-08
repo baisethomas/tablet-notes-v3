@@ -139,20 +139,20 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
           text: note.text,
           timestamp: note.timestamp
         })) : [],
-        transcript: sermon.transcripts && sermon.transcripts.length > 0 ? {
-          id: sermon.transcripts[0].id,
-          localId: sermon.transcripts[0].local_id,
-          text: sermon.transcripts[0].text,
-          segments: sermon.transcripts[0].segments,
-          status: sermon.transcripts[0].status
+        transcript: sermon.transcripts && (Array.isArray(sermon.transcripts) ? sermon.transcripts.length > 0 : typeof sermon.transcripts === 'object') ? {
+          id: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].id : sermon.transcripts.id,
+          localId: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].local_id : sermon.transcripts.local_id,
+          text: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].text : sermon.transcripts.text,
+          segments: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].segments : sermon.transcripts.segments,
+          status: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].status : sermon.transcripts.status
         } : null,
-        summary: sermon.summaries && sermon.summaries.length > 0 ? {
-          id: sermon.summaries[0].id,
-          localId: sermon.summaries[0].local_id,
-          title: sermon.summaries[0].title,
-          text: sermon.summaries[0].text,
-          type: sermon.summaries[0].type,
-          status: sermon.summaries[0].status
+        summary: sermon.summaries && (Array.isArray(sermon.summaries) ? sermon.summaries.length > 0 : typeof sermon.summaries === 'object') ? {
+          id: Array.isArray(sermon.summaries) ? sermon.summaries[0].id : sermon.summaries.id,
+          localId: Array.isArray(sermon.summaries) ? sermon.summaries[0].local_id : sermon.summaries.local_id,
+          title: Array.isArray(sermon.summaries) ? sermon.summaries[0].title : sermon.summaries.title,
+          text: Array.isArray(sermon.summaries) ? sermon.summaries[0].text : sermon.summaries.text,
+          type: Array.isArray(sermon.summaries) ? sermon.summaries[0].type : sermon.summaries.type,
+          status: Array.isArray(sermon.summaries) ? sermon.summaries[0].status : sermon.summaries.status
         } : null
       };
 
