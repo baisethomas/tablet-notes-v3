@@ -116,7 +116,30 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
         type: sermon.summaries[0].type,
         status: sermon.summaries[0].status
       } : null
-    }));
+      };
+
+      // Log transformation result for debugging
+      event.logger.info('Transformed sermon', {
+        sermonId: transformed.id,
+        notesCount: transformed.notes.length,
+        hasTranscript: !!transformed.transcript,
+        hasSummary: !!transformed.summary,
+        transcriptId: transformed.transcript?.id,
+        summaryId: transformed.summary?.id,
+        transcriptTextLength: transformed.transcript?.text?.length || 0,
+        summaryTextLength: transformed.summary?.text?.length || 0
+      });
+
+      return transformed;
+    });
+
+    event.logger.info('Returning sermons summary', {
+      userId,
+      totalCount: sermons.length,
+      sermonsWithTranscript: sermons.filter(s => s.transcript).length,
+      sermonsWithSummary: sermons.filter(s => s.summary).length,
+      sermonsWithNotes: sermons.filter(s => s.notes.length > 0).length
+    });
 
     return createSuccessResponse(sermons, 200);
   } catch (error) {
