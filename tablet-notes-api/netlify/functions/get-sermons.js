@@ -81,53 +81,42 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
     }
 
     // Transform data to match RemoteSermonData structure
-    const sermons = data.map(sermon => {
-      // Format notes array
-      const notes = (sermon.notes || []).map(note => ({
+    const sermons = data.map(sermon => ({
+      id: sermon.id,
+      localId: sermon.local_id,
+      title: sermon.title,
+      audioFileURL: sermon.audio_file_url,
+      audioFilePath: sermon.audio_file_path,
+      date: sermon.date,
+      serviceType: sermon.service_type,
+      speaker: sermon.speaker,
+      transcriptionStatus: sermon.transcription_status,
+      summaryStatus: sermon.summary_status,
+      isArchived: sermon.is_archived,
+      userId: sermon.user_id,
+      updatedAt: sermon.updated_at,
+      notes: sermon.notes ? sermon.notes.map(note => ({
         id: note.id,
         localId: note.local_id,
         text: note.text,
         timestamp: note.timestamp
-      }));
-
-      // Format transcript (should be single record per sermon)
-      const transcript = sermon.transcripts && sermon.transcripts.length > 0 ? {
+      })) : [],
+      transcript: sermon.transcripts && sermon.transcripts.length > 0 ? {
         id: sermon.transcripts[0].id,
         localId: sermon.transcripts[0].local_id,
         text: sermon.transcripts[0].text,
-        segments: sermon.transcripts[0].segments ? JSON.stringify(sermon.transcripts[0].segments) : null,
+        segments: sermon.transcripts[0].segments,
         status: sermon.transcripts[0].status
-      } : null;
-
-      // Format summary (should be single record per sermon)
-      const summary = sermon.summaries && sermon.summaries.length > 0 ? {
+      } : null,
+      summary: sermon.summaries && sermon.summaries.length > 0 ? {
         id: sermon.summaries[0].id,
         localId: sermon.summaries[0].local_id,
         title: sermon.summaries[0].title,
         text: sermon.summaries[0].text,
         type: sermon.summaries[0].type,
         status: sermon.summaries[0].status
-      } : null;
-
-      return {
-        id: sermon.id,
-        localId: sermon.local_id,
-        title: sermon.title,
-        audioFileURL: sermon.audio_file_url,
-        audioFilePath: sermon.audio_file_path || sermon.audio_file_name,
-        date: sermon.date,
-        serviceType: sermon.service_type,
-        speaker: sermon.speaker,
-        transcriptionStatus: sermon.transcription_status,
-        summaryStatus: sermon.summary_status,
-        isArchived: sermon.is_archived,
-        userId: sermon.user_id,
-        updatedAt: sermon.updated_at,
-        notes: notes.length > 0 ? notes : [],
-        transcript: transcript,
-        summary: summary
-      };
-    });
+      } : null
+    }));
 
     return createSuccessResponse(sermons, 200);
   } catch (error) {
