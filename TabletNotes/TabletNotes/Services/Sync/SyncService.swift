@@ -82,6 +82,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
 
+    @MainActor
     private func pushLocalChanges() async throws {
         // Get all local sermons that need syncing
         // Only sync sermons that are explicitly marked needsSync=true
