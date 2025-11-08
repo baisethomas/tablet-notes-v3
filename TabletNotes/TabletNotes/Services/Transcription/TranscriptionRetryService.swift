@@ -171,17 +171,24 @@ class TranscriptionRetryService: ObservableObject {
                             }
                             
                             sermon.transcript = transcript
-                            
+
+                            // CRITICAL: Mark sermon for sync so transcript gets pushed to backend
+                            sermon.needsSync = true
+                            sermon.updatedAt = Date()
+                            sermon.syncStatus = "pending"
+
                             // Save to SwiftData
                             context.insert(sermon)
                             try? context.save()
-                            
+
+                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after transcript completion")
+
                             // Notify UI that transcription completed
                             NotificationCenter.default.post(
                                 name: TranscriptionRetryService.transcriptionCompletedNotification,
                                 object: sermon.id
                             )
-                            
+
                             // Generate summary after successful transcription
                             self?.generateSummaryForSermon(sermon)
                         }
@@ -286,6 +293,13 @@ class TranscriptionRetryService: ObservableObject {
                             )
                             sermon.summary = summary
                             sermon.summaryStatus = "complete"
+
+                            // CRITICAL: Mark sermon for sync so summary gets pushed to backend
+                            sermon.needsSync = true
+                            sermon.updatedAt = Date()
+                            sermon.syncStatus = "pending"
+
+                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after summary completion")
                         } else {
                             sermon.summaryStatus = "failed"
                         }
