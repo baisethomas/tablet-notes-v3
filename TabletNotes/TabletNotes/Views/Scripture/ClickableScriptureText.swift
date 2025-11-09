@@ -121,17 +121,41 @@ struct SummaryTextView: View {
         """
         
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first {
+           let window = windowScene.windows.first,
+           let rootViewController = window.rootViewController {
             let activityVC = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
             
-            // Configure for iPad
+            // Configure for iPad with safe bounds checking
             if let popover = activityVC.popoverPresentationController {
-                popover.sourceView = window
-                popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+                let bounds = window.bounds
+                // Validate bounds to prevent NaN/infinity values
+                let isValidBounds = bounds.width > 0 && bounds.height > 0 && 
+                                   bounds.width.isFinite && bounds.height.isFinite &&
+                                   !bounds.width.isNaN && !bounds.height.isNaN
+                
+                if isValidBounds {
+                    popover.sourceView = window
+                    popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 0, height: 0)
+                } else {
+                    // Fallback: use the root view controller's view
+                    let viewBounds = rootViewController.view.bounds
+                    let isValidViewBounds = viewBounds.width > 0 && viewBounds.height > 0 && 
+                                          viewBounds.width.isFinite && viewBounds.height.isFinite &&
+                                          !viewBounds.width.isNaN && !viewBounds.height.isNaN
+                    
+                    if isValidViewBounds {
+                        popover.sourceView = rootViewController.view
+                        popover.sourceRect = CGRect(x: viewBounds.midX, y: viewBounds.midY, width: 0, height: 0)
+                    } else {
+                        // Final fallback: use a default center point
+                        popover.sourceView = rootViewController.view
+                        popover.sourceRect = CGRect(x: 400, y: 400, width: 0, height: 0)
+                    }
+                }
                 popover.permittedArrowDirections = []
             }
             
-            window.rootViewController?.present(activityVC, animated: true)
+            rootViewController.present(activityVC, animated: true)
         }
     }
 }

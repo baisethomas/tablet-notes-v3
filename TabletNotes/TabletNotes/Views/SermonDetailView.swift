@@ -65,7 +65,7 @@ struct ProcessingStateView: View {
 }
 
 // MARK: - Enhanced Error State Component
-struct ErrorStateView: View {
+struct SermonErrorStateView: View {
     let title: String
     let subtitle: String
     let actionTitle: String?
@@ -618,7 +618,7 @@ struct SermonDetailView: View {
                         icon: "doc.text"
                     )
                 case "failed":
-                    ErrorStateView(
+                    SermonErrorStateView(
                         title: "Summary Generation Failed",
                         subtitle: "We couldn't generate a summary for this sermon. Please try again.",
                         actionTitle: "Retry",
@@ -724,7 +724,7 @@ struct SermonDetailView: View {
                         icon: "text.bubble"
                     )
                 case "failed", "pending":
-                    ErrorStateView(
+                    SermonErrorStateView(
                         title: sermon.transcriptionStatus == "pending" ? "Transcription Pending" : "Transcription Failed",
                         subtitle: sermon.transcriptionStatus == "pending" ? 
                             "This recording was saved for later processing. Tap retry when you're back online." :

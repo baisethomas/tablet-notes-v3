@@ -788,6 +788,19 @@ struct RemoteNoteData: Codable {
     let localId: UUID
     let text: String
     let timestamp: TimeInterval
+    
+    // Custom decoder to handle missing timestamp (defaults to 0 for manual notes)
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.localId = try container.decode(UUID.self, forKey: .localId)
+        self.text = try container.decode(String.self, forKey: .text)
+        self.timestamp = try container.decodeIfPresent(TimeInterval.self, forKey: .timestamp) ?? 0
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, localId, text, timestamp
+    }
 }
 
 struct RemoteTranscriptData: Codable {

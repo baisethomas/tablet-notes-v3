@@ -502,9 +502,15 @@ struct SermonListView: View {
                             .scaleEffect(1.2)
                             .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
                         
-                        Text("Loading sermons...")
-                            .font(.headline)
-                            .foregroundColor(.adaptiveSecondaryText)
+                        VStack(spacing: 4) {
+                            Text("Loading sermons...")
+                                .font(.headline)
+                                .foregroundColor(.adaptivePrimaryText)
+                            
+                            Text("Please wait while we fetch your sermons")
+                                .font(.subheadline)
+                                .foregroundColor(.adaptiveSecondaryText)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onAppear {

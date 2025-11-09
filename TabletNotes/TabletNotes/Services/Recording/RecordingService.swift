@@ -237,7 +237,7 @@ class RecordingService: NSObject, ObservableObject {
         // Check if user can start recording
         let (canStart, reason) = await canStartRecording()
         if !canStart {
-            throw RecordingError.limitExceeded(reason ?? "Recording limit exceeded")
+            throw RecordingError.limitExceeded(reason: reason ?? "Recording limit exceeded")
         }
         
         try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
@@ -398,27 +398,6 @@ class RecordingService: NSObject, ObservableObject {
             print("[RecordingService] Deleted audio file: \(url)")
         } catch {
             print("[RecordingService] Failed to delete audio file: \(error)")
-        }
-    }
-}
-
-// MARK: - Recording Errors
-enum RecordingError: LocalizedError {
-    case limitExceeded(String)
-    case permissionDenied
-    case audioSessionFailed
-    case recordingFailed
-    
-    var errorDescription: String? {
-        switch self {
-        case .limitExceeded(let reason):
-            return reason
-        case .permissionDenied:
-            return "Microphone permission denied"
-        case .audioSessionFailed:
-            return "Failed to setup audio session"
-        case .recordingFailed:
-            return "Recording failed"
         }
     }
 }

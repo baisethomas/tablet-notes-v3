@@ -61,7 +61,7 @@ struct WaveformView: View {
 }
 
 // MARK: - Loading State Component
-struct LoadingStateView: View {
+struct RecordingLoadingStateView: View {
     let title: String
     let subtitle: String?
     @State private var rotation: Double = 0
@@ -336,15 +336,23 @@ struct RecordingView: View {
                         
                         // Processing state
                         if isProcessingTranscript {
-                            HStack(spacing: 12) {
+                            VStack(spacing: 12) {
                                 ProgressView()
-                                    .scaleEffect(0.8)
+                                    .scaleEffect(1.0)
                                     .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
-                                Text("Processing final transcript...")
-                                    .font(.subheadline)
-                                    .foregroundColor(.adaptiveSecondaryText)
-                                Spacer()
+                                
+                                VStack(spacing: 4) {
+                                    Text("Processing final transcript...")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.adaptivePrimaryText)
+                                    
+                                    Text("This may take a moment")
+                                        .font(.caption)
+                                        .foregroundColor(.adaptiveSecondaryText)
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                             .padding()
                             .background(Color.adaptiveSecondaryBackground.opacity(0.5))
                             .cornerRadius(12)
