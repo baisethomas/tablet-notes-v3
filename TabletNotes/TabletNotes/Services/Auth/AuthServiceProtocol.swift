@@ -14,6 +14,7 @@ protocol AuthServiceProtocol: ObservableObject {
     // Authentication methods
     func signUp(data: SignUpData) async throws -> User
     func signIn(email: String, password: String) async throws -> User
+    func signInWithGoogle() async throws -> User
     func signOut() async throws
     func resetPassword(email: String) async throws
     func updateProfile(name: String, email: String?) async throws -> User

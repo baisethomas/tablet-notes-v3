@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Supabase
+import UIKit
 
 @MainActor
 final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
@@ -149,6 +150,46 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             throw error
         } catch {
             print("[SupabaseAuthService] Sign in failed: \(error.localizedDescription)")
+            let authError = mapSupabaseError(error)
+            self.authState = .error(authError)
+            throw authError
+        }
+    }
+    
+    func signInWithGoogle() async throws -> User {
+        print("[SupabaseAuthService] Starting Google sign in")
+        
+        do {
+            // Initiate OAuth flow with Google
+            // The redirectTo URL should match your app's URL scheme
+            let redirectURL = URL(string: "tabletnotes://auth/callback")!
+            let authURL = try await supabase.auth.signInWithOAuth(
+                provider: .google,
+                redirectTo: redirectURL
+            )
+            
+            // Open the OAuth URL in Safari
+            // The OAuth flow will redirect back to the app via the URL scheme
+            await UIApplication.shared.open(authURL)
+            
+            // The authentication will complete via the deep link callback
+            // The auth state listener will pick up the session change
+            // We'll wait for the session to be established by monitoring auth state changes
+            // Note: This is a fire-and-forget pattern - the actual completion happens via callback
+            
+            // Return a placeholder - the actual user will be set when OAuth completes
+            // The UI should handle the async nature of OAuth flow
+            throw AuthError.unknownError("OAuth flow initiated. Complete authentication in the browser.")
+            
+        } catch let error as AuthError {
+            print("[SupabaseAuthService] Google sign in failed: \(error.localizedDescription)")
+            // Don't set error state for OAuth initiation - it's expected
+            if !error.localizedDescription.contains("OAuth flow initiated") {
+                self.authState = .error(error)
+            }
+            throw error
+        } catch {
+            print("[SupabaseAuthService] Google sign in failed: \(error.localizedDescription)")
             let authError = mapSupabaseError(error)
             self.authState = .error(authError)
             throw authError

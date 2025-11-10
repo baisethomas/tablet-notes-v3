@@ -161,6 +161,43 @@ struct SignUpView: View {
                         .padding(.top, 8)
                         .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                         
+                        // Divider
+                        HStack {
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                            
+                            Text("or")
+                                .font(.subheadline)
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                .padding(.horizontal, 16)
+                            
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                        }
+                        .padding(.vertical, 8)
+                        
+                        // Google Sign In button
+                        Button(action: signInWithGoogle) {
+                            HStack {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 18))
+                                Text("Continue with Google")
+                                    .font(.headline)
+                            }
+                            .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(colorScheme == .dark ? Color(red: 0.14, green: 0.22, blue: 0.33) : Color(.systemGray6))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4), lineWidth: 1)
+                            )
+                        }
+                        .disabled(isLoading)
+                        
                         // Sign in link
                         HStack {
                             Text("Already have an account?")
@@ -231,6 +268,36 @@ struct SignUpView: View {
                     isLoading = false
                     errorMessage = error.localizedDescription
                     showingError = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "An unexpected error occurred"
+                    showingError = true
+                }
+            }
+        }
+    }
+    
+    private func signInWithGoogle() {
+        isLoading = true
+        focusedField = nil
+        
+        Task {
+            do {
+                _ = try await authManager.signInWithGoogle()
+                // OAuth flow will complete via callback
+                await MainActor.run {
+                    isLoading = false
+                }
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    // Don't show error for OAuth initiation - it's expected
+                    if !error.localizedDescription.contains("OAuth flow initiated") {
+                        errorMessage = error.localizedDescription ?? "An error occurred"
+                        showingError = true
+                    }
                 }
             } catch {
                 await MainActor.run {
