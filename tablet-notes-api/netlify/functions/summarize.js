@@ -419,26 +419,81 @@ Before finalizing, ensure that everything in your summary can be directly traced
     let title = null;
     let summary = fullContent;
 
-    // Check if response starts with "TITLE: " (with optional markdown formatting)
-    // Handles formats like:
+    // Robust title extraction that handles multiple formats:
     // - "TITLE: Title Text"
     // - "**TITLE: Title Text**"
     // - "**TITLE: Title Text**\n\n"
-    const titleMatch = fullContent.match(/^(\*\*)?TITLE:\s*(.+?)(\*\*)?(?:\n\n|\n|$)/);
-    if (titleMatch) {
-      title = titleMatch[2].trim(); // Get the title text (second capture group)
-      // Remove any remaining markdown formatting
-      title = title.replace(/^\*\*|\*\*$/g, '').trim();
-      // Remove the title line and any following blank lines from the summary
-      summary = fullContent.substring(titleMatch[0].length).trim();
+    // - "TITLE: Title with **bold** text"
+    // - "**TITLE: Title with **bold** text**"
+    
+    // First, try to match the entire title line (more reliable than trying to match markdown)
+    // Match: optional opening **, "TITLE:", whitespace, then everything until end of line or closing ** + newline
+    const titleLineMatch = fullContent.match(/^(\*\*)?TITLE:\s*(.+?)(?:\n|$)/);
+    
+    if (titleLineMatch) {
+      // Extract the title text (everything after "TITLE: ")
+      let extractedTitle = titleLineMatch[2].trim();
+      
+      // Remove closing markdown formatting if present (handle cases like "Title**" or "**Title**")
+      // This handles titles that might have markdown in them or at the end
+      extractedTitle = extractedTitle.replace(/\*\*$/, '').trim();
+      
+      // Remove opening markdown if it somehow got included (defensive)
+      extractedTitle = extractedTitle.replace(/^\*\*/, '').trim();
+      
+      // Clean up any remaining markdown formatting at the edges
+      extractedTitle = extractedTitle.replace(/^\*\*|\*\*$/g, '').trim();
+      
+      title = extractedTitle;
+      
+      // Remove the entire title line (including opening ** if present) from the summary
+      const titleLineLength = titleLineMatch[0].length;
+      summary = fullContent.substring(titleLineLength).trim();
+      
+      // Also remove any leading markdown that might be left (defensive cleanup)
+      summary = summary.replace(/^\*\*/, '').trim();
+      
+      logger.info('Title extracted from TITLE: prefix', {
+        userId: user.id,
+        extractedTitle: title,
+        titleLength: title.length,
+        summaryStart: summary.substring(0, 50)
+      });
     } else {
-      // Fallback: use first 60 characters or first sentence as title
-      const firstLine = fullContent.split('\n')[0];
-      const firstSentence = fullContent.split(/[.!?]\s/)[0];
-      let fallbackTitle = (firstLine.length <= 60 ? firstLine : firstSentence.substring(0, 60) + '...').trim();
-      // Remove markdown formatting from fallback title
+      // Fallback: try to find title in first line or first sentence
+      // This handles cases where OpenAI doesn't follow the TITLE: format
+      const firstLine = fullContent.split('\n')[0].trim();
+      const firstSentence = fullContent.split(/[.!?]\s/)[0].trim();
+      
+      // Use first line if it's reasonable length, otherwise first sentence
+      let fallbackTitle = firstLine.length <= 80 && firstLine.length > 0 
+        ? firstLine 
+        : (firstSentence.length > 0 ? firstSentence.substring(0, 80) : 'Sermon Summary');
+      
+      // Clean markdown formatting from fallback title
       fallbackTitle = fallbackTitle.replace(/^\*\*|\*\*$/g, '').trim();
-      title = fallbackTitle;
+      
+      // Remove "TITLE:" prefix if present (case-insensitive)
+      fallbackTitle = fallbackTitle.replace(/^(\*\*)?TITLE:\s*/i, '').trim();
+      fallbackTitle = fallbackTitle.replace(/^\*\*|\*\*$/g, '').trim();
+      
+      title = fallbackTitle || 'Sermon Summary';
+      
+      logger.info('Title extracted from fallback method', {
+        userId: user.id,
+        fallbackTitle: title,
+        firstLine: firstLine.substring(0, 50),
+        usedFirstLine: firstLine.length <= 80
+      });
+    }
+    
+    // Final validation: ensure title is not empty
+    if (!title || title.trim().length === 0) {
+      title = 'Sermon Summary';
+      logger.warn('Title was empty after extraction, using default', {
+        userId: user.id,
+        fullContentPreview: fullContent.substring(0, 200)
+      });
     }
 
     logger.info('Summarization completed successfully', {
