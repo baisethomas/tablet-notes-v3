@@ -40,8 +40,6 @@ struct MainAppView: View {
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
-    @State private var showSyncDebug = false
-    @State private var syncDebugMessage = ""
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -56,6 +54,9 @@ struct MainAppView: View {
 
         // Initialize TranscriptionRetryService with ModelContext
         TranscriptionRetryService.shared.setModelContext(modelContext)
+        
+        // Initialize SummaryRetryService with ModelContext
+        SummaryRetryService.shared.setModelContext(modelContext)
 
         // Check if user has seen onboarding before
         if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
@@ -246,33 +247,9 @@ struct MainAppView: View {
                                                                 id: sermonId
                                                             )
 
-                                                            // Generate summary
-                                                            let summaryService = SummaryService()
-                                                            summaryService.generateSummary(for: text, type: serviceType)
-
-                                                            // Update sermon when summary completes
-                                                            summaryService.summaryPublisher
-                                                                .combineLatest(summaryService.statusPublisher)
-                                                                .sink { summaryText, status in
-                                                                    if status == "complete", let summaryText = summaryText {
-                                                                        let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
-                                                                        sermonService.saveSermon(
-                                                                            title: title,
-                                                                            audioFileURL: audioURL,
-                                                                            date: date,
-                                                                            serviceType: serviceType,
-                                                                            speaker: nil,
-                                                                            transcript: transcriptModel,
-                                                                            notes: notes,
-                                                                            summary: updatedSummary,
-                                                                            transcriptionStatus: "complete",
-                                                                            summaryStatus: "complete",
-                                                                            id: sermonId
-                                                                        )
-                                                                        print("[MiniPlayer] Summary saved successfully")
-                                                                    }
-                                                                }
-                                                                .store(in: &self.cancellables)
+                                                            // Generate summary via service layer
+                                                            // This ensures summary completion is handled even if view is dismissed
+                                                            sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
 
                                                             print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                             sermonService.fetchSermons()
@@ -418,33 +395,9 @@ struct MainAppView: View {
                                                         id: sermonId
                                                     )
 
-                                                    // Generate summary
-                                                    let summaryService = SummaryService()
-                                                    summaryService.generateSummary(for: text, type: serviceType)
-
-                                                    // Update sermon when summary completes
-                                                    summaryService.summaryPublisher
-                                                        .combineLatest(summaryService.statusPublisher)
-                                                        .sink { summaryText, status in
-                                                            if status == "complete", let summaryText = summaryText {
-                                                                let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
-                                                                sermonService.saveSermon(
-                                                                    title: title,
-                                                                    audioFileURL: audioURL,
-                                                                    date: date,
-                                                                    serviceType: serviceType,
-                                                                    speaker: nil,
-                                                                    transcript: transcriptModel,
-                                                                    notes: notes,
-                                                                    summary: updatedSummary,
-                                                                    transcriptionStatus: "complete",
-                                                                    summaryStatus: "complete",
-                                                                    id: sermonId
-                                                                )
-                                                                print("[MiniPlayer] Summary saved successfully")
-                                                            }
-                                                        }
-                                                        .store(in: &self.cancellables)
+                                                    // Generate summary via service layer
+                                                    // This ensures summary completion is handled even if view is dismissed
+                                                    sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
 
                                                     print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                     sermonService.fetchSermons()
@@ -520,34 +473,19 @@ struct MainAppView: View {
                     .transition(.opacity)
                 }
 
-                // Debug sync status banner
-                if showSyncDebug {
-                    VStack {
-                        HStack {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.white)
-                            Text(syncDebugMessage)
-                                .foregroundColor(.white)
-                                .font(.caption)
-                            Spacer()
-                            Button("✕") {
-                                showSyncDebug = false
-                            }
-                            .foregroundColor(.white)
-                        }
-                        .padding()
-                        .background(Color.blue.opacity(0.9))
-                        .cornerRadius(10)
-                        .shadow(radius: 5)
-                        .padding()
-                        Spacer()
-                    }
-                    .transition(.move(edge: .top))
-                }
             }
             .onAppear {
                 // Inject syncService into sermonService
                 sermonService.setSyncService(syncService)
+
+                // Initialize SummaryRetryService with model context
+                SummaryRetryService.shared.setModelContext(modelContext)
+                
+                // Check for stuck processing summaries and recover them
+                sermonService.recoverStuckSummaries()
+                
+                // Process any pending summaries in the queue
+                SummaryRetryService.shared.processQueue()
 
                 checkTrialStatus()
 
@@ -556,22 +494,7 @@ struct MainAppView: View {
                     // Small delay to ensure UI is ready
                     try? await Task.sleep(nanoseconds: 500_000_000)
 
-                    await MainActor.run {
-                        showSyncDebug = true
-                        if let user = authManager.currentUser {
-                            syncDebugMessage = "Syncing as \(user.email)... canSync: \(user.canSync)"
-                        } else {
-                            syncDebugMessage = "No user logged in"
-                        }
-                    }
-
                     await syncService.syncAllData()
-
-                    // Hide after 5 seconds
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    await MainActor.run {
-                        showSyncDebug = false
-                    }
                 }
             }
             .onChange(of: authManager.currentUser?.id) { _, newUserId in

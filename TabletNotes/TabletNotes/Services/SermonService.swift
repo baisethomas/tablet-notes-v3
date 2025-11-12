@@ -69,6 +69,7 @@ class SermonService: ObservableObject {
     }
     
     private var cancellables = Set<AnyCancellable>()
+    private var summaryServiceCancellables: [UUID: Set<AnyCancellable>] = [:]
 
     func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil) {
         print("[SermonService] saveSermon called with title: \(title), date: \(date), serviceType: \(serviceType)")
@@ -690,5 +691,118 @@ class SermonService: ObservableObject {
             return "Recovered Recording from \(formatter.string(from: date))"
         }
         return "Recovered Recording"
+    }
+    
+    // MARK: - Summary Generation
+    
+    /// Generate summary for a sermon and handle completion at service level
+    /// This ensures summaries are updated even if views are dismissed
+    func generateSummaryForSermon(_ sermonId: UUID, transcript: String, serviceType: String) {
+        guard let sermon = sermons.first(where: { $0.id == sermonId }) else {
+            print("[SermonService] Cannot generate summary: Sermon \(sermonId) not found")
+            return
+        }
+        
+        // Update status to processing
+        sermon.summaryStatus = "processing"
+        sermon.updatedAt = Date()
+        try? modelContext.save()
+        
+        // Create summary service instance
+        let summaryService = SummaryService()
+        
+        // Store cancellables for this sermon to persist subscriptions
+        var sermonCancellables = Set<AnyCancellable>()
+        
+        // Generate summary
+        summaryService.generateSummary(for: transcript, type: serviceType)
+        
+        // Listen for summary completion - this subscription persists at service level
+        summaryService.statusPublisher
+            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+            .sink { [weak self] (status, titleText, summaryText) in
+                guard let self = self else { return }
+                
+                Task { @MainActor in
+                    guard let sermon = self.sermons.first(where: { $0.id == sermonId }) else {
+                        print("[SermonService] Sermon \(sermonId) not found when updating summary")
+                        return
+                    }
+                    
+                    switch status {
+                    case "complete":
+                        if let summaryText = summaryText {
+                            let summaryTitle = titleText ?? "Sermon Summary"
+                            let summary = Summary(
+                                title: summaryTitle,
+                                text: summaryText,
+                                type: serviceType,
+                                status: "complete"
+                            )
+                            sermon.summary = summary
+                            sermon.summaryStatus = "complete"
+                            
+                            // Mark for sync
+                            sermon.needsSync = true
+                            sermon.updatedAt = Date()
+                            sermon.syncStatus = "pending"
+                            
+                            try? self.modelContext.save()
+                            
+                            print("[SermonService] ✅ Summary completed for sermon \(sermonId)")
+                            
+                            // Trigger sync if needed
+                            if let currentUser = self.authManager.currentUser, currentUser.canSync {
+                                self.triggerSyncIfNeeded()
+                            }
+                            
+                            // Notify UI
+                            NotificationCenter.default.post(
+                                name: SummaryRetryService.summaryCompletedNotification,
+                                object: sermonId
+                            )
+                            
+                            // Refresh sermon list
+                            self.fetchSermons()
+                        } else {
+                            print("[SermonService] ERROR: Summary status is complete but no summary text received")
+                            sermon.summaryStatus = "failed"
+                            try? self.modelContext.save()
+                            
+                            // Add to retry queue
+                            SummaryRetryService.shared.addPendingSummary(
+                                PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
+                            )
+                        }
+                        
+                    case "failed":
+                        print("[SermonService] Summary generation failed for sermon \(sermonId)")
+                        sermon.summaryStatus = "failed"
+                        try? self.modelContext.save()
+                        
+                        // Add to retry queue
+                        SummaryRetryService.shared.addPendingSummary(
+                            PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
+                        )
+                        
+                    default:
+                        break
+                    }
+                    
+                    // Clean up cancellables after completion
+                    self.summaryServiceCancellables.removeValue(forKey: sermonId)
+                }
+            }
+            .store(in: &sermonCancellables)
+        
+        // Store cancellables for this sermon
+        summaryServiceCancellables[sermonId] = sermonCancellables
+    }
+    
+    /// Check for sermons with stuck processing status and recover them
+    func recoverStuckSummaries() {
+        Task { @MainActor in
+            SummaryRetryService.shared.checkForStuckProcessingSummaries()
+        }
     }
 } 

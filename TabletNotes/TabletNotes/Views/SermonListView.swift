@@ -775,67 +775,9 @@ struct SermonListView: View {
             return
         }
         
-        // Create a new SummaryService instance for the retry
-        let summaryService = SummaryService()
-        
-        // Update sermon summary status to processing
-        if let existingSummary = sermon.summary {
-            existingSummary.status = "processing"
-        } else {
-            let newSummary = Summary(text: "", type: sermon.serviceType, status: "processing")
-            sermon.summary = newSummary
-        }
-        
-        // Save the updated status
-        sermonService.saveSermon(
-            title: sermon.title,
-            audioFileURL: sermon.audioFileURL,
-            date: sermon.date,
-            serviceType: sermon.serviceType,
-            speaker: sermon.speaker,
-            transcript: sermon.transcript,
-            notes: sermon.notes,
-            summary: sermon.summary,
-            transcriptionStatus: sermon.transcriptionStatus,
-            summaryStatus: "processing",
-            isArchived: sermon.isArchived,
-            id: sermon.id
-        )
-        
-        // Regenerate the summary
-        summaryService.generateSummary(for: transcript.text, type: sermon.serviceType)
-        
-        // Listen for the result
-        summaryService.statusPublisher
-            .sink { status in
-                if status == "complete" || status == "failed" {
-                    // Update the sermon with the new summary
-                    summaryService.summaryPublisher
-                        .sink { summaryText in
-                            if let summaryText = summaryText, let existingSummary = sermon.summary {
-                                existingSummary.text = summaryText
-                                existingSummary.status = status
-                                
-                                sermonService.saveSermon(
-                                    title: sermon.title,
-                                    audioFileURL: sermon.audioFileURL,
-                                    date: sermon.date,
-                                    serviceType: sermon.serviceType,
-                                    speaker: sermon.speaker,
-                                    transcript: sermon.transcript,
-                                    notes: sermon.notes,
-                                    summary: existingSummary,
-                                    transcriptionStatus: sermon.transcriptionStatus,
-                                    summaryStatus: status,
-                                    isArchived: sermon.isArchived,
-                                    id: sermon.id
-                                )
-                            }
-                        }
-                        .store(in: &cancellables)
-                }
-            }
-            .store(in: &cancellables)
+        // Use service layer approach to ensure summary completion is handled
+        print("[SermonListView] Regenerating summary via SermonService")
+        sermonService.generateSummaryForSermon(sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
     }
     
     @State private var cancellables = Set<AnyCancellable>()

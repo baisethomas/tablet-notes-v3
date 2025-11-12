@@ -623,7 +623,8 @@ struct SermonDetailView: View {
                         subtitle: "We couldn't generate a summary for this sermon. Please try again.",
                         actionTitle: "Retry",
                         action: {
-                            // Retry logic would go here
+                            print("[SermonDetailView] Retry button pressed - regenerating summary")
+                            generateSummaryForSermon(sermon)
                         }
                     )
                 default:
@@ -1065,45 +1066,9 @@ struct SermonDetailView: View {
             return
         }
         
-        // Set summary status to processing
-        sermon.summaryStatus = "processing"
-        
-        // Create summary service and generate summary
-        let summaryService = SummaryService()
-        summaryService.generateSummary(for: transcript.text, type: sermon.serviceType)
-        
-        // Subscribe to summary completion
-        summaryService.statusPublisher
-            .combineLatest(summaryService.summaryPublisher)
-            .sink { (status, summaryText) in
-                DispatchQueue.main.async {
-                    switch status {
-                    case "complete":
-                        if let summaryText = summaryText {
-                            // Create Summary object
-                            let summary = Summary(
-                                text: summaryText,
-                                type: "devotional", // Default type
-                                status: "complete"
-                            )
-                            sermon.summary = summary
-                            sermon.summaryStatus = "complete"
-                        } else {
-                            sermon.summaryStatus = "failed"
-                        }
-                        
-                    case "failed":
-                        sermon.summaryStatus = "failed"
-                        
-                    default:
-                        break
-                    }
-                    
-                    // Save changes
-                    sermonService.updateSermon(sermon)
-                }
-            }
-            .store(in: &summaryCancellables)
+        // Use service layer approach to ensure summary completion is handled
+        print("[SermonDetailView] Generating summary via SermonService")
+        sermonService.generateSummaryForSermon(sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
     }
 }
 

@@ -263,60 +263,13 @@ class TranscriptionRetryService: ObservableObject {
             return
         }
         
-        // Set summary status to processing
-        sermon.summaryStatus = "processing"
-        
-        // Save status update
-        if let context = modelContext {
-            try? context.save()
-        }
-        
-        // Create summary service and generate summary
-        let summaryService = SummaryService()
-        summaryService.generateSummary(for: transcript.text, type: sermon.serviceType)
-        
-        // Subscribe to summary completion
-        summaryService.statusPublisher
-            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
-            .sink { (status, titleText, summaryText) in
-                DispatchQueue.main.async {
-                    switch status {
-                    case "complete":
-                        if let summaryText = summaryText {
-                            // Create Summary object with AI-generated title
-                            let summaryTitle = titleText ?? "Sermon Summary"
-                            let summary = Summary(
-                                title: summaryTitle,
-                                text: summaryText,
-                                type: "devotional", // Default type
-                                status: "complete"
-                            )
-                            sermon.summary = summary
-                            sermon.summaryStatus = "complete"
-
-                            // CRITICAL: Mark sermon for sync so summary gets pushed to backend
-                            sermon.needsSync = true
-                            sermon.updatedAt = Date()
-                            sermon.syncStatus = "pending"
-
-                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after summary completion")
-                        } else {
-                            sermon.summaryStatus = "failed"
-                        }
-
-                    case "failed":
-                        sermon.summaryStatus = "failed"
-
-                    default:
-                        break
-                    }
-
-                    // Save changes
-                    if let context = self.modelContext {
-                        try? context.save()
-                    }
-                }
-            }
-            .store(in: &cancellables)
+        // Use SummaryRetryService to handle summary generation
+        // This ensures proper retry logic and service-level handling
+        let pendingSummary = PendingSummary(
+            sermonId: sermon.id,
+            transcript: transcript.text,
+            serviceType: sermon.serviceType
+        )
+        SummaryRetryService.shared.addPendingSummary(pendingSummary)
     }
 }

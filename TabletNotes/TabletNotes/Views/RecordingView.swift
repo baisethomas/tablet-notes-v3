@@ -974,51 +974,10 @@ struct RecordingView: View {
                 id: sermonId
             )
             
-            // 🔥 TRIGGER SUMMARIZATION
-            print("[RecordingView] Starting summarization for transcript length: \(text.count)")
-            // Use the existing @StateObject summaryService instead of creating a new one
-            self.summaryService.generateSummary(for: text, type: serviceType)
-
-            // Listen for summary completion and update the sermon
-            self.summaryService.summaryPublisher
-                .combineLatest(self.summaryService.statusPublisher)
-                .sink { summaryText, status in
-                    print("[RecordingView] Summary status update: \(status)")
-                    if status == "complete", let summaryText = summaryText {
-                        print("[RecordingView] Summary completed, updating sermon (this will trigger sync)...")
-                        let updatedSummary = Summary(text: summaryText, type: serviceType, status: "complete")
-                        sermonService.saveSermon(
-                            title: title,
-                            audioFileURL: url,
-                            date: date,
-                            serviceType: serviceType,
-                            speaker: nil,
-                            transcript: transcriptModel,
-                            notes: latestNotes,
-                            summary: updatedSummary,
-                            transcriptionStatus: "complete",
-                            summaryStatus: "complete",
-                            id: sermonId
-                        )
-                    } else if status == "failed" {
-                        print("[RecordingView] Summary failed, updating sermon status (this will trigger sync)...")
-                        let failedSummary = Summary(text: summaryText ?? "Summary generation failed", type: serviceType, status: "failed")
-                        sermonService.saveSermon(
-                            title: title,
-                            audioFileURL: url,
-                            date: date,
-                            serviceType: serviceType,
-                            speaker: nil,
-                            transcript: transcriptModel,
-                            notes: latestNotes,
-                            summary: failedSummary,
-                            transcriptionStatus: "complete",
-                            summaryStatus: "failed",
-                            id: sermonId
-                        )
-                    }
-                }
-                .store(in: &cancellables)
+            // 🔥 TRIGGER SUMMARIZATION via service layer
+            // This ensures summary completion is handled even if view is dismissed
+            print("[RecordingView] Starting summarization for transcript length: \(text.count) via SermonService")
+            sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
             
             // Create a minimal sermon object for the callback
             // Note: This is just for the callback - the actual sermon is saved via SermonService
