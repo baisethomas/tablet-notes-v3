@@ -419,17 +419,26 @@ Before finalizing, ensure that everything in your summary can be directly traced
     let title = null;
     let summary = fullContent;
 
-    // Check if response starts with "TITLE: "
-    const titleMatch = fullContent.match(/^TITLE:\s*(.+?)(?:\n\n|\n)/);
+    // Check if response starts with "TITLE: " (with optional markdown formatting)
+    // Handles formats like:
+    // - "TITLE: Title Text"
+    // - "**TITLE: Title Text**"
+    // - "**TITLE: Title Text**\n\n"
+    const titleMatch = fullContent.match(/^(\*\*)?TITLE:\s*(.+?)(\*\*)?(?:\n\n|\n|$)/);
     if (titleMatch) {
-      title = titleMatch[1].trim();
+      title = titleMatch[2].trim(); // Get the title text (second capture group)
+      // Remove any remaining markdown formatting
+      title = title.replace(/^\*\*|\*\*$/g, '').trim();
       // Remove the title line and any following blank lines from the summary
       summary = fullContent.substring(titleMatch[0].length).trim();
     } else {
       // Fallback: use first 60 characters or first sentence as title
       const firstLine = fullContent.split('\n')[0];
       const firstSentence = fullContent.split(/[.!?]\s/)[0];
-      title = (firstLine.length <= 60 ? firstLine : firstSentence.substring(0, 60) + '...').trim();
+      let fallbackTitle = (firstLine.length <= 60 ? firstLine : firstSentence.substring(0, 60) + '...').trim();
+      // Remove markdown formatting from fallback title
+      fallbackTitle = fallbackTitle.replace(/^\*\*|\*\*$/g, '').trim();
+      title = fallbackTitle;
     }
 
     logger.info('Summarization completed successfully', {
