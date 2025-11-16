@@ -13,7 +13,7 @@ const {
 const { withLogging } = require('./utils/logger');
 
 // Circuit breaker for OpenAI API
-const openAIBreaker = new CircuitBreaker(3, 60000); // 3 failures, 1 minute timeout
+const openAIBreaker = new CircuitBreaker(5, 30000); // 5 failures, 30 second timeout
 
 exports.handler = withLogging('summarize', async (event, context) => {
   const logger = event.logger;
@@ -126,7 +126,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
     });
 
     logger.apiCall('OpenAI', 'chat.completions.create', {
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       textLength: sanitizedText.length,
       type: actualServiceType,
       userId: user.id
@@ -184,7 +184,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
     // Create completion with circuit breaker and timeout
     const completionWithTimeout = withTimeout(
       () => openAIBreaker.execute(() => openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -501,7 +501,7 @@ Before finalizing, ensure that everything in your summary can be directly traced
       title: title,
       summaryLength: summary.length,
       tokensUsed: completion.usage?.total_tokens,
-      model: 'gpt-3.5-turbo'
+      model: 'gpt-4o-mini'
     });
 
     const responseData = {
@@ -527,22 +527,95 @@ Before finalizing, ensure that everything in your summary can be directly traced
     return createSuccessResponse(responseData, 200, additionalHeaders);
 
   } catch (error) {
-    logger.error('Summarization request failed', {
+    // Detailed error logging for OpenAI API failures
+    const errorDetails = {
       userId: event.user?.id,
       textLength: event.validatedData?.text?.length,
-      errorType: error.constructor.name
-    }, error);
+      errorType: error.constructor.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+      circuitBreakerState: openAIBreaker.state,
+      circuitBreakerFailureCount: openAIBreaker.failureCount
+    };
+
+    // Extract OpenAI-specific error information
+    if (error.response) {
+      errorDetails.openAIStatus = error.response.status;
+      errorDetails.openAIStatusText = error.response.statusText;
+      errorDetails.openAIError = error.response.data;
+      errorDetails.openAIHeaders = error.response.headers;
+    }
+
+    // Check for specific OpenAI error types
+    if (error.code) {
+      errorDetails.openAICode = error.code;
+    }
+
+    if (error.type) {
+      errorDetails.openAIType = error.type;
+    }
+
+    // Log detailed error information
+    logger.error('Summarization request failed', errorDetails, error);
     
-    // Determine appropriate status code
+    // Determine appropriate status code based on error type
     let statusCode = 500;
-    if (error.message.includes('Circuit breaker')) {
+    let errorMessage = error.message || 'An unexpected error occurred';
+    
+    if (error.message && error.message.includes('Circuit breaker')) {
       statusCode = 503; // Service Unavailable
-    } else if (error.message.includes('timed out')) {
+      errorMessage = 'The summarization service is temporarily unavailable. Please try again in a moment.';
+      
+      // Log circuit breaker state for debugging
+      logger.warn('Circuit breaker is OPEN', {
+        userId: event.user?.id,
+        state: openAIBreaker.state,
+        failureCount: openAIBreaker.failureCount,
+        nextAttempt: openAIBreaker.nextAttempt,
+        timeUntilRetry: openAIBreaker.nextAttempt ? Math.max(0, openAIBreaker.nextAttempt - Date.now()) : 0
+      });
+    } else if (error.message && error.message.includes('timed out')) {
       statusCode = 408; // Request Timeout
-    } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
+      errorMessage = 'The summarization request timed out. Please try again with a shorter transcript.';
+    } else if (error.response) {
+      // Handle OpenAI API specific errors
+      const status = error.response.status;
+      
+      if (status === 429) {
+        // Rate limit error
+        statusCode = 429;
+        errorMessage = 'Rate limit exceeded. Please try again in a moment.';
+        
+        // Extract retry-after header if available
+        const retryAfter = error.response.headers?.['retry-after'] || error.response.headers?.['Retry-After'];
+        if (retryAfter) {
+          errorDetails.retryAfter = retryAfter;
+        }
+      } else if (status === 401) {
+        // Authentication error
+        statusCode = 500;
+        errorMessage = 'OpenAI API authentication failed. Please contact support.';
+      } else if (status === 402 || status === 403) {
+        // Payment/quota error
+        statusCode = 503;
+        errorMessage = 'OpenAI API quota exceeded. Please contact support.';
+      } else if (status >= 500 && status < 600) {
+        // OpenAI server error
+        statusCode = 503;
+        errorMessage = 'OpenAI service is temporarily unavailable. Please try again later.';
+      } else {
+        statusCode = status;
+        errorMessage = error.response.data?.error?.message || error.message || 'OpenAI API error occurred';
+      }
+    } else if (error.message && (error.message.includes('quota') || error.message.includes('rate limit'))) {
       statusCode = 429; // Too Many Requests
+      errorMessage = 'Rate limit exceeded. Please try again in a moment.';
+    } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+      // Network errors
+      statusCode = 503;
+      errorMessage = 'Network error connecting to OpenAI. Please check your connection and try again.';
     }
     
-    return createErrorResponse(error, statusCode);
+    return createErrorResponse(new Error(errorMessage), statusCode);
   }
 });
