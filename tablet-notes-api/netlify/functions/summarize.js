@@ -562,7 +562,29 @@ Before finalizing, ensure that everything in your summary can be directly traced
     let statusCode = 500;
     let errorMessage = error.message || 'An unexpected error occurred';
     
-    if (error.message && error.message.includes('Circuit breaker')) {
+    // Check for OpenAI RateLimitError first (OpenAI SDK throws custom error classes)
+    if (error.constructor.name === 'RateLimitError' || error.code === 'rate_limit_exceeded' || 
+        (error.message && error.message.includes('429') && error.message.includes('Rate limit'))) {
+      statusCode = 429; // Too Many Requests
+      
+      // Extract retry time from error message (format: "Please try again in X.XXXs")
+      const retryMatch = error.message.match(/Please try again in ([\d.]+)s/i);
+      const retrySeconds = retryMatch ? parseFloat(retryMatch[1]) : null;
+      
+      if (retrySeconds) {
+        errorMessage = `Rate limit exceeded. Please try again in ${Math.ceil(retrySeconds)} seconds.`;
+        errorDetails.retryAfter = retrySeconds;
+      } else {
+        errorMessage = 'Rate limit exceeded. Please try again in a moment.';
+      }
+      
+      logger.warn('OpenAI rate limit exceeded', {
+        userId: event.user?.id,
+        retryAfter: retrySeconds,
+        errorType: error.type,
+        errorCode: error.code
+      });
+    } else if (error.message && error.message.includes('Circuit breaker')) {
       statusCode = 503; // Service Unavailable
       errorMessage = 'The summarization service is temporarily unavailable. Please try again in a moment.';
       
@@ -578,11 +600,11 @@ Before finalizing, ensure that everything in your summary can be directly traced
       statusCode = 408; // Request Timeout
       errorMessage = 'The summarization request timed out. Please try again with a shorter transcript.';
     } else if (error.response) {
-      // Handle OpenAI API specific errors
+      // Handle OpenAI API HTTP response errors
       const status = error.response.status;
       
       if (status === 429) {
-        // Rate limit error
+        // Rate limit error from HTTP response
         statusCode = 429;
         errorMessage = 'Rate limit exceeded. Please try again in a moment.';
         
@@ -607,7 +629,8 @@ Before finalizing, ensure that everything in your summary can be directly traced
         statusCode = status;
         errorMessage = error.response.data?.error?.message || error.message || 'OpenAI API error occurred';
       }
-    } else if (error.message && (error.message.includes('quota') || error.message.includes('rate limit'))) {
+    } else if (error.message && (error.message.includes('quota') || error.message.toLowerCase().includes('rate limit'))) {
+      // Fallback for rate limit detection
       statusCode = 429; // Too Many Requests
       errorMessage = 'Rate limit exceeded. Please try again in a moment.';
     } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
