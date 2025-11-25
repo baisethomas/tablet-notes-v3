@@ -39,6 +39,10 @@ final class AuthenticationManager: ObservableObject {
         return try await authService.signIn(email: email, password: password)
     }
     
+    func signInWithGoogle() async throws -> User {
+        return try await authService.signInWithGoogle()
+    }
+    
     func signOut() async throws {
         try await authService.signOut()
     }

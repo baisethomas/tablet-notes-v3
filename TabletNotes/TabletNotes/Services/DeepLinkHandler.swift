@@ -29,53 +29,96 @@ class DeepLinkHandler: ObservableObject {
     }
     
     private func handleAuthCallback(_ url: URL) {
-        print("[DeepLinkHandler] Handling auth callback")
+        print("[DeepLinkHandler] Handling auth callback: \(url)")
         
         // Extract URL components
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else {
-            print("[DeepLinkHandler] No query items found")
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            print("[DeepLinkHandler] Failed to parse URL components")
             return
         }
         
-        // Look for code, access_token, refresh_token, or error in the URL
+        // Look for code, access_token, refresh_token, or error in query items
         var authCode: String?
         var accessToken: String?
         var refreshToken: String?
         var error: String?
         
-        for item in queryItems {
-            switch item.name {
-            case "code":
-                authCode = item.value
-            case "access_token":
-                accessToken = item.value
-            case "refresh_token":
-                refreshToken = item.value
-            case "error":
-                error = item.value
-            default:
-                break
+        // Check query items first
+        if let queryItems = components.queryItems {
+            for item in queryItems {
+                switch item.name {
+                case "code":
+                    authCode = item.value
+                case "access_token":
+                    accessToken = item.value
+                case "refresh_token":
+                    refreshToken = item.value
+                case "error":
+                    error = item.value
+                case "error_description":
+                    if error == nil {
+                        error = item.value
+                    }
+                default:
+                    break
+                }
+            }
+        }
+        
+        // Check fragment for OAuth tokens (Supabase OAuth flow uses fragments)
+        if let fragment = url.fragment {
+            let fragmentItems = fragment.components(separatedBy: "&")
+            for item in fragmentItems {
+                let parts = item.components(separatedBy: "=")
+                if parts.count == 2 {
+                    let key = parts[0]
+                    let value = parts[1].removingPercentEncoding ?? parts[1]
+                    switch key {
+                    case "access_token":
+                        accessToken = value
+                    case "refresh_token":
+                        refreshToken = value
+                    case "error":
+                        error = value
+                    case "error_description":
+                        if error == nil {
+                            error = value
+                        }
+                    default:
+                        break
+                    }
+                }
             }
         }
         
         if let error = error {
-            print("[DeepLinkHandler] Auth error: \(error)")
+            print("[DeepLinkHandler] OAuth error: \(error)")
             return
         }
         
+        // Handle different OAuth callback scenarios
         if let authCode = authCode {
             print("[DeepLinkHandler] Received auth code, exchanging for session")
             Task {
                 await handleAuthCode(authCode)
             }
         } else if let accessToken = accessToken {
-            print("[DeepLinkHandler] Received access token, processing session")
+            print("[DeepLinkHandler] Received access token directly")
             Task {
                 await handleAuthSuccess(accessToken: accessToken, refreshToken: refreshToken)
             }
         } else {
-            print("[DeepLinkHandler] No auth code or access token found in callback")
+            print("[DeepLinkHandler] No auth code or access token found, refreshing session")
+            // Supabase may have already set the session, so try refreshing
+            Task {
+                let authManager = AuthenticationManager.shared
+                do {
+                    try await authManager.refreshSession()
+                    print("[DeepLinkHandler] Session refreshed successfully")
+                } catch {
+                    print("[DeepLinkHandler] Failed to refresh session: \(error)")
+                }
+            }
         }
     }
     
