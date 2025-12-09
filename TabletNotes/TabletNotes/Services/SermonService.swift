@@ -723,12 +723,16 @@ class SermonService: ObservableObject {
             .sink { [weak self] (status, titleText, summaryText) in
                 guard let self = self else { return }
 
+                print("[SermonService] 📡 Subscription received update for sermon \(sermonId): status=\(status), hasTitle=\(titleText != nil), hasSummary=\(summaryText != nil)")
+
                 Task { @MainActor in
                     // Find the sermon again since we're in an async context
                     guard let sermon = self.sermons.first(where: { $0.id == sermonId }) else {
-                        print("[SermonService] Sermon \(sermonId) not found when updating summary")
+                        print("[SermonService] ❌ Sermon \(sermonId) not found when updating summary (sermons count: \(self.sermons.count))")
                         return
                     }
+
+                    print("[SermonService] ✓ Found sermon \(sermonId) in array, processing status: \(status)")
 
                     switch status {
                     case "complete":
