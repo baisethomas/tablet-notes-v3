@@ -154,7 +154,11 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
                 request.timeoutInterval = 60.0 // Increase timeout to 60 seconds
                 print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
                 let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                    guard let self = self else { return }
+                    print("[SummaryService] 🎯 Completion handler called! hasData=\(data != nil), hasResponse=\(response != nil), hasError=\(error != nil)")
+                    guard let self = self else {
+                        print("[SummaryService] ⚠️ self is nil in completion handler")
+                        return
+                    }
 
                     // Ensure request flag is reset when complete
                     defer { self.isRequestInProgress = false }
