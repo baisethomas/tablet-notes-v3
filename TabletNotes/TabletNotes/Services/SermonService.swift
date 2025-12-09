@@ -726,13 +726,18 @@ class SermonService: ObservableObject {
                 print("[SermonService] 📡 Subscription received update for sermon \(sermonId): status=\(status), hasTitle=\(titleText != nil), hasSummary=\(summaryText != nil)")
 
                 Task { @MainActor in
-                    // Find the sermon again since we're in an async context
-                    guard let sermon = self.sermons.first(where: { $0.id == sermonId }) else {
-                        print("[SermonService] ❌ Sermon \(sermonId) not found when updating summary (sermons count: \(self.sermons.count))")
+                    // Fetch the sermon directly from the database instead of relying on the sermons array
+                    // This avoids race conditions where saveSermon hasn't completed yet
+                    let fetchDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+                        sermon.id == sermonId
+                    })
+
+                    guard let sermon = try? self.modelContext.fetch(fetchDescriptor).first else {
+                        print("[SermonService] ❌ Sermon \(sermonId) not found in database when updating summary")
                         return
                     }
 
-                    print("[SermonService] ✓ Found sermon \(sermonId) in array, processing status: \(status)")
+                    print("[SermonService] ✓ Found sermon \(sermonId) in database, processing status: \(status)")
 
                     switch status {
                     case "complete":
