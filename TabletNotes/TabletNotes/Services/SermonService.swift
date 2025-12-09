@@ -700,10 +700,10 @@ class SermonService: ObservableObject {
     func generateSummaryForSermon(_ sermon: Sermon, transcript: String, serviceType: String) {
         print("[SermonService] Generating summary for sermon: \(sermon.id)")
 
-        // Update status to processing
-        sermon.summaryStatus = "processing"
-        sermon.updatedAt = Date()
-        try? modelContext.save()
+        // Note: We don't update the sermon's status here because:
+        // 1. If this is called right after saveSermon, the sermon isn't in the context yet
+        // 2. The status should already be set to "processing" when saveSermon was called
+        // 3. We'll update the status when the summary completes in the completion handler
 
         // Use shared summary service instance
         let summaryService = SummaryService.shared
