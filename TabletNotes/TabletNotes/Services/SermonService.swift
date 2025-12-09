@@ -717,6 +717,10 @@ class SermonService: ObservableObject {
         // Generate summary
         summaryService.generateSummary(for: transcript, type: serviceType)
 
+        // Track whether we've seen the request start (pending state)
+        // This helps filter out stale "complete" states from previous summaries
+        var hasSeenPending = false
+
         // Listen for summary completion - this subscription persists at service level
         summaryService.statusPublisher
             .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
@@ -724,6 +728,19 @@ class SermonService: ObservableObject {
                 guard let self = self else { return }
 
                 print("[SermonService] 📡 Subscription received update for sermon \(sermonId): status=\(status), hasTitle=\(titleText != nil), hasSummary=\(summaryText != nil)")
+
+                // Track when we see the pending state
+                if status == "pending" {
+                    hasSeenPending = true
+                    print("[SermonService] 🔄 Request started for sermon \(sermonId)")
+                }
+
+                // Ignore "complete" status if we haven't seen the request start yet
+                // This filters out stale completions from previous summaries in the singleton
+                if status == "complete" && !hasSeenPending {
+                    print("[SermonService] ⚠️ Ignoring stale completion (haven't seen pending yet)")
+                    return
+                }
 
                 Task { @MainActor in
                     // Fetch the sermon directly from the database instead of relying on the sermons array
