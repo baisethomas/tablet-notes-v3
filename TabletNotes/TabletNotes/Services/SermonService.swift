@@ -707,9 +707,9 @@ class SermonService: ObservableObject {
         sermon.summaryStatus = "processing"
         sermon.updatedAt = Date()
         try? modelContext.save()
-        
-        // Create summary service instance
-        let summaryService = SummaryService()
+
+        // Use shared summary service instance
+        let summaryService = SummaryService.shared
         
         // Store cancellables for this sermon to persist subscriptions
         var sermonCancellables = Set<AnyCancellable>()

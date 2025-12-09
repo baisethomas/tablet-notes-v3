@@ -16,7 +16,7 @@ struct SummaryView: View {
     let sermonService: SermonService
     let noteService: NoteService
     var onNext: (() -> Void)?
-    @StateObject private var summaryService = SummaryService()
+    @ObservedObject private var summaryService = SummaryService.shared
     @State private var title: String? = nil
     @State private var summary: String? = nil
     @State private var status: String = "idle"

@@ -183,8 +183,8 @@ class SummaryRetryService: ObservableObject {
         // Process one at a time to avoid overwhelming the service
         if let nextSummary = pendingSummaries.first {
             print("[SummaryRetryService] Processing pending summary for sermon \(nextSummary.sermonId)")
-            
-            let summaryService = SummaryService()
+
+            let summaryService = SummaryService.shared
             summaryService.generateSummary(for: nextSummary.transcript, type: nextSummary.serviceType)
             
             // Subscribe to summary completion
@@ -286,8 +286,8 @@ class SummaryRetryService: ObservableObject {
         )
         
         guard let sermon = try? context.fetch(fetchDescriptor).first else { return }
-        
-        let summaryService = SummaryService()
+
+        let summaryService = SummaryService.shared
         summaryService.generateBasicSummary(for: pendingSummary.transcript, type: pendingSummary.serviceType)
         
         // Subscribe to basic summary completion

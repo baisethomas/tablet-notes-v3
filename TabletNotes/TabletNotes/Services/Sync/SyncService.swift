@@ -661,7 +661,7 @@ extension SyncService {
         print("[SyncService] Calling update-sermon API...")
         let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/update-sermon")!
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 

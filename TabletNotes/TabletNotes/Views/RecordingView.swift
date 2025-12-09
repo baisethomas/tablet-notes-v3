@@ -175,7 +175,7 @@ struct RecordingView: View {
     @State private var audioFileURL: URL? = nil
     @State private var isProcessingTranscript = false
     @State private var transcriptProcessingError: String? = nil
-    @StateObject private var summaryService = SummaryService()
+    @ObservedObject private var summaryService = SummaryService.shared
     @State private var latestSummaryText: String? = nil
     @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
     #endif
