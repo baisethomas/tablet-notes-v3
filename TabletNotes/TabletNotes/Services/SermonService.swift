@@ -710,25 +710,27 @@ class SermonService: ObservableObject {
 
         // Use shared summary service instance
         let summaryService = SummaryService.shared
-        
-        // Store cancellables for this sermon to persist subscriptions
-        var sermonCancellables = Set<AnyCancellable>()
-        
+
+        // Initialize cancellable storage for this sermon
+        if summaryServiceCancellables[sermonId] == nil {
+            summaryServiceCancellables[sermonId] = Set<AnyCancellable>()
+        }
+
         // Generate summary
         summaryService.generateSummary(for: transcript, type: serviceType)
-        
+
         // Listen for summary completion - this subscription persists at service level
         summaryService.statusPublisher
             .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
             .sink { [weak self] (status, titleText, summaryText) in
                 guard let self = self else { return }
-                
+
                 Task { @MainActor in
                     guard let sermon = self.sermons.first(where: { $0.id == sermonId }) else {
                         print("[SermonService] Sermon \(sermonId) not found when updating summary")
                         return
                     }
-                    
+
                     switch status {
                     case "complete":
                         if let summaryText = summaryText {
@@ -741,62 +743,59 @@ class SermonService: ObservableObject {
                             )
                             sermon.summary = summary
                             sermon.summaryStatus = "complete"
-                            
+
                             // Mark for sync
                             sermon.needsSync = true
                             sermon.updatedAt = Date()
                             sermon.syncStatus = "pending"
-                            
+
                             try? self.modelContext.save()
-                            
+
                             print("[SermonService] ✅ Summary completed for sermon \(sermonId)")
-                            
+
                             // Trigger sync if needed
                             if let currentUser = self.authManager.currentUser, currentUser.canSync {
                                 self.triggerSyncIfNeeded()
                             }
-                            
+
                             // Notify UI
                             NotificationCenter.default.post(
                                 name: SummaryRetryService.summaryCompletedNotification,
                                 object: sermonId
                             )
-                            
+
                             // Refresh sermon list
                             self.fetchSermons()
                         } else {
                             print("[SermonService] ERROR: Summary status is complete but no summary text received")
                             sermon.summaryStatus = "failed"
                             try? self.modelContext.save()
-                            
+
                             // Add to retry queue
                             SummaryRetryService.shared.addPendingSummary(
                                 PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
                             )
                         }
-                        
+
                     case "failed":
                         print("[SermonService] Summary generation failed for sermon \(sermonId)")
                         sermon.summaryStatus = "failed"
                         try? self.modelContext.save()
-                        
+
                         // Add to retry queue
                         SummaryRetryService.shared.addPendingSummary(
                             PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
                         )
-                        
+
                     default:
                         break
                     }
-                    
+
                     // Clean up cancellables after completion
                     self.summaryServiceCancellables.removeValue(forKey: sermonId)
                 }
             }
-            .store(in: &sermonCancellables)
-        
-        // Store cancellables for this sermon
-        summaryServiceCancellables[sermonId] = sermonCancellables
+            .store(in: &summaryServiceCancellables[sermonId]!)
     }
     
     /// Check for sermons with stuck processing status and recover them
