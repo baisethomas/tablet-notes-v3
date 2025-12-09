@@ -753,6 +753,9 @@ class SermonService: ObservableObject {
 
                             print("[SermonService] ✅ Summary completed for sermon \(sermonId)")
 
+                            // Manually trigger UI update
+                            self.objectWillChange.send()
+
                             // Trigger sync if needed
                             if let currentUser = self.authManager.currentUser, currentUser.canSync {
                                 self.triggerSyncIfNeeded()
@@ -771,6 +774,9 @@ class SermonService: ObservableObject {
                             sermon.summaryStatus = "failed"
                             try? self.modelContext.save()
 
+                            // Manually trigger UI update
+                            self.objectWillChange.send()
+
                             // Add to retry queue
                             SummaryRetryService.shared.addPendingSummary(
                                 PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
@@ -781,6 +787,9 @@ class SermonService: ObservableObject {
                         print("[SermonService] Summary generation failed for sermon \(sermonId)")
                         sermon.summaryStatus = "failed"
                         try? self.modelContext.save()
+
+                        // Manually trigger UI update
+                        self.objectWillChange.send()
 
                         // Add to retry queue
                         SummaryRetryService.shared.addPendingSummary(
