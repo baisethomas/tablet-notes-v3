@@ -248,8 +248,24 @@ struct MainAppView: View {
                                                             )
 
                                                             // Generate summary via service layer
-                                                            // This ensures summary completion is handled even if view is dismissed
-                                                            sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
+                                                            // Create a temporary sermon object to avoid race condition
+                                                            if let currentUser = AuthenticationManager.shared.currentUser {
+                                                                let tempSermon = Sermon(
+                                                                    id: sermonId,
+                                                                    title: title,
+                                                                    audioFileURL: audioURL,
+                                                                    date: date,
+                                                                    serviceType: serviceType,
+                                                                    speaker: nil,
+                                                                    transcript: transcriptModel,
+                                                                    notes: notes,
+                                                                    summary: summaryModel,
+                                                                    transcriptionStatus: "complete",
+                                                                    summaryStatus: "processing",
+                                                                    userId: currentUser.id
+                                                                )
+                                                                sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
+                                                            }
 
                                                             print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                             sermonService.fetchSermons()
@@ -396,8 +412,24 @@ struct MainAppView: View {
                                                     )
 
                                                     // Generate summary via service layer
-                                                    // This ensures summary completion is handled even if view is dismissed
-                                                    sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
+                                                    // Create a temporary sermon object to avoid race condition
+                                                    if let currentUser = AuthenticationManager.shared.currentUser {
+                                                        let tempSermon = Sermon(
+                                                            id: sermonId,
+                                                            title: title,
+                                                            audioFileURL: audioURL,
+                                                            date: date,
+                                                            serviceType: serviceType,
+                                                            speaker: nil,
+                                                            transcript: transcriptModel,
+                                                            notes: notes,
+                                                            summary: summaryModel,
+                                                            transcriptionStatus: "complete",
+                                                            summaryStatus: "processing",
+                                                            userId: currentUser.id
+                                                        )
+                                                        sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
+                                                    }
 
                                                     print("[MiniPlayer] Processing complete, refreshing sermon list")
                                                     sermonService.fetchSermons()

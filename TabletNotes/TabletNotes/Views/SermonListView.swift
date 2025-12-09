@@ -777,7 +777,7 @@ struct SermonListView: View {
         
         // Use service layer approach to ensure summary completion is handled
         print("[SermonListView] Regenerating summary via SermonService")
-        sermonService.generateSummaryForSermon(sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
+        sermonService.generateSummaryForSermon(sermon, transcript: transcript.text, serviceType: sermon.serviceType)
     }
     
     @State private var cancellables = Set<AnyCancellable>()

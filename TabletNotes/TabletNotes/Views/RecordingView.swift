@@ -973,11 +973,28 @@ struct RecordingView: View {
                 summaryStatus: "processing",
                 id: sermonId
             )
-            
+
             // 🔥 TRIGGER SUMMARIZATION via service layer
-            // This ensures summary completion is handled even if view is dismissed
+            // Create a temporary sermon object to pass to generateSummaryForSermon
+            // This avoids race condition where sermon might not be in sermons array yet
             print("[RecordingView] Starting summarization for transcript length: \(text.count) via SermonService")
-            sermonService.generateSummaryForSermon(sermonId, transcript: text, serviceType: serviceType)
+            if let currentUser = AuthenticationManager.shared.currentUser {
+                let tempSermon = Sermon(
+                    id: sermonId,
+                    title: title,
+                    audioFileURL: url,
+                    date: date,
+                    serviceType: serviceType,
+                    speaker: nil,
+                    transcript: transcriptModel,
+                    notes: latestNotes,
+                    summary: summaryModel,
+                    transcriptionStatus: "complete",
+                    summaryStatus: "processing",
+                    userId: currentUser.id
+                )
+                sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
+            }
             
             // Create a minimal sermon object for the callback
             // Note: This is just for the callback - the actual sermon is saved via SermonService

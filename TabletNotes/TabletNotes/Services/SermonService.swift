@@ -697,12 +697,9 @@ class SermonService: ObservableObject {
     
     /// Generate summary for a sermon and handle completion at service level
     /// This ensures summaries are updated even if views are dismissed
-    func generateSummaryForSermon(_ sermonId: UUID, transcript: String, serviceType: String) {
-        guard let sermon = sermons.first(where: { $0.id == sermonId }) else {
-            print("[SermonService] Cannot generate summary: Sermon \(sermonId) not found")
-            return
-        }
-        
+    func generateSummaryForSermon(_ sermon: Sermon, transcript: String, serviceType: String) {
+        print("[SermonService] Generating summary for sermon: \(sermon.id)")
+
         // Update status to processing
         sermon.summaryStatus = "processing"
         sermon.updatedAt = Date()
@@ -710,6 +707,7 @@ class SermonService: ObservableObject {
 
         // Use shared summary service instance
         let summaryService = SummaryService.shared
+        let sermonId = sermon.id
 
         // Initialize cancellable storage for this sermon
         if summaryServiceCancellables[sermonId] == nil {
@@ -726,6 +724,7 @@ class SermonService: ObservableObject {
                 guard let self = self else { return }
 
                 Task { @MainActor in
+                    // Find the sermon again since we're in an async context
                     guard let sermon = self.sermons.first(where: { $0.id == sermonId }) else {
                         print("[SermonService] Sermon \(sermonId) not found when updating summary")
                         return
