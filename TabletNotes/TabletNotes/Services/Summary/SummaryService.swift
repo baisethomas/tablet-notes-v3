@@ -77,15 +77,20 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
 
-        // Prevent concurrent requests for the same content
+        // If a request is in progress, check if it's for the same content
         if isRequestInProgress {
-            print("[SummaryService] ⚠️ Request already in progress, ignoring duplicate call")
-            return
-        }
+            // If it's the same transcript, let the current request complete (observers will get the result)
+            if lastTranscript == transcript && lastType == type {
+                print("[SummaryService] ℹ️ Request already in progress for same content, continuing...")
+                return
+            }
 
-        // Cancel any existing task
-        currentTask?.cancel()
-        currentTask = nil
+            // Different transcript - cancel the old request and start new one
+            print("[SummaryService] ⚠️ Cancelling previous request to process new transcript")
+            currentTask?.cancel()
+            currentTask = nil
+            isRequestInProgress = false
+        }
 
         lastTranscript = transcript
         lastType = type
