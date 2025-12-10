@@ -78,14 +78,23 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10 // 10 second timeout to prevent hanging
 
-        // Try to add authentication if available, but don't require it for free users
+        // Get auth token with automatic refresh
         do {
             let session = try await supabase.client.auth.session
             request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
             print("[AssemblyAI Live] Using authenticated session for live transcription")
         } catch {
-            print("[AssemblyAI Live] No authentication available, using public access")
-            // Continue without authentication - the Netlify function should handle unauthenticated requests
+            // Token might be expired, try to refresh
+            print("[AssemblyAI Live] Session expired or invalid, attempting to refresh token...")
+            do {
+                let refreshedSession = try await supabase.client.auth.refreshSession()
+                request.setValue("Bearer \(refreshedSession.accessToken)", forHTTPHeaderField: "Authorization")
+                print("[AssemblyAI Live] Token refreshed successfully")
+            } catch {
+                print("[AssemblyAI Live] Token refresh failed: \(error.localizedDescription)")
+                // Don't continue without auth - throw error instead
+                throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "Authentication required. Please sign in to use live transcription."])
+            }
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)

@@ -19,6 +19,26 @@ class NetlifyBibleAPIService: ObservableObject {
         }
     }
     
+    // MARK: - Helper Methods
+    
+    /// Helper method to get auth token with automatic refresh
+    private func getAuthToken() async throws -> String {
+        do {
+            let session = try await supabase.auth.session
+            return session.accessToken
+        } catch {
+            print("[NetlifyBibleAPI] Session expired, attempting refresh...")
+            do {
+                let refreshedSession = try await supabase.auth.refreshSession()
+                print("[NetlifyBibleAPI] Token refreshed successfully")
+                return refreshedSession.accessToken
+            } catch {
+                print("[NetlifyBibleAPI] Token refresh failed: \(error.localizedDescription)")
+                throw BibleAPIError.networkError(error)
+            }
+        }
+    }
+    
     // MARK: - Public Methods
     
     func loadAvailableBibles() async throws {
@@ -78,13 +98,13 @@ class NetlifyBibleAPIService: ObservableObject {
         }
         
         do {
-            // Get authentication token
-            let session = try await supabase.auth.session
+            // Get authentication token with automatic refresh
+            let accessToken = try await getAuthToken()
             
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
             
             let (data, response) = try await self.session.data(for: request)
             
@@ -134,13 +154,13 @@ class NetlifyBibleAPIService: ObservableObject {
         }
         
         do {
-            // Get authentication token
-            let session = try await supabase.auth.session
+            // Get authentication token with automatic refresh
+            let accessToken = try await getAuthToken()
             
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
             
             let (data, response) = try await self.session.data(for: request)
             

@@ -22,6 +22,24 @@ class SupabaseService: SupabaseServiceProtocol {
 
     // Netlify API endpoint
     private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app"
+    
+    /// Helper method to get auth token with automatic refresh
+    private func getAuthToken() async throws -> String {
+        do {
+            let session = try await supabase.auth.session
+            return session.accessToken
+        } catch {
+            print("[SupabaseService] Session expired, attempting refresh...")
+            do {
+                let refreshedSession = try await supabase.auth.refreshSession()
+                print("[SupabaseService] Token refreshed successfully")
+                return refreshedSession.accessToken
+            } catch {
+                print("[SupabaseService] Token refresh failed: \(error.localizedDescription)")
+                throw URLError(.userAuthenticationRequired)
+            }
+        }
+    }
 
     struct SignedUploadURLResponse: Codable {
         let success: Bool
@@ -54,15 +72,15 @@ class SupabaseService: SupabaseServiceProtocol {
     func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
         print("[SupabaseService] getSignedUploadURL called for: \(fileName)")
 
-        // Get authentication token
-        let session = try await supabase.auth.session
-        print("[SupabaseService] Got auth session")
+        // Get authentication token with automatic refresh
+        let accessToken = try await getAuthToken()
+        print("[SupabaseService] Got auth token")
 
         let url = URL(string: "\(apiBaseUrl)/api/generate-upload-url")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let body = [
             "fileName": fileName,
@@ -183,9 +201,9 @@ class SupabaseService: SupabaseServiceProtocol {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // Get authentication token
-        let session = try await supabase.auth.session
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        // Get authentication token with automatic refresh
+        let accessToken = try await getAuthToken()
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let body = ["path": path]
         request.httpBody = try JSONEncoder().encode(body)
@@ -238,9 +256,9 @@ class SupabaseService: SupabaseServiceProtocol {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // Get authentication token
-        let session = try await supabase.auth.session
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        // Get authentication token with automatic refresh
+        let accessToken = try await getAuthToken()
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         // Create update payload
         let updateData: [String: Any] = [
@@ -298,6 +316,8 @@ class SupabaseService: SupabaseServiceProtocol {
         
         // Add user-specific path if we can get the current user
         do {
+            // Get auth token first (with refresh), then get session for user ID
+            _ = try await getAuthToken()
             let session = try await supabase.auth.session
             let userId = session.user.id
             pathOptions.append("\(userId)/\(filename)")
@@ -348,9 +368,9 @@ class SupabaseService: SupabaseServiceProtocol {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
 
-        // Get authentication token
-        let session = try await supabase.auth.session
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        // Get authentication token with automatic refresh
+        let accessToken = try await getAuthToken()
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         print("[SupabaseService] Request configured with auth token")
 

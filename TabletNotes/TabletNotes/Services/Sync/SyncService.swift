@@ -30,6 +30,30 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         self.authService = authService
     }
     
+    // MARK: - Helper Methods
+    
+    /// Helper method to get auth token with automatic refresh
+    private func getAuthToken() async throws -> String {
+        guard let supabaseService = self.supabaseService as? SupabaseService else {
+            throw SyncError.networkError
+        }
+        
+        do {
+            let session = try await supabaseService.client.auth.session
+            return session.accessToken
+        } catch {
+            print("[SyncService] Session expired, attempting refresh...")
+            do {
+                let refreshedSession = try await supabaseService.client.auth.refreshSession()
+                print("[SyncService] Token refreshed successfully")
+                return refreshedSession.accessToken
+            } catch {
+                print("[SyncService] Token refresh failed: \(error.localizedDescription)")
+                throw SyncError.authenticationFailed
+            }
+        }
+    }
+    
     // MARK: - Public Methods
     
     func syncAllData() async {
@@ -436,10 +460,9 @@ extension SyncService {
             throw SyncError.networkError
         }
 
-        // Get auth token
-        print("[SyncService] Getting auth session...")
-        let session = try await supabaseService.client.auth.session
-        let token = session.accessToken
+        // Get auth token with automatic refresh
+        print("[SyncService] Getting auth token...")
+        let token = try await getAuthToken()
         print("[SyncService] ✅ Got auth token")
 
         // Upload audio file to Supabase Storage first
@@ -605,9 +628,8 @@ extension SyncService {
             throw SyncError.networkError
         }
 
-        // Get auth token
-        let session = try await supabaseService.client.auth.session
-        let token = session.accessToken
+        // Get auth token with automatic refresh
+        let token = try await getAuthToken()
 
         // Prepare request payload with basic sermon data
         var payload: [String: Any] = [
@@ -827,11 +849,14 @@ enum SyncError: LocalizedError {
     case networkError
     case dataCorruption
     case conflictResolution
+    case authenticationFailed
     
     var errorDescription: String? {
         switch self {
         case .subscriptionRequired:
             return "Sync requires a paid subscription"
+        case .authenticationFailed:
+            return "Authentication failed. Please sign in again."
         case .networkError:
             return "Network connection error during sync"
         case .dataCorruption:
