@@ -794,6 +794,9 @@ class SermonService: ObservableObject {
 
                             // Refresh sermon list
                             self.fetchSermons()
+
+                            // Clean up cancellables after successful completion
+                            self.summaryServiceCancellables.removeValue(forKey: sermonId)
                         } else {
                             print("[SermonService] ERROR: Summary status is complete but no summary text received")
                             sermon.summaryStatus = "failed"
@@ -806,6 +809,9 @@ class SermonService: ObservableObject {
                             SummaryRetryService.shared.addPendingSummary(
                                 PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
                             )
+
+                            // Clean up cancellables after failure
+                            self.summaryServiceCancellables.removeValue(forKey: sermonId)
                         }
 
                     case "failed":
@@ -821,12 +827,13 @@ class SermonService: ObservableObject {
                             PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
                         )
 
+                        // Clean up cancellables after failure
+                        self.summaryServiceCancellables.removeValue(forKey: sermonId)
+
                     default:
+                        // Don't clean up for pending or other intermediate states
                         break
                     }
-
-                    // Clean up cancellables after completion
-                    self.summaryServiceCancellables.removeValue(forKey: sermonId)
                 }
             }
             .store(in: &summaryServiceCancellables[sermonId]!)
