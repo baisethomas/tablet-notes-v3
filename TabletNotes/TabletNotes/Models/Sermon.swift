@@ -12,6 +12,7 @@ final class Sermon {
     @Relationship(deleteRule: .cascade) var transcript: Transcript?
     @Relationship(deleteRule: .cascade) var notes: [Note]
     @Relationship(deleteRule: .cascade) var summary: Summary?
+    @Relationship(deleteRule: .cascade) var chatMessages: [ChatMessage] = []
     var syncStatus: String // e.g., "localOnly", "syncing", "synced", "error"
     var transcriptionStatus: String // e.g., "processing", "complete", "failed"
     var summaryStatus: String // e.g., "processing", "complete", "failed"
@@ -39,6 +40,11 @@ final class Sermon {
     // Helper method to check if audio file exists
     var audioFileExists: Bool {
         return FileManager.default.fileExists(atPath: audioFileURL.path)
+    }
+
+    // Computed property to count user questions (for usage limit tracking)
+    var userQuestionCount: Int {
+        return chatMessages.filter { $0.countsTowardLimit }.count
     }
 
     init(id: UUID = UUID(), title: String, audioFileName: String, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {

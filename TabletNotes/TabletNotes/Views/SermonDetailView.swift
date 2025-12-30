@@ -240,6 +240,7 @@ struct TranscriptSegmentView: View {
 
 struct SermonDetailView: View {
     @ObservedObject var sermonService: SermonService
+    @ObservedObject var authManager: AuthenticationManager
     let sermonID: UUID
     var onBack: (() -> Void)?
     @State private var selectedTab: Tab = .summary
@@ -252,27 +253,33 @@ struct SermonDetailView: View {
     @State private var isEditingTitle = false
     @State private var editableSpeaker: String = ""
     @State private var isEditingSpeaker = false
-    
+
     // Transcription retry
     @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
     @State private var isRetryingTranscription = false
     @State private var summaryCancellables = Set<AnyCancellable>()
+
+    // Chat service
+    @StateObject private var chatService = ChatService.shared
     
     enum Tab: String, CaseIterable {
         case summary = "Summary"
         case transcript = "Transcript"
         case notes = "Notes"
-        
+        case chat = "AI Chat"
+
         var icon: String {
             switch self {
             case .summary: return "doc.text"
             case .transcript: return "text.bubble"
             case .notes: return "note.text"
+            case .chat: return "sparkles"
             }
         }
     }
     
     var sermon: Sermon? {
+        // Fetch from sermonService which uses SwiftData
         sermonService.sermons.first(where: { $0.id == sermonID })
     }
     
@@ -441,6 +448,8 @@ struct SermonDetailView: View {
                                 transcriptTabView
                             case .notes:
                                 notesTabView
+                            case .chat:
+                                chatTabView
                             }
                         }
                         .animation(.easeInOut(duration: 0.3), value: selectedTab)
@@ -450,7 +459,13 @@ struct SermonDetailView: View {
                         editableTitle = sermon.title
                         editableSpeaker = sermon.speaker ?? ""
                         setupAudioPlayer()
-                        
+
+                        // Log note count for debugging
+                        print("[SermonDetailView] onAppear: Sermon '\(sermon.title)' has \(sermon.notes.count) notes")
+                        for (index, note) in sermon.notes.enumerated() {
+                            print("[SermonDetailView]   Note \(index): '\(note.text)' at \(note.timestamp)s")
+                        }
+
                         // Retry transcription if needed
                         transcriptionRetryService.retryTranscriptionIfNeeded(for: sermon)
                     }
@@ -852,7 +867,38 @@ struct SermonDetailView: View {
             }
         }
     }
-    
+
+    var chatTabView: some View {
+        Group {
+            if let sermon = sermon {
+                ChatTabView(
+                    chatService: chatService,
+                    authManager: authManager,
+                    sermon: sermon
+                )
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 48))
+                        .foregroundColor(.adaptiveSecondaryText)
+
+                    VStack(spacing: 8) {
+                        Text("Chat Unavailable")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.adaptivePrimaryText)
+
+                        Text("Chat requires a sermon to be loaded.")
+                            .font(.subheadline)
+                            .foregroundColor(.adaptiveSecondaryText)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
     // MARK: - Audio Player Methods
     private func togglePlayback() {
         guard let sermon = sermon else { return }
@@ -1075,6 +1121,7 @@ struct SermonDetailView: View {
 #Preview {
     SermonDetailView(
         sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))),
+        authManager: AuthenticationManager.shared,
         sermonID: UUID()
     )
 }

@@ -113,11 +113,14 @@ struct MainAppView: View {
                         onNext: { sermon in
                             sermonService.fetchSermons() // Refresh the list
                             lastCreatedSermon = sermon
-                            // Clear the recording session notes after successful save
-                            let noteService = NoteService(sessionId: currentRecordingSessionId)
-                            noteService.clearSession()
-                            // Generate new session ID for next recording
-                            currentRecordingSessionId = UUID().uuidString
+                            // Delay clearing session to ensure notes are fully saved to sermon
+                            // This prevents race condition where session clears before async sermon save completes
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                noteService.clearSession()
+                                // Generate new session ID for next recording
+                                currentRecordingSessionId = UUID().uuidString
+                            }
                             currentScreen = .sermons // Go to the list after recording
                         },
                         sermonService: sermonService,
@@ -127,6 +130,7 @@ struct MainAppView: View {
                 case .sermonDetail(let sermon):
                     AnyView(SermonDetailView(
                         sermonService: sermonService,
+                        authManager: authManager,
                         sermonID: sermon.id,
                         onBack: { currentScreen = .sermons }
                     ))
@@ -295,11 +299,13 @@ struct MainAppView: View {
 
                                             // Clear recording state
                                             currentRecordingServiceType = nil
-                                            // Clear session notes
-                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                            noteService.clearSession()
-                                            // Generate new session ID for next recording
-                                            currentRecordingSessionId = UUID().uuidString
+                                            // Delay clearing session to ensure notes are fully saved
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                                let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                                noteService.clearSession()
+                                                // Generate new session ID for next recording
+                                                currentRecordingSessionId = UUID().uuidString
+                                            }
                                         }
                                     }
                                 }
@@ -459,11 +465,13 @@ struct MainAppView: View {
 
                                     // Clear recording state
                                     currentRecordingServiceType = nil
-                                    // Clear session notes
-                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                    noteService.clearSession()
-                                    // Generate new session ID for next recording
-                                    currentRecordingSessionId = UUID().uuidString
+                                    // Delay clearing session to ensure notes are fully saved
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        let noteService = NoteService(sessionId: currentRecordingSessionId)
+                                        noteService.clearSession()
+                                        // Generate new session ID for next recording
+                                        currentRecordingSessionId = UUID().uuidString
+                                    }
                                 }
                             }
                         }
