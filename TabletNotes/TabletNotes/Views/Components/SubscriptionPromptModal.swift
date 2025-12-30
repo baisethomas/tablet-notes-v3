@@ -72,14 +72,14 @@ struct SubscriptionPromptModal: View {
                     HStack(spacing: 16) {
                         PricingOption(
                             period: "Monthly",
-                            price: "$4.99",
+                            price: "$9.99",
                             isRecommended: false
                         )
 
                         PricingOption(
                             period: "Annual",
-                            price: "$39.99",
-                            savings: "Save 33%",
+                            price: "$79.99",
+                            savings: "Save 17%",
                             isRecommended: true
                         )
                     }

@@ -2,6 +2,204 @@
 
 ---
 
+## Update 8 - Rate Limit Fix and Summary Generation Improvements
+**Build Date:** December 10, 2025
+
+### What's New
+Fixed critical rate limiting issues that were preventing summaries from being generated. Multiple concurrent requests to OpenAI API were triggering rate limit errors, causing summaries to fail. Summary generation is now stable, reliable, and properly updates the UI across all scenarios.
+
+### What Changed
+
+#### Singleton Pattern to Prevent Rate Limits
+- **Single Service Instance:** SummaryService converted to singleton pattern with `static let shared`
+- **Eliminates Concurrent Requests:** Prevents multiple service instances from making duplicate API calls
+- **Smart Request Deduplication:** Allows legitimate new requests while preventing duplicates for same transcript
+- **Per-Device Isolation:** Each device has its own singleton, no cross-contamination between users
+
+#### Fixed Race Conditions
+- **Sermon Lookup Race:** Changed `generateSummaryForSermon` to accept `Sermon` object instead of UUID
+- **Database Fetching:** Completion handlers fetch sermon from database using `FetchDescriptor` instead of in-memory array
+- **Asynchronous Safety:** Eliminates timing issues where sermon hasn't been added to array yet
+- **Guaranteed Updates:** Summaries always update the correct sermon regardless of timing
+
+#### Subscription Lifecycle Management
+- **Proper Cleanup Timing:** Subscriptions only removed after terminal states ("complete" or "failed")
+- **Fixed Early Removal Bug:** Stopped removing subscriptions after "pending" status
+- **Complete Status Reception:** Ensures UI receives "complete" updates even if they arrive 10+ seconds later
+- **Memory Management:** Subscriptions stored in dictionary with proper lifecycle
+
+#### Stale Data Prevention
+- **hasSeenPending Flag:** Filters out old summary data from previous requests
+- **Accurate Summaries:** Prevents wrong summaries from being applied to new sermons
+- **State Tracking:** Only processes "complete" status after seeing corresponding "pending" state
+- **No Hallucinations:** Eliminates issue where old AI summaries appeared on new recordings
+
+#### Authentication Stability
+- **Token Refresh Logic:** Automatic token refresh when Supabase session expires
+- **Prevents Auth Failures:** Handles expired tokens gracefully across all services
+- **Seamless Recovery:** Users don't see authentication errors during summary generation
+
+#### Request Deduplication Logic
+- **Same Transcript Handling:** If same transcript already in progress, allows current request to complete
+- **Different Transcript Handling:** Cancels old request and starts new one for different content
+- **Prevents Blocking:** Smart logic ensures UI never gets stuck waiting for wrong request
+
+### What to Test
+
+**Test 1: Multi-Device Concurrent Summaries**
+1. Sign in with same account on 3 different devices (iPhone, iPad, another iPhone)
+2. Record a sermon on each device simultaneously (can be short 1-2 minute recordings)
+3. Let all transcriptions complete
+4. Let all summaries generate
+5. **Expected:**
+   - All 3 summaries generate successfully
+   - No rate limit errors in Netlify logs
+   - Each device shows its own summary (not cross-contaminated)
+   - UI updates properly on all devices
+   - Summaries are accurate to their respective recordings
+
+**Test 2: Rapid Sequential Recordings**
+1. Record a 30-second sermon, stop recording
+2. Immediately record another 30-second sermon, stop recording
+3. Immediately record a third 30-second sermon, stop recording
+4. Let all transcriptions and summaries complete
+5. **Expected:**
+   - All 3 summaries generate without errors
+   - No duplicate requests in Netlify logs
+   - Each summary matches its own transcript
+   - No summaries stuck in "processing" state
+
+**Test 3: Navigate Away During Summary Generation**
+1. Record a sermon (2-3 minutes)
+2. Let transcription complete
+3. Immediately navigate to sermon list (leave detail view)
+4. Wait 2-3 minutes
+5. Return to sermon detail view
+6. **Expected:**
+   - Summary appears even though you navigated away
+   - UI updates automatically when you return
+   - Summary is accurate to the transcript
+   - Status shows "complete" not "processing"
+
+**Test 4: Summary Accuracy Verification**
+1. Record a sermon with specific, unique content (e.g., "Today we discuss the importance of prayer")
+2. Let transcription and summary complete
+3. Read the summary text carefully
+4. **Expected:**
+   - Summary reflects actual sermon content
+   - No hallucinated content from previous sermons
+   - Title is relevant to sermon topic
+   - Summary doesn't contain phrases like "processing life's imperfections" for unrelated content
+
+**Test 5: Verify No Duplicate Requests**
+1. Record a sermon
+2. Let transcription complete
+3. Monitor for summary generation (or check Netlify logs after)
+4. **Expected:**
+   - Only ONE request sent to Netlify/OpenAI per sermon
+   - No multiple concurrent requests for same sermon ID
+   - Netlify logs show single request with 10-15 second duration
+   - No 429 (Rate Limit) errors in logs
+
+**Test 6: UI Update Reliability**
+1. Record a sermon
+2. Stay on sermon detail view
+3. Watch status indicator during summary generation
+4. **Expected:**
+   - Status shows "Generating Summary..." (pending)
+   - After 10-20 seconds, status updates to "Complete"
+   - Summary text appears automatically
+   - No need to restart app or navigate away/back
+
+**Test 7: Long Summary Generation**
+1. Record a 10+ minute sermon with substantial content
+2. Let transcription complete
+3. Wait for summary generation (may take 20-30 seconds)
+4. **Expected:**
+   - Summary completes within 30-45 seconds
+   - UI updates when complete
+   - Summary is comprehensive and accurate
+   - No timeout errors
+
+**Test 8: Retry After Previous Failure**
+1. Admin: Manually set a sermon's summaryStatus to "failed"
+2. Open sermon detail view
+3. Tap "Retry Summary" button
+4. **Expected:**
+   - New summary request sent
+   - No duplicate requests
+   - Summary generates successfully
+   - Status updates from "failed" to "complete"
+
+### What to Report
+
+**Rate Limit Issues:**
+1. Did you see rate limit errors in the app or Netlify logs?
+2. How many devices were generating summaries at the same time?
+3. Screenshot of Netlify function logs showing concurrent requests (if applicable)
+4. Timestamp of when issue occurred
+
+**Inaccurate Summaries:**
+1. What was the actual transcript content?
+2. What summary text did you receive?
+3. Was the summary completely unrelated or just partially inaccurate?
+4. Screenshot of both transcript and summary
+5. Did this happen after recording multiple sermons in a row?
+
+**UI Update Issues:**
+1. Did summary generate but UI not update?
+2. How long did you wait before reporting?
+3. Did you navigate away during generation?
+4. Did restarting the app show the summary?
+5. Screenshot of sermon detail showing "processing" status
+
+**Stuck Processing Status:**
+1. How long has sermon been stuck in "processing" state?
+2. Check Netlify logs - was summary actually generated on server?
+3. Did you try navigating away and back?
+4. Did you try restarting the app?
+5. Screenshot showing stuck status with timestamp
+
+**General Issues:**
+1. Device type (iPhone 13, iPad Pro, etc.)
+2. iOS version
+3. WiFi or cellular connection
+4. Time of day (check if OpenAI API issues)
+5. Full error message if any shown
+
+### Known Behaviors
+- **Summary generation takes 10-30 seconds** depending on transcript length (short sermons ~10s, long sermons ~30s)
+- **One request per sermon:** Singleton ensures only one active request per transcript
+- **Per-device isolation:** Each device has independent SummaryService instance
+- **UI updates may take 1-2 seconds:** After summary completes, UI refresh is near-instant but not always immediate
+- **Navigate away is safe:** Summaries complete in background via service-layer subscriptions
+- **Authentication handled automatically:** Token refresh happens transparently if session expires
+- **Retries are manual:** If summary fails, user must tap "Retry" button (automatic retry in Update 7 still works)
+
+### Technical Details (For Debugging)
+- **Singleton Implementation:** `SummaryService.shared` with private `init()` (SummaryService.swift:6, 54)
+- **Request Deduplication:** Lines 80-93 in SummaryService.swift
+- **Subscription Storage:** `summaryServiceCancellables` dictionary in SermonService.swift
+- **Cleanup Timing:** Subscription removal only in "complete" (line 798) and "failed" (line 813) cases
+- **Stale Data Filter:** `hasSeenPending` flag (SermonService.swift:720-743)
+- **Database Lookup:** `FetchDescriptor<Sermon>` for completion handler (SermonService.swift:731-738)
+- **Method Signature:** `generateSummaryForSermon(_ sermon: Sermon, ...)` accepts object not UUID (SermonService.swift:700)
+- **Token Refresh:** `getAuthToken()` method with automatic refresh (SummaryService.swift:59-75)
+
+**Recent Commits Related to This Update:**
+- e62bf17: Add token refresh logic app-wide to prevent authentication failures
+- 5a6371e: Fix subscription being removed too early
+- ae87887: Add debug logging to URLSession completion handler
+- d81bbb2: Fix stale summary data being saved to wrong sermon
+- 021da86: Fix sermon lookup race condition in summary completion handler
+- 555d795: Fix critical race condition preventing summary generation
+- 6e9df3d: Fix UI not updating when summary completes
+- c7a24f9: Fix critical bug: summary completion handler was being deallocated
+- 8f0c01f: Fix summary stuck in pending state by improving request deduplication logic
+- 675108a: Fix rate limit issue by converting SummaryService to singleton pattern
+
+---
+
 ## Update 7 - Summary Generation Reliability
 **Build Date:** December 2025
 

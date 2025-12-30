@@ -588,15 +588,21 @@ struct RecordingView: View {
                             Button("Save") {
                                 let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                                 impactFeedback.impactOccurred()
-                                
+
                                 let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                print("[RecordingView] Save button pressed. Note text: '\(trimmed)'")
                                 if !trimmed.isEmpty {
                                     // Update the single continuous note
                                     if let existingNote = notes.first {
+                                        print("[RecordingView] Updating existing note with id: \(existingNote.id)")
                                         noteService.updateNote(id: existingNote.id, newText: trimmed)
                                     } else {
+                                        print("[RecordingView] Adding new note at timestamp: \(recordingService.recordingDuration)")
                                         noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
                                     }
+                                    print("[RecordingView] After save, noteService.currentNotes count: \(noteService.currentNotes.count)")
+                                } else {
+                                    print("[RecordingView] Note text is empty after trimming, not saving")
                                 }
                                 showNoteSheet = false
                             }
@@ -950,8 +956,9 @@ struct RecordingView: View {
             let transcriptModel = Transcript(text: text, segments: segments)
             let summaryModel = Summary(text: "", type: serviceType, status: "processing")
             let sermonId = UUID()
-            
+
             // Get the latest notes from the service to ensure we have all notes
+            // IMPORTANT: Capture notes snapshot BEFORE any async operations
             let latestNotes = noteService.currentNotes
             print("[DEBUG] handleTranscriptionResult: creating sermon with transcriptionStatus = complete")
             print("[DEBUG] handleTranscriptionResult: Current notes array has \(notes.count) notes")
@@ -960,6 +967,8 @@ struct RecordingView: View {
             for (index, note) in latestNotes.enumerated() {
                 print("[DEBUG] RecordingView Note \(index): '\(note.text)' at \(note.timestamp)s")
             }
+
+            // Save sermon with notes captured above
             sermonService.saveSermon(
                 title: title,
                 audioFileURL: url,
@@ -967,7 +976,7 @@ struct RecordingView: View {
                 serviceType: serviceType,
                 speaker: nil, // Default nil speaker for new recordings
                 transcript: transcriptModel,
-                notes: latestNotes, // Use latest notes from service
+                notes: latestNotes, // Use captured notes snapshot
                 summary: summaryModel,
                 transcriptionStatus: "complete",
                 summaryStatus: "processing",

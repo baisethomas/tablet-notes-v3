@@ -81,14 +81,6 @@ struct SettingsView: View {
                     // Transcription Settings
                     SettingsSection(title: "Transcription") {
                         VStack(spacing: 0) {
-                            TranscriptionProviderPicker(
-                                settings: settings,
-                                authManager: authManager,
-                                showingSubscriptionPrompt: $showingSubscriptionPrompt
-                            )
-                            
-                            SettingsDivider()
-                            
                             SettingsRow(icon: "globe", title: "Language", subtitle: "Primary language for transcription") {
                                 Picker("", selection: $settings.transcriptionLanguage) {
                                     Text("English (US)").tag("en-US")

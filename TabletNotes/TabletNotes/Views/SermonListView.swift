@@ -624,6 +624,7 @@ struct SermonListView: View {
                                         SermonRowView(sermon: sermon) {
                                             let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                                             impactFeedback.impactOccurred()
+                                            print("[SermonListView] Selecting sermon '\(sermon.title)' with \(sermon.notes.count) notes")
                                             onSermonSelected(sermon)
                                         }
                                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))

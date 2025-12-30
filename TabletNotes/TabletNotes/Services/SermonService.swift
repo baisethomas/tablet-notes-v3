@@ -100,18 +100,27 @@ class SermonService: ObservableObject {
             limitReachedMessage = nil
             
             print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
-            
-            // First, ensure all notes are inserted into the context
-            for note in notes {
-                modelContext.insert(note)
-            }
-            
+
             // Add debugging for notes
             print("[DEBUG] saveSermon: Processing \(notes.count) notes")
             for (index, note) in notes.enumerated() {
-                print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s")
+                print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s, id: \(note.id)")
             }
-            
+
+            // Create fresh Note instances for SwiftData to avoid issues with detached objects
+            // Notes from NoteService are JSON-decoded and may not be properly attached to ModelContext
+            let freshNotes = notes.map { note in
+                Note(
+                    id: note.id,
+                    text: note.text,
+                    timestamp: note.timestamp,
+                    remoteId: note.remoteId,
+                    updatedAt: note.updatedAt,
+                    needsSync: note.needsSync
+                )
+            }
+            print("[DEBUG] saveSermon: Created \(freshNotes.count) fresh Note objects for SwiftData")
+
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
                 existing.title = title
@@ -120,16 +129,31 @@ class SermonService: ObservableObject {
                 existing.serviceType = serviceType
                 existing.speaker = speaker
                 existing.transcript = transcript
-                existing.notes = notes
+                
+                // For existing sermon, handle notes carefully
+                // First, delete all old notes - SwiftData cascade will handle cleanup
+                let oldNotes = existing.notes
+                for note in oldNotes {
+                    modelContext.delete(note)
+                }
+                
+                // Clear the relationship
+                existing.notes.removeAll()
+                
+                // Add fresh notes - insert them and add to the relationship
+                for note in freshNotes {
+                    modelContext.insert(note)
+                    existing.notes.append(note) // SwiftData will set note.sermon automatically
+                }
+                
                 existing.summary = summary
                 existing.transcriptionStatus = transcriptionStatus
                 existing.summaryStatus = summaryStatus
                 existing.isArchived = isArchived
-                // Update userId to current user (in case of user changes)
                 existing.userId = currentUser.id
-                print("[DEBUG] saveSermon: updated existing sermon \(existing.id) with \(notes.count) notes for user \(currentUser.id)")
+                print("[DEBUG] saveSermon: updated existing sermon \(existing.id) with \(existing.notes.count) notes for user \(currentUser.id)")
             } else {
-                // Insert new sermon
+                // For new sermons: Create sermon, insert it, then add notes with explicit relationship
                 let sermon = Sermon(
                     id: sermonID,
                     title: title,
@@ -138,7 +162,7 @@ class SermonService: ObservableObject {
                     serviceType: serviceType,
                     speaker: speaker,
                     transcript: transcript,
-                    notes: notes,
+                    notes: [], // Start empty, add notes after insertion
                     summary: summary,
                     syncStatus: "localOnly",
                     transcriptionStatus: transcriptionStatus,
@@ -146,11 +170,46 @@ class SermonService: ObservableObject {
                     isArchived: isArchived,
                     userId: currentUser.id
                 )
+                
+                // Insert sermon first
                 modelContext.insert(sermon)
-                print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) with \(notes.count) notes for user \(currentUser.id)")
+                
+                // Now add notes with explicit relationship setting
+                for note in freshNotes {
+                    // Set the inverse relationship BEFORE inserting
+                    note.sermon = sermon
+                    modelContext.insert(note)
+                    sermon.notes.append(note)
+                }
+                
+                // Verify relationship is set up correctly
+                print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) with \(sermon.notes.count) notes for user \(currentUser.id)")
+                for (index, note) in sermon.notes.enumerated() {
+                    print("[DEBUG]   Note \(index) ID: \(note.id), text: '\(note.text)', sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
+                }
             }
-            try? modelContext.save()
-            print("[SermonService] Sermon inserted/updated and modelContext saved.")
+            do {
+                try modelContext.save()
+                print("[SermonService] Sermon inserted/updated and modelContext saved.")
+                
+                // IMMEDIATE VERIFICATION: Query the sermon directly from model context
+                let verifyDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+                    sermon.id == sermonID
+                })
+                if let verifiedSermon = try? modelContext.fetch(verifyDescriptor).first {
+                    print("[DEBUG] IMMEDIATE VERIFY: Sermon \(verifiedSermon.id) has \(verifiedSermon.notes.count) notes")
+                    for (index, note) in verifiedSermon.notes.enumerated() {
+                        print("[DEBUG] IMMEDIATE VERIFY Note \(index): '\(note.text)' at \(note.timestamp)s, sermon=\(note.sermon?.id.uuidString ?? "nil")")
+                    }
+                } else {
+                    print("[DEBUG] IMMEDIATE VERIFY: Could not find sermon \(sermonID) after save!")
+                }
+            } catch {
+                print("[SermonService] ERROR: Failed to save modelContext: \(error)")
+            }
+
+            // Refresh the sermons array to ensure UI has latest data
+            fetchSermons()
 
             // Track usage for new sermons
             if isNewSermon {
@@ -215,6 +274,24 @@ class SermonService: ObservableObject {
             if let results = try? modelContext.fetch(fetchDescriptor) {
                 sermons = results
                 print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
+
+                // CRITICAL: Force SwiftData to load the notes relationship by explicitly accessing it
+                // SwiftData relationships are lazy-loaded, so we need to touch each sermon's notes
+                // to ensure they're fetched from the database
+                for sermon in sermons {
+                    // Access notes property to force relationship loading
+                    let notesCount = sermon.notes.count
+                    // Also iterate through notes to fully load them
+                    let _ = Array(sermon.notes)
+                    
+                    print("[DEBUG] Sermon '\(sermon.title)' (ID: \(sermon.id)) has \(notesCount) notes")
+                    if notesCount > 0 {
+                        for (index, note) in sermon.notes.enumerated() {
+                            print("[DEBUG]   Note \(index): '\(note.text)' at \(note.timestamp)s, sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
+                        }
+                    }
+                }
+
                 applyFilters()
             } else {
                 print("[SermonService] fetch failed for user \(currentUser.id).")
@@ -768,6 +845,12 @@ class SermonService: ObservableObject {
                             )
                             sermon.summary = summary
                             sermon.summaryStatus = "complete"
+
+                            // Update sermon title with AI-generated title if available
+                            if let aiTitle = titleText, !aiTitle.isEmpty {
+                                print("[SermonService] 📝 Updating sermon title from '\(sermon.title)' to '\(aiTitle)'")
+                                sermon.title = aiTitle
+                            }
 
                             // Mark for sync
                             sermon.needsSync = true

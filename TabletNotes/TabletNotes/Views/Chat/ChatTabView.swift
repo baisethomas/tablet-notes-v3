@@ -32,7 +32,7 @@ struct ChatTabView: View {
                         messageListView
                     }
                 }
-                .padding(.bottom, 160) // Space for input area + tab bar + extra clearance
+                .padding(.bottom, 145) // Space for input area + tab bar
 
                 // Input area fixed at bottom
                 VStack(spacing: 0) {
@@ -46,7 +46,7 @@ struct ChatTabView: View {
                     )
                 }
                 .background(Color.adaptiveBackground)
-                .padding(.bottom, geometry.safeAreaInsets.bottom + 50) // Tab bar height
+                .padding(.bottom, geometry.safeAreaInsets.bottom + 45) // Tab bar height
             }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)

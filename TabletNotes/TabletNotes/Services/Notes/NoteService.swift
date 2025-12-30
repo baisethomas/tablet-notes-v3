@@ -35,13 +35,19 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     func addNote(text: String, timestamp: TimeInterval) {
         let note = Note(text: text, timestamp: timestamp)
         notes.append(note)
+        print("[NoteService] Added note with id: \(note.id), text: '\(text)', timestamp: \(timestamp). Total notes: \(notes.count)")
         saveNotesToPersistence()
+        print("[NoteService] Saved to UserDefaults with key: \(notesKey)_\(sessionId)")
     }
 
     func updateNote(id: UUID, newText: String) {
         if let idx = notes.firstIndex(where: { $0.id == id }) {
             notes[idx].text = newText
+            print("[NoteService] Updated note with id: \(id), new text: '\(newText)'. Total notes: \(notes.count)")
             saveNotesToPersistence()
+            print("[NoteService] Saved to UserDefaults with key: \(notesKey)_\(sessionId)")
+        } else {
+            print("[NoteService] WARNING: Could not find note with id: \(id) to update")
         }
     }
 
@@ -52,7 +58,9 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     
     func clearSession() {
         let key = "\(notesKey)_\(sessionId)"
+        print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
         userDefaults.removeObject(forKey: key)
         notes.removeAll()
+        print("[NoteService] Session cleared. Notes count now: \(notes.count)")
     }
 }

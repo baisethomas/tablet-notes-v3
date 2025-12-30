@@ -292,9 +292,11 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     timestamp: noteData.timestamp,
                     remoteId: noteData.id
                 )
+                // IMPORTANT: Insert note into ModelContext so SwiftData can track it
+                modelContext.insert(note)
                 sermon.notes.append(note)
             }
-            print("[SyncService] ✅ Notes updated from remote")
+            print("[SyncService] ✅ Notes updated from remote (\(remoteNotes.count) notes)")
         } else if sermon.notes.isEmpty && remoteData.notes?.isEmpty == true {
             print("[SyncService] ℹ️ Both local and remote notes are empty")
         } else if !sermon.notes.isEmpty && (remoteData.notes == nil || remoteData.notes?.isEmpty == true) {
@@ -340,6 +342,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 existingSummary.type = summaryData.type
                 existingSummary.status = summaryData.status
                 existingSummary.remoteId = summaryData.id
+
+                // Update sermon title with AI-generated title from summary
+                if !summaryData.title.isEmpty {
+                    print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
+                    sermon.title = summaryData.title
+                }
+
                 print("[SyncService] ✅ Existing summary updated from remote")
             } else {
                 // Create new summary
@@ -352,6 +361,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     remoteId: summaryData.id
                 )
                 sermon.summary = summary
+
+                // Update sermon title with AI-generated title from summary
+                if !summaryData.title.isEmpty {
+                    print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
+                    sermon.title = summaryData.title
+                }
+
                 print("[SyncService] ✅ New summary created from remote")
             }
         } else if sermon.summary != nil {
@@ -401,8 +417,11 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                         timestamp: noteData.timestamp,
                         remoteId: noteData.id
                     )
+                    // IMPORTANT: Insert note into ModelContext so SwiftData can track it
+                    modelContext.insert(note)
                     sermon.notes.append(note)
                 }
+                print("[SyncService] ✅ \(remoteNotes.count) notes inserted into ModelContext")
             }
 
             if let transcriptData = remoteData.transcript {
@@ -427,6 +446,12 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     remoteId: summaryData.id
                 )
                 sermon.summary = summary
+
+                // Update sermon title with AI-generated title from summary
+                if !summaryData.title.isEmpty {
+                    print("[SyncService] 📝 Setting sermon title to AI-generated title: '\(summaryData.title)'")
+                    sermon.title = summaryData.title
+                }
             }
 
             modelContext.insert(sermon)

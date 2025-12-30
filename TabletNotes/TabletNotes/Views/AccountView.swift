@@ -193,7 +193,7 @@ struct AccountView: View {
                                 
                                 AccountRowView(
                                     icon: "star",
-                                    title: "Rate TabletNotes",
+                                    title: "Rate Tablet Notes",
                                     subtitle: "Share your experience on the App Store"
                                 ) {
                                     // Handle app rating
@@ -205,7 +205,7 @@ struct AccountView: View {
                                 AccountRowView(
                                     icon: "bubble.left.and.bubble.right",
                                     title: "Send Feedback",
-                                    subtitle: "Help us improve TabletNotes"
+                                    subtitle: "Help us improve Tablet Notes"
                                 ) {
                                     // Handle feedback
                                 }
@@ -248,7 +248,7 @@ struct AccountView: View {
                                 AccountRowView(
                                     icon: "building.2",
                                     title: "About Our Company",
-                                    subtitle: "Learn about TabletNotes team"
+                                    subtitle: "Learn about Tablet Notes team"
                                 ) {
                                     showingAbout = true
                                 }
@@ -339,10 +339,10 @@ struct AccountView: View {
             AppAboutView()
         }
         .sheet(isPresented: $showingPrivacyPolicy) {
-            WebView(url: "https://yourapp.com/privacy")
+            PrivacyPolicyView()
         }
         .sheet(isPresented: $showingTerms) {
-            WebView(url: "https://yourapp.com/terms")
+            TermsOfServiceView()
         }
         .sheet(isPresented: $showingSupport) {
             SupportView()
@@ -550,7 +550,7 @@ struct AppAboutView: View {
                         .cornerRadius(16)
                     
                     VStack(spacing: 8) {
-                        Text("TabletNotes")
+                        Text("Tablet Notes")
                             .font(.title)
                             .fontWeight(.bold)
                         
@@ -560,7 +560,7 @@ struct AppAboutView: View {
                     }
                     
                     VStack(spacing: 16) {
-                        Text("TabletNotes is built by a team passionate about helping churches and organizations capture and share their messages more effectively.")
+                        Text("Tablet Notes is built by a team passionate about helping churches and organizations capture and share their messages more effectively.")
                             .font(.body)
                             .multilineTextAlignment(.center)
                             .foregroundColor(.secondary)
@@ -718,21 +718,128 @@ struct FAQItem: View {
     }
 }
 
-// MARK: - Web View (placeholder)
-struct WebView: View {
-    let url: String
+// MARK: - Terms of Service View
+struct TermsOfServiceView: View {
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationView {
-            VStack {
-                Text("Web content would be loaded here")
-                    .foregroundColor(.secondary)
-                Text(url)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Terms of Service")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .padding(.bottom, 8)
+                    
+                    Group {
+                        Text("Effective Date: July 17, 2025")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Text("Last Updated: December 21, 2025")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Introduction
+                    SectionView(
+                        title: "Introduction",
+                        content: "Welcome to Tablet Notes. These Terms of Service (\"Terms\") govern your use of our mobile application and related services (\"Service\"). By accessing or using Tablet Notes, you agree to be bound by these Terms. If you do not agree, please do not use the Service."
+                    )
+                    
+                    // Acceptance of Terms
+                    SectionView(
+                        title: "Acceptance of Terms",
+                        content: "By creating an account or using Tablet Notes, you confirm that you have read, understood, and agree to these Terms and our Privacy Policy."
+                    )
+                    
+                    // Changes to Terms
+                    SectionView(
+                        title: "Changes to Terms",
+                        content: "We may update these Terms from time to time. We will notify you of significant changes by email or app notification. Continued use of the Service after changes means you accept the new Terms."
+                    )
+                    
+                    // User Accounts
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("User Accounts")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "You must provide accurate and complete information when creating an account.")
+                            BulletPoint(text: "You are responsible for maintaining the confidentiality of your account credentials.")
+                            BulletPoint(text: "You are responsible for all activities that occur under your account.")
+                            BulletPoint(text: "Notify us immediately of any unauthorized use of your account.")
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Acceptable Use
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Acceptable Use")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "Do not use the Service for unlawful, harmful, or abusive purposes.")
+                            BulletPoint(text: "Do not attempt to gain unauthorized access to the Service or its systems.")
+                            BulletPoint(text: "Do not upload or share content that infringes on others' rights or is offensive.")
+                            BulletPoint(text: "Do not interfere with or disrupt the Service or servers.")
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Intellectual Property
+                    SectionView(
+                        title: "Intellectual Property",
+                        content: "All content, trademarks, and intellectual property on Tablet Notes are owned by us or our licensors. You may not use, copy, or distribute any content from the Service without our permission."
+                    )
+                    
+                    // Disclaimers
+                    SectionView(
+                        title: "Disclaimers",
+                        content: "The Service is provided \"as is\" and \"as available\" without warranties of any kind. We do not guarantee that the Service will be uninterrupted, error-free, or secure."
+                    )
+                    
+                    // Limitation of Liability
+                    SectionView(
+                        title: "Limitation of Liability",
+                        content: "To the fullest extent permitted by law, Tablet Notes and its affiliates are not liable for any indirect, incidental, special, or consequential damages arising from your use of the Service."
+                    )
+                    
+                    // Termination
+                    SectionView(
+                        title: "Termination",
+                        content: "We may suspend or terminate your access to the Service at any time, with or without notice, for any reason, including violation of these Terms."
+                    )
+                    
+                    // Governing Law
+                    SectionView(
+                        title: "Governing Law",
+                        content: "These Terms are governed by the laws of the United States and the State of [Your State], without regard to conflict of law principles."
+                    )
+                    
+                    // Contact Information
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Contact Information")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("If you have questions about these Terms, please contact us:")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "Email: support@tabletnotes.io")
+                            BulletPoint(text: "Website: https://www.tabletnotes.io/terms")
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+                .padding(20)
             }
-            .navigationTitle("Web View")
+            .navigationTitle("Terms of Service")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -742,6 +849,373 @@ struct WebView: View {
                     .fontWeight(.semibold)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Privacy Policy View
+struct PrivacyPolicyView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Tablet Notes Privacy Policy")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .padding(.bottom, 8)
+                    
+                    Group {
+                        Text("Effective Date: July 17, 2025")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Text("Last Updated: December 21, 2025")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Introduction
+                    SectionView(
+                        title: "Introduction",
+                        content: "Tablet Notes (\"we,\" \"our,\" or \"us\") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and related services."
+                    )
+                    
+                    // Information We Collect
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Information We Collect")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Personal Information You Provide",
+                            bullets: [
+                                "Account Information: Email address, display name (optional)",
+                                "Audio Recordings: Sermon recordings and related notes you create",
+                                "User-Generated Content: Notes, summaries, and annotations you add to recordings"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Automatically Collected Information",
+                            bullets: [
+                                "Usage Data: App usage patterns, feature usage, and performance metrics",
+                                "Device Information: Device type, operating system version, app version",
+                                "Technical Data: Crash reports, error logs (anonymized)"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Information from Third-Party Services",
+                            bullets: [
+                                "Transcription Data: Audio transcriptions processed by AssemblyAI",
+                                "AI-Generated Content: Summaries generated by OpenAI services",
+                                "Biblical References: Scripture lookups via Bible API"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // How We Use Your Information
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("How We Use Your Information")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Primary Uses",
+                            bullets: [
+                                "Core Functionality: Recording, transcribing, and summarizing audio content",
+                                "Cloud Storage: Syncing your data across devices securely",
+                                "User Experience: Personalizing features and improving app performance",
+                                "Support: Providing customer service and technical support"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Secondary Uses",
+                            bullets: [
+                                "Analytics: Understanding app usage to improve features (aggregated, anonymized data)",
+                                "Communication: Sending important updates about your account or the service"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Data Processing and Storage
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Data Processing and Storage")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Cloud Storage",
+                            bullets: [
+                                "Audio files are encrypted and stored securely using Supabase",
+                                "Transcription processing occurs on secure AssemblyAI servers",
+                                "AI summarization uses OpenAI's secure infrastructure",
+                                "All data transmission uses industry-standard encryption (TLS 1.2+)"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Data Retention",
+                            bullets: [
+                                "Active Accounts: Data retained while your account is active",
+                                "Deleted Content: Permanently deleted within 30 days of user deletion",
+                                "Account Deletion: All user data deleted within 90 days of account closure"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Data Location",
+                            bullets: [
+                                "Primary storage: United States (Supabase infrastructure)",
+                                "Processing: AssemblyAI (US), OpenAI (US), Bible API (US)",
+                                "No international transfers outside approved service providers"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Third-Party Services
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Third-Party Services")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Service Providers We Use",
+                            bullets: [
+                                "Supabase: Database and file storage",
+                                "AssemblyAI: Audio transcription services",
+                                "OpenAI: AI-powered summarization",
+                                "Scripture API: Biblical reference lookups",
+                                "Netlify: Backend API hosting"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Data Sharing",
+                            bullets: [
+                                "We do NOT sell your personal information",
+                                "We do NOT share content with third parties except as necessary for core functionality",
+                                "Service providers are bound by strict data protection agreements"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Your Rights and Choices
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Your Rights and Choices")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Data Control",
+                            bullets: [
+                                "Access: View all your stored data through the app",
+                                "Correction: Edit or update your information at any time",
+                                "Deletion: Delete specific recordings or your entire account",
+                                "Export: Download your data in a standard format"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Privacy Settings",
+                            bullets: [
+                                "Recording Permissions: Control microphone access",
+                                "Sync Settings: Choose what data syncs to the cloud",
+                                "Notification Preferences: Manage communication settings"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Account Management",
+                            bullets: [
+                                "Subscription Control: Manage your subscription tier",
+                                "Data Portability: Export your content before canceling",
+                                "Account Deletion: Permanently delete your account and all data"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Security Measures
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Security Measures")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        SubsectionView(
+                            subtitle: "Technical Safeguards",
+                            bullets: [
+                                "Encryption: All data encrypted in transit and at rest",
+                                "Authentication: Secure login with industry-standard protocols",
+                                "Access Controls: Strict limits on who can access your data",
+                                "Regular Audits: Ongoing security assessments and updates"
+                            ]
+                        )
+                        
+                        SubsectionView(
+                            subtitle: "Your Security",
+                            bullets: [
+                                "Use strong, unique passwords",
+                                "Keep your app updated to the latest version",
+                                "Report any security concerns immediately"
+                            ]
+                        )
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Children's Privacy
+                    SectionView(
+                        title: "Children's Privacy",
+                        content: "Tablet Notes is not intended for children under 13. We do not knowingly collect personal information from children under 13. If you believe we have collected information from a child under 13, please contact us immediately."
+                    )
+                    
+                    // Changes to This Policy
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Changes to This Policy")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("We may update this Privacy Policy to reflect changes in our practices or legal requirements. We will:")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "Notify you of significant changes via email or app notification")
+                            BulletPoint(text: "Post the updated policy with a new effective date")
+                            BulletPoint(text: "Maintain previous versions for your reference")
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // Contact Information
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Contact Information")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("If you have questions or concerns about this Privacy Policy:")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "Email: privacy@tabletnotes.io")
+                            BulletPoint(text: "Website: https://www.tabletnotes.io/privacy")
+                        }
+                        
+                        Text("For data protection inquiries or to exercise your privacy rights, please use the contact information above.")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                            .padding(.top, 4)
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // California Privacy Rights (CCPA)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("California Privacy Rights (CCPA)")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("If you are a California resident, you have additional rights:")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            BulletPoint(text: "Right to know what personal information is collected")
+                            BulletPoint(text: "Right to delete personal information")
+                            BulletPoint(text: "Right to opt-out of sale (we don't sell your information)")
+                            BulletPoint(text: "Right to non-discrimination for exercising your rights")
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    
+                    // International Users
+                    SectionView(
+                        title: "International Users",
+                        content: "If you are located outside the United States, please note that your information will be transferred to and processed in the United States, where our servers are located and our service providers operate."
+                    )
+                    
+                    Divider()
+                        .padding(.vertical, 8)
+                    
+                    Text("This Privacy Policy is designed to comply with applicable privacy laws including CCPA, GDPR principles, and App Store requirements. By using Tablet Notes, you agree to the collection and use of information in accordance with this policy.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .italic()
+                }
+                .padding(20)
+            }
+            .navigationTitle("Privacy Policy")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Privacy Policy Components
+struct SectionView: View {
+    let title: String
+    let content: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Text(content)
+                .font(.body)
+                .foregroundColor(.primary)
+        }
+        .padding(.bottom, 8)
+    }
+}
+
+struct SubsectionView: View {
+    let subtitle: String
+    let bullets: [String]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(subtitle)
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(bullets, id: \.self) { bullet in
+                    BulletPoint(text: bullet)
+                }
+            }
+        }
+    }
+}
+
+struct BulletPoint: View {
+    let text: String
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("•")
+                .font(.body)
+                .foregroundColor(.primary)
+            
+            Text(text)
+                .font(.body)
+                .foregroundColor(.primary)
         }
     }
 }
