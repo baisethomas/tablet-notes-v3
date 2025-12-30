@@ -36,7 +36,14 @@ const RATE_LIMITS = {
     maxRequests: 30, // 30 requests per minute per user
     keyPrefix: 'rate_limit:bible:'
   },
-  
+
+  // Chat AI requests - per user per hour
+  chat: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    maxRequests: 100, // 100 chat messages per hour per user (generous but prevents abuse)
+    keyPrefix: 'rate_limit:chat:'
+  },
+
   // Per-IP rate limiting (additional protection)
   ip: {
     windowMs: 60 * 1000, // 1 minute

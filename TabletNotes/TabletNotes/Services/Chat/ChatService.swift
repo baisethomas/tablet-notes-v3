@@ -36,6 +36,7 @@ class ChatService: ObservableObject, ChatServiceProtocol {
     // MARK: - Errors
     enum ChatError: LocalizedError {
         case limitReached(remaining: Int)
+        case rateLimitExceeded(retryAfter: Int)
         case invalidMessage
         case noContext
         case auth(String)
@@ -47,6 +48,13 @@ class ChatService: ObservableObject, ChatServiceProtocol {
             switch self {
             case .limitReached(let remaining):
                 return "Question limit reached. You have \(remaining) questions remaining. Upgrade to Premium for unlimited questions."
+            case .rateLimitExceeded(let retryAfter):
+                let minutes = retryAfter / 60
+                if minutes > 0 {
+                    return "Too many requests. Please wait \(minutes) minute\(minutes == 1 ? "" : "s") before trying again."
+                } else {
+                    return "Too many requests. Please wait a moment before trying again."
+                }
             case .invalidMessage:
                 return "Please enter a valid question"
             case .noContext:
@@ -87,8 +95,11 @@ class ChatService: ObservableObject, ChatServiceProtocol {
     }
 
     // MARK: - Usage Limits
+    // Note: Backend enforces rate limiting of 100 requests/hour per user to prevent API abuse
+    // This is separate from the tier-based question limits below
     func canSendMessage(user: User, sermon: Sermon) -> Bool {
-        // Premium users have unlimited questions
+        // Premium users have unlimited questions per sermon
+        // (but still subject to 100 req/hour rate limit on backend)
         if user.isPaidUser {
             return true
         }
@@ -99,7 +110,7 @@ class ChatService: ObservableObject, ChatServiceProtocol {
 
     func remainingQuestions(user: User, sermon: Sermon) -> Int? {
         if user.isPaidUser {
-            return nil // unlimited
+            return nil // unlimited per sermon (100/hour rate limit applies)
         }
         return max(0, 5 - sermon.userQuestionCount)
     }
@@ -212,6 +223,14 @@ class ChatService: ObservableObject, ChatServiceProtocol {
             print("[ChatService] Response status: \(httpResponse.statusCode)")
 
             guard httpResponse.statusCode == 200 else {
+                // Handle rate limiting
+                if httpResponse.statusCode == 429 {
+                    if let retryAfterHeader = httpResponse.value(forHTTPHeaderField: "Retry-After"),
+                       let retryAfter = Int(retryAfterHeader) {
+                        throw ChatError.rateLimitExceeded(retryAfter: retryAfter)
+                    }
+                    throw ChatError.rateLimitExceeded(retryAfter: 60) // Default to 1 minute
+                }
                 if httpResponse.statusCode >= 500 {
                     throw ChatError.server(httpResponse.statusCode)
                 }
