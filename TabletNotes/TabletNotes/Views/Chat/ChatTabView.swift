@@ -22,30 +22,34 @@ struct ChatTabView: View {
     @State private var cancellables = Set<AnyCancellable>()
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Main content area
-            VStack(spacing: 0) {
-                if messages.isEmpty {
-                    emptyStateView
-                } else {
-                    messageListView
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                // Main content area
+                VStack(spacing: 0) {
+                    if messages.isEmpty {
+                        emptyStateView
+                    } else {
+                        messageListView
+                    }
                 }
-            }
-            .padding(.bottom, 140) // Space for input area + tab bar
+                .padding(.bottom, 160) // Space for input area + tab bar + extra clearance
 
-            // Input area fixed at bottom
-            VStack(spacing: 0) {
-                Divider()
+                // Input area fixed at bottom
+                VStack(spacing: 0) {
+                    Divider()
 
-                ChatInputView(
-                    text: $messageText,
-                    remainingQuestions: remainingQuestions,
-                    isLoading: isLoading,
-                    onSend: sendMessage
-                )
+                    ChatInputView(
+                        text: $messageText,
+                        remainingQuestions: remainingQuestions,
+                        isLoading: isLoading,
+                        onSend: sendMessage
+                    )
+                }
+                .background(Color.adaptiveBackground)
+                .padding(.bottom, geometry.safeAreaInsets.bottom + 50) // Tab bar height
             }
-            .background(Color.adaptiveBackground)
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
             setupSubscriptions()
             chatService.loadMessages(for: sermon)
