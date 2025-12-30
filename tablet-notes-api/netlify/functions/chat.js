@@ -94,7 +94,7 @@ exports.handler = withLogging('chat', async (event, context) => {
       // Use circuit breaker for OpenAI call
       const response = await openAIBreaker.execute(async () => {
         return await openai.chat.completions.create({
-          model: 'gpt-4',
+          model: 'gpt-4o-mini', // Using gpt-4o-mini for cost efficiency and JSON support
           messages: [
             {
               role: 'system',
@@ -167,7 +167,7 @@ exports.handler = withLogging('chat', async (event, context) => {
     // Call OpenAI with circuit breaker
     const response = await openAIBreaker.execute(async () => {
       return await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini', // Using gpt-4o-mini for cost efficiency while maintaining quality
         messages,
         temperature: 0.7,
         max_tokens: 1000,
