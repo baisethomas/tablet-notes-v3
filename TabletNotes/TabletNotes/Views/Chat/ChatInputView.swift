@@ -48,7 +48,7 @@ struct ChatInputView: View {
                         .font(.system(size: 14))
                         .foregroundColor(.adaptiveAccent)
                     
-                    TextField("Ask a question or @mention people", text: $text, axis: .vertical)
+                    TextField("Ask a question", text: $text, axis: .vertical)
                         .textFieldStyle(.plain)
                         .lineLimit(1...4)
                         .focused($isFocused)

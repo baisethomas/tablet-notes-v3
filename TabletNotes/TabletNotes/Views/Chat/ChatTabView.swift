@@ -42,6 +42,7 @@ struct ChatTabView: View {
                         isLoading: isLoading,
                         onSend: sendMessage
                     )
+                    .padding(.top, 12)
                 }
                 .background(Color.adaptiveBackground)
                 .padding(.bottom, 45) // Tab bar height
