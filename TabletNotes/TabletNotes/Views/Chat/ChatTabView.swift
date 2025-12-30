@@ -51,14 +51,18 @@ struct ChatTabView: View {
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
+            print("[ChatTabView] onAppear - messages.count: \(messages.count), suggestedQuestions.count: \(suggestedQuestions.count)")
             setupSubscriptions()
             chatService.loadMessages(for: sermon)
 
             // Generate suggestions if we don't have any yet
             if suggestedQuestions.isEmpty {
+                print("[ChatTabView] Triggering question generation")
                 Task {
                     try? await chatService.generateSuggestedQuestions(for: sermon)
                 }
+            } else {
+                print("[ChatTabView] Already have \(suggestedQuestions.count) questions, skipping generation")
             }
         }
     }
@@ -97,6 +101,9 @@ struct ChatTabView: View {
                             .foregroundColor(.adaptiveSecondaryText)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
+                            .onAppear {
+                                print("[ChatTabView] Suggested questions section appearing with \(suggestedQuestions.count) questions")
+                            }
 
                         VStack(spacing: 12) {
                             ForEach(suggestedQuestions, id: \.self) { question in
@@ -184,7 +191,9 @@ struct ChatTabView: View {
         chatService.suggestedQuestionsPublisher
             .receive(on: DispatchQueue.main)
             .sink { questions in
+                print("[ChatTabView] Received \(questions.count) suggested questions from publisher")
                 suggestedQuestions = questions
+                print("[ChatTabView] suggestedQuestions state updated, isEmpty: \(suggestedQuestions.isEmpty)")
             }
             .store(in: &cancellables)
     }
