@@ -287,6 +287,7 @@ class ChatService: ObservableObject, ChatServiceProtocol {
         print("[ChatService] Generating suggested questions")
 
         guard sermon.transcript != nil || sermon.summary != nil else {
+            print("[ChatService] No transcript or summary available for suggestions")
             return
         }
 
@@ -319,6 +320,7 @@ class ChatService: ObservableObject, ChatServiceProtocol {
 
             guard let url = URL(string: endpoint),
                   let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+                print("[ChatService] Failed to create request for suggested questions")
                 return
             }
 
@@ -329,20 +331,40 @@ class ChatService: ObservableObject, ChatServiceProtocol {
             request.httpBody = httpBody
             request.timeoutInterval = 30.0
 
+            print("[ChatService] Sending request to generate suggested questions...")
+
             let (data, response) = try await URLSession.shared.data(for: request)
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[ChatService] Invalid response from suggested questions endpoint")
                 return
             }
 
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let success = json["success"] as? Bool,
+            print("[ChatService] Suggested questions response status: \(httpResponse.statusCode)")
+
+            guard httpResponse.statusCode == 200 else {
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("[ChatService] Suggested questions error response: \(responseString)")
+                }
+                return
+            }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("[ChatService] Failed to parse JSON response")
+                return
+            }
+
+            print("[ChatService] Suggested questions JSON: \(json)")
+
+            guard let success = json["success"] as? Bool,
                   success,
                   let dataDict = json["data"] as? [String: Any],
                   let questions = dataDict["questions"] as? [String] else {
+                print("[ChatService] Invalid response structure for suggested questions")
                 return
             }
+
+            print("[ChatService] Successfully generated \(questions.count) suggested questions")
 
             DispatchQueue.main.async {
                 self.suggestedQuestionsSubject.send(questions)

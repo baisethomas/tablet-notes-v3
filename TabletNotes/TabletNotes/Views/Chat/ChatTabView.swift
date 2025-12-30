@@ -54,8 +54,8 @@ struct ChatTabView: View {
             setupSubscriptions()
             chatService.loadMessages(for: sermon)
 
-            // Generate suggestions if first time
-            if messages.isEmpty {
+            // Generate suggestions if we don't have any yet
+            if suggestedQuestions.isEmpty {
                 Task {
                     try? await chatService.generateSuggestedQuestions(for: sermon)
                 }
