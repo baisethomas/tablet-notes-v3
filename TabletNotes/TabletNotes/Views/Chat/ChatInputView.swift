@@ -43,31 +43,41 @@ struct ChatInputView: View {
 
             // Input field
             HStack(spacing: 12) {
-                TextField("Ask a question about this sermon...", text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.adaptiveInputBackground)
-                    .cornerRadius(20)
-                    .lineLimit(1...4)
-                    .focused($isFocused)
-                    .disabled(isLoading)
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14))
+                        .foregroundColor(.adaptiveAccent)
+                    
+                    TextField("Ask a question or @mention people", text: $text, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...4)
+                        .focused($isFocused)
+                        .disabled(isLoading)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.adaptiveInputBackground)
+                .cornerRadius(20)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.adaptiveBorder.opacity(0.3), lineWidth: 1)
+                )
 
                 Button(action: onSend) {
                     ZStack {
                         Circle()
                             .fill(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading ?
-                                  Color.gray.opacity(0.3) :
-                                  Color.adaptiveAccent)
+                                  Color.adaptiveInputBackground :
+                                  Color.adaptiveInputBackground)
                             .frame(width: 44, height: 44)
 
                         if isLoading {
                             ProgressView()
-                                .tint(.white)
+                                .tint(.adaptiveSecondaryText)
                         } else {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(.adaptiveSecondaryText)
                         }
                     }
                 }

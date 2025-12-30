@@ -23,21 +23,19 @@ struct ChatTabView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
                 // Main content area
-                VStack(spacing: 0) {
-                    if messages.isEmpty {
-                        emptyStateView
-                    } else {
-                        messageListView
-                    }
+                if messages.isEmpty {
+                    emptyStateView
+                } else {
+                    messageListView
                 }
-                .padding(.bottom, 145) // Space for input area + tab bar
-
-                // Input area fixed at bottom
+            }
+            .background(Color.adaptiveBackground)
+            .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 0) {
                     Divider()
-
+                    
                     ChatInputView(
                         text: $messageText,
                         remainingQuestions: remainingQuestions,
@@ -46,10 +44,10 @@ struct ChatTabView: View {
                     )
                 }
                 .background(Color.adaptiveBackground)
-                .padding(.bottom, geometry.safeAreaInsets.bottom + 45) // Tab bar height
+                .padding(.bottom, 45) // Tab bar height
             }
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .background(Color.adaptiveBackground)
         .onAppear {
             print("[ChatTabView] onAppear - messages.count: \(messages.count), suggestedQuestions.count: \(suggestedQuestions.count)")
             setupSubscriptions()
@@ -70,64 +68,59 @@ struct ChatTabView: View {
     // MARK: - Empty State
     private var emptyStateView: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            VStack(spacing: 0) {
                 Spacer()
                     .frame(height: 60)
 
-                VStack(spacing: 16) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.adaptiveAccent)
+                VStack(spacing: 8) {
+                    Text("Ask Questions About This Sermon")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.adaptivePrimaryText)
+                        .multilineTextAlignment(.center)
 
-                    VStack(spacing: 8) {
-                        Text("Ask Questions About This Sermon")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.adaptivePrimaryText)
-
-                        Text("Get insights from AI powered by the sermon's transcript and summary")
-                            .font(.subheadline)
-                            .foregroundColor(.adaptiveSecondaryText)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-                    }
+                    Text("Get answers from AI Chat")
+                        .font(.subheadline)
+                        .foregroundColor(.adaptiveSecondaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
                 }
+                .padding(.top, 24)
+                .padding(.bottom, 32)
 
                 if !suggestedQuestions.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Suggested Questions")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.adaptiveSecondaryText)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 8)
-                            .onAppear {
-                                print("[ChatTabView] Suggested questions section appearing with \(suggestedQuestions.count) questions")
-                            }
-
-                        VStack(spacing: 12) {
-                            ForEach(suggestedQuestions, id: \.self) { question in
-                                Button(action: {
-                                    messageText = question
-                                }) {
-                                    HStack {
-                                        Text(question)
-                                            .font(.subheadline)
-                                            .foregroundColor(.adaptivePrimaryText)
-                                            .multilineTextAlignment(.leading)
-                                        Spacer()
-                                        Image(systemName: "arrow.up.circle.fill")
-                                            .foregroundColor(.adaptiveAccent)
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(Color.adaptiveCardBackground)
-                                    .cornerRadius(12)
+                    VStack(spacing: 12) {
+                        ForEach(suggestedQuestions, id: \.self) { question in
+                            Button(action: {
+                                messageText = question
+                            }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.adaptiveAccent)
+                                    
+                                    Text(question)
+                                        .font(.subheadline)
+                                        .foregroundColor(.adaptivePrimaryText)
+                                        .multilineTextAlignment(.leading)
+                                    
+                                    Spacer()
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(Color.adaptiveInputBackground)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.adaptiveBorder.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 16)
+                    }
+                    .padding(.horizontal, 16)
+                    .onAppear {
+                        print("[ChatTabView] Suggested questions section appearing with \(suggestedQuestions.count) questions")
                     }
                 }
 
@@ -141,22 +134,45 @@ struct ChatTabView: View {
     // MARK: - Message List
     private var messageListView: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    ForEach(messages) { message in
-                        MessageBubbleView(message: message)
-                            .id(message.id)
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        ForEach(messages) { message in
+                            MessageBubbleView(message: message)
+                                .id(message.id)
+                        }
                     }
+                    .padding(.vertical, 16)
+                    .padding(.bottom, 80) // Padding to prevent content behind input
                 }
-                .padding(.vertical, 16)
+                .onAppear {
+                    scrollProxy = proxy
+                    scrollToBottom()
+                }
+                .onChange(of: messages.count) {
+                    scrollToBottom()
+                }
+                
+                // Fully opaque gradient fade effect at bottom
+                VStack {
+                    Spacer()
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color.adaptiveBackground.opacity(0), location: 0.0),
+                            .init(color: Color.adaptiveBackground.opacity(0.4), location: 0.4),
+                            .init(color: Color.adaptiveBackground.opacity(0.8), location: 0.7),
+                            .init(color: Color.adaptiveBackground, location: 0.85),
+                            .init(color: Color.adaptiveBackground, location: 1.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 100)
+                    .allowsHitTesting(false)
+                }
             }
-            .onAppear {
-                scrollProxy = proxy
-                scrollToBottom()
-            }
-            .onChange(of: messages.count) {
-                scrollToBottom()
-            }
+            .background(Color.adaptiveBackground)
+            .clipped()
         }
     }
 
