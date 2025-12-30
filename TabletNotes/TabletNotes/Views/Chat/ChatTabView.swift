@@ -143,43 +143,6 @@ struct ChatTabView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    // Show suggested questions at the top
-                    if !suggestedQuestions.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Suggested Questions")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.adaptiveSecondaryText)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 8)
-
-                            VStack(spacing: 12) {
-                                ForEach(suggestedQuestions, id: \.self) { question in
-                                    Button(action: {
-                                        messageText = question
-                                    }) {
-                                        HStack {
-                                            Text(question)
-                                                .font(.subheadline)
-                                                .foregroundColor(.adaptivePrimaryText)
-                                                .multilineTextAlignment(.leading)
-                                            Spacer()
-                                            Image(systemName: "arrow.up.circle.fill")
-                                                .foregroundColor(.adaptiveAccent)
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 12)
-                                        .background(Color.adaptiveCardBackground)
-                                        .cornerRadius(12)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                        .padding(.bottom, 16)
-                    }
-
                     ForEach(messages) { message in
                         MessageBubbleView(message: message)
                             .id(message.id)
