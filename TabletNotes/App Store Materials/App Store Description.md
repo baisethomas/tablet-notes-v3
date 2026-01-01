@@ -1,7 +1,7 @@
-# TabletNotes - App Store Listing
+# Tablet Notes - App Store Listing
 
 ## App Name
-TabletNotes
+Tablet Notes
 
 ## Subtitle (30 characters max)
 Record, transcribe & study sermons
@@ -16,9 +16,9 @@ Transform your sermon experience with AI-powered recording, transcription, and i
 
 ### Full Description
 
-**Revolutionize Your Spiritual Learning with TabletNotes**
+**Revolutionize Your Spiritual Learning with Tablet Notes**
 
-Never miss a moment of inspiration again. TabletNotes is the ultimate companion for recording, transcribing, and studying sermons with the power of artificial intelligence.
+Never miss a moment of inspiration again. Tablet Notes is the ultimate companion for recording, transcribing, and studying sermons with the power of artificial intelligence.
 
 **🎙️ INTELLIGENT RECORDING**
 • High-quality audio recording optimized for voices
@@ -80,12 +80,12 @@ Never miss a moment of inspiration again. TabletNotes is the ultimate companion 
 3. Let AI handle transcription and summarization
 4. Organize and study your growing library
 
-Transform how you engage with spiritual content. Download TabletNotes today and never miss another profound moment from your faith journey.
+Transform how you engage with spiritual content. Download Tablet Notes today and never miss another profound moment from your faith journey.
 
 ---
 
 **Subscription Information:**
-TabletNotes offers a free tier with basic features and premium subscriptions for advanced functionality including unlimited recordings, AI features, and cloud storage.
+Tablet Notes offers a free tier with basic features and premium subscriptions for advanced functionality including unlimited recordings, AI features, and cloud storage.
 
 **Support:**
 Need help? Contact us at support@tabletnotes.io or visit tabletnotes.io/support
@@ -93,7 +93,7 @@ Need help? Contact us at support@tabletnotes.io or visit tabletnotes.io/support
 ## What's New (Latest Version)
 
 **New in Version 1.0:**
-🎉 Initial release of TabletNotes
+🎉 Initial release of Tablet Notes
 • Complete recording and transcription system
 • AI-powered sermon summarization
 • Cloud sync with secure storage
@@ -172,7 +172,7 @@ We're excited to help you transform your spiritual learning experience!
 ## Beta Testing Information
 
 **TestFlight Description:**
-Help us perfect TabletNotes before the official launch! As a beta tester, you'll get early access to new features and the opportunity to shape the app's development.
+Help us perfect Tablet Notes before the official launch! As a beta tester, you'll get early access to new features and the opportunity to shape the app's development.
 
 **What to Test:**
 • Recording quality in different environments

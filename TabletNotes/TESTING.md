@@ -1,6 +1,6 @@
-# TabletNotes Testing Guide
+# Tablet Notes Testing Guide
 
-This document outlines the testing strategy and implementation for the TabletNotes iOS application.
+This document outlines the testing strategy and implementation for the Tablet Notes iOS application.
 
 ## Testing Overview
 

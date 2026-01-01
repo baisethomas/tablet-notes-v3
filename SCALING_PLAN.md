@@ -1,4 +1,4 @@
-# TabletNotes Scaling Plan - Launch Week & Beyond
+# Tablet Notes Scaling Plan - Launch Week & Beyond
 
 ## ✅ Quick Fixes Implemented (Launch Week)
 

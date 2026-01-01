@@ -36,7 +36,7 @@ Tablet Notes is an iOS application that transforms how you engage with sermons. 
 
 ## Architecture
 
-TabletNotes follows a **local-first architecture** with cloud sync:
+Tablet Notes follows a **local-first architecture** with cloud sync:
 
 - **MVVM Pattern** - Clear separation between views and business logic
 - **Protocol-Based Services** - Testable, swappable service layer

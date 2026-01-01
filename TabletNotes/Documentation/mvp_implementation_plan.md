@@ -1,4 +1,4 @@
-# TabletNotes MVP Implementation Plan
+# Tablet Notes MVP Implementation Plan
 
 ## Overview
 

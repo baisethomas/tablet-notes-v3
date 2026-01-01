@@ -1,4 +1,4 @@
-# Gaps Analysis for TabletNotes App
+# Gaps Analysis for Tablet Notes App
 
 ## PRD Gaps and Missing Elements
 

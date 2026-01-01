@@ -1,4 +1,4 @@
-# Enhanced Architecture for TabletNotes App
+# Enhanced Architecture for Tablet Notes App
 
 ## Revised Architecture Overview
 

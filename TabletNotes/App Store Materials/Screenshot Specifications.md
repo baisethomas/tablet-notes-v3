@@ -1,6 +1,6 @@
-# TabletNotes App Store Screenshots Specification
+# Tablet Notes App Store Screenshots Specification
 
-This document outlines the requirements and specifications for creating compelling App Store screenshots for TabletNotes.
+This document outlines the requirements and specifications for creating compelling App Store screenshots for Tablet Notes.
 
 ## Technical Requirements
 

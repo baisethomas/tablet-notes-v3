@@ -1,4 +1,4 @@
-# TabletNotes App Architecture
+# Tablet Notes App Architecture
 
 ## File Structure
 

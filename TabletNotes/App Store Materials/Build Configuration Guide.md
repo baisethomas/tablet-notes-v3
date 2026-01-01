@@ -1,6 +1,6 @@
-# TabletNotes Build Configuration Guide
+# Tablet Notes Build Configuration Guide
 
-This guide outlines the proper build settings and configuration for distributing TabletNotes via TestFlight and the App Store.
+This guide outlines the proper build settings and configuration for distributing Tablet Notes via TestFlight and the App Store.
 
 ## Current Build Settings
 

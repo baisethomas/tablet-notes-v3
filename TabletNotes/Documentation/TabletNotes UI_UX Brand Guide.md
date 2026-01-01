@@ -1,6 +1,6 @@
-# TabletNotes UI/UX Brand Guide
+# Tablet Notes UI/UX Brand Guide
 
-![TabletNotes Logo](https://placeholder.com/logo)
+![Tablet Notes Logo](https://placeholder.com/logo)
 
 ## Table of Contents
 1. [Brand Foundation](#brand-foundation)

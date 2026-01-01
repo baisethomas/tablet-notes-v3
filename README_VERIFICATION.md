@@ -1,6 +1,6 @@
 # README FAQ & Troubleshooting Verification
 
-This document verifies claims made in the README against actual codebase implementation.
+This document verifies claims made in the Tablet Notes README against actual codebase implementation.
 
 ## ✅ VERIFIED - Accurate Claims
 
