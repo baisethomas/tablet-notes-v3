@@ -272,7 +272,7 @@ See `Documentation/` for complete schema definitions.
 ## Security
 
 ### Authentication & Authorization
-- **Token Storage** - Supabase auth tokens stored in iOS Keychain (secure enclave when available)
+- **Token Storage** - Supabase auth tokens managed by Supabase Swift SDK (uses iOS Keychain with secure enclave when available)
 - **Session Management** - Automatic token refresh with exponential backoff retry
 - **Row Level Security (RLS)** - All Supabase tables scoped by `user_id`
 - **API Authentication** - Bearer token required for all backend endpoints
@@ -300,16 +300,16 @@ See `Documentation/` for complete schema definitions.
 - **Max File Size** - No hard limit (tested up to 3 hours/~500MB)
 - **Upload Strategy** - Chunked multipart uploads for files >10MB
 - **Memory Management** - Audio streaming during playback (not loaded entirely in memory)
-- **Storage Optimization** - M4A format with AAC codec (~1MB per minute)
+- **Storage Optimization** - M4A format with high-quality AAC codec (approximately 1MB per minute)
 
 ### Transcription Performance
-- **Live Transcription** - Near real-time with AssemblyAI Live API (<2s latency)
-- **Async Transcription** - ~0.3x speed (30min sermon = ~10min processing)
+- **Live Transcription** - Near real-time with AssemblyAI Live API (typically <2s latency)
+- **Async Transcription** - Approximately 0.3x speed (estimated 10min processing for 30min sermon)
 - **Polling Interval** - 5 seconds with 5-minute timeout
 - **Retry Logic** - Exponential backoff (2s, 4s, 8s, 16s) for network failures
 
 ### Database & Sync
-- **Sync Frequency** - Background sync every 30 seconds when active
+- **Sync Frequency** - Background sync every 60 seconds when active
 - **Batch Operations** - Sync processes up to 50 records per batch
 - **Conflict Resolution** - Last-write-wins based on `updatedAt` timestamp
 - **Offline Capability** - Unlimited offline storage, syncs when connected
@@ -538,15 +538,19 @@ supabase db push
 
 **Estimated AI cost per sermon**: ~$0.87 (30min sermon with summary + 5 chat messages)
 
+*Costs based on current provider pricing as of January 2026. Subject to change.*
+
 #### Infrastructure (Fixed + Variable)
 - **Supabase** - Free tier: 500MB database, 1GB storage. Pro: $25/mo for 8GB database, 100GB storage
 - **Netlify** - Free tier: 125k requests/mo. Pro: $19/mo for 2M requests
 - **Upstash Redis** - Free tier: 10k requests/day. Pay-as-you-go: $0.20/100k requests
 
-#### Monthly Cost Estimates
+#### Monthly Cost Estimates (Projected)
 - **100 users**: ~$50-100/mo (mostly AI costs)
 - **1,000 users**: ~$500-800/mo
 - **10,000 users**: ~$5,000-8,000/mo
+
+*Note: Actual costs vary based on user behavior, recording lengths, and AI usage patterns.*
 
 ### Cost Optimization Strategies
 1. **Cache summaries** - Never regenerate existing summaries ✅
@@ -557,9 +561,9 @@ supabase db push
 6. **Usage tiers** - Free users limited to reduce costs ✅
 
 ### Revenue Model
-- **Free Tier**: 3 recordings/month → Loss leader (cost: ~$2.61/user/mo)
+- **Free Tier**: 5 recordings/month (30 min each) → Loss leader (estimated cost: ~$4.35/user/mo)
 - **Premium**: $9.99/month → Profitable at >10 recordings/month
-- **Target**: 15% conversion rate, 70% gross margin
+- **Target**: 15% conversion rate, 70% gross margin (estimated)
 
 ## Roadmap
 
@@ -639,7 +643,7 @@ Settings → Privacy → Microphone → TabletNotes (Enable)
 - API key invalid
 
 **Solutions**:
-1. Wait 60 seconds for rate limit reset
+1. Wait a few minutes (limit: 100 messages per hour)
 2. Ensure sermon has completed transcription
 3. Verify API keys in backend `.env`
 
@@ -679,7 +683,7 @@ A: Yes! Recording and note-taking work fully offline. Transcription, summarizati
 A: There's no hard limit. The app has been tested with recordings up to 3 hours. Longer recordings will take more time to upload and transcribe.
 
 **Q: What audio quality does it record at?**
-A: M4A format with AAC codec at 128kbps, which provides excellent quality at ~1MB per minute (a 30-minute sermon is ~30MB).
+A: M4A format with high-quality AAC codec (44.1kHz, stereo), which provides excellent quality at approximately 1MB per minute (estimated ~30MB for a 30-minute sermon).
 
 ### AI & Transcription
 
@@ -715,8 +719,8 @@ A: The last edit wins (based on timestamp). We recommend finishing edits on one 
 
 **Q: How much storage do I get?**
 A:
-- Free tier: 1GB (~16 hours of recordings)
-- Premium: 100GB (~1,600 hours of recordings)
+- Free tier: 1GB (approximately 16 hours of recordings)
+- Premium: Unlimited storage
 
 **Q: Can I export my data?**
 A: Currently, transcripts are viewable in-app only. PDF/DOCX export is planned for Q1 2026. You can manually download audio files from your Supabase storage bucket.
@@ -725,17 +729,17 @@ A: Currently, transcripts are viewable in-app only. PDF/DOCX export is planned f
 
 **Q: What's included in the free tier?**
 A:
-- 3 recordings per month
+- 5 recordings per month (30 minutes each)
 - AI transcription and summarization
-- Limited chat messages (10/month)
+- AI chat (100 messages per hour)
 - 1GB storage
 - Cloud sync
 
 **Q: What does Premium include?**
 A:
-- Unlimited recordings
-- Unlimited AI chat
-- 100GB storage
+- Unlimited recordings (90 minutes max per recording)
+- Unlimited AI chat (100 messages per hour)
+- Unlimited storage
 - Priority transcription processing
 - Early access to new features
 
@@ -801,10 +805,10 @@ A: Common causes:
 Check Settings → Advanced → Sync Status for details.
 
 **Q: The chat says "Rate limit exceeded" - what does that mean?**
-A: To prevent abuse and control costs, chat has a rate limit. Free users: wait 60 seconds between messages. Premium users have higher limits.
+A: To prevent abuse and control costs, chat has a rate limit of 100 messages per hour per user. If you hit this limit, wait a few minutes before sending more messages. The limit applies to all users equally.
 
 **Q: Why is transcription taking so long?**
-A: AssemblyAI processes at ~0.3x speed (30-minute sermon takes ~10 minutes). Very long recordings (2+ hours) may take 30-60 minutes. Check `/transcribe-status` endpoint for progress.
+A: AssemblyAI typically processes at approximately 0.3x speed (estimated 10 minutes for a 30-minute sermon). Very long recordings (2+ hours) may take 30-60 minutes. Check the transcription status in the app for progress.
 
 **Q: The app crashed - did I lose my recording?**
 A: No! Recordings save to local storage immediately. Even if the app crashes, your audio file is safe in `Documents/AudioRecordings/`. The app will recover and sync it when relaunched.
@@ -821,7 +825,7 @@ A: Please create an issue on our GitHub repository with:
 
 ## Performance Benchmarks
 
-Tested on iPhone 15 Pro, iOS 18.0, WiFi connection:
+*Estimated performance metrics based on testing with iPhone 15 Pro, iOS 18.0, WiFi connection. Actual performance may vary by device and network conditions.*
 
 | Operation | Duration | Notes |
 |-----------|----------|-------|
