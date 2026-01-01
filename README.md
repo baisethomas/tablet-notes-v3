@@ -1,8 +1,8 @@
-# TabletNotes
+# Tablet Notes
 
 > AI-powered sermon recording and note-taking app for iOS
 
-TabletNotes is an iOS application that transforms how you engage with sermons. Record audio, take timestamped notes in real-time, and leverage AI to transcribe, summarize, and interact with sermon content through an intelligent chat interface.
+Tablet Notes is an iOS application that transforms how you engage with sermons. Record audio, take timestamped notes in real-time, and leverage AI to transcribe, summarize, and interact with sermon content through an intelligent chat interface.
 
 ## Features
 
