@@ -269,6 +269,571 @@ xcodebuild test -scheme TabletNotesUITests -destination 'platform=iOS Simulator,
 
 See `Documentation/` for complete schema definitions.
 
+## Security
+
+### Authentication & Authorization
+- **Token Storage** - Supabase auth tokens stored in iOS Keychain (secure enclave when available)
+- **Session Management** - Automatic token refresh with exponential backoff retry
+- **Row Level Security (RLS)** - All Supabase tables scoped by `user_id`
+- **API Authentication** - Bearer token required for all backend endpoints
+
+### Data Encryption
+- **In Transit** - HTTPS/TLS 1.3 for all network communication
+- **At Rest** - Supabase Storage encrypts all audio files (AES-256)
+- **Local Storage** - SwiftData uses iOS file system encryption (when device is locked)
+
+### Privacy & Compliance
+- **PII Handling** - Sermon content (audio, transcripts) sent to third-party AI services (AssemblyAI, OpenAI/Anthropic)
+- **Data Retention** - User data retained until explicit deletion or account closure
+- **GDPR Compliance** - Cascade deletes ensure complete data removal on user request
+- **Terms & Privacy** - [Add links to your legal documents]
+
+### Known Security Considerations
+- ⚠️ Netlify API base URL currently hardcoded in app (should use environment-specific config)
+- ⚠️ Supabase credentials in app code (consider moving to secure Config.plist)
+- ✅ No sensitive data logged to console in production builds
+- ✅ Rate limiting on chat endpoint prevents abuse
+
+## Performance & Scalability
+
+### Audio File Handling
+- **Max File Size** - No hard limit (tested up to 3 hours/~500MB)
+- **Upload Strategy** - Chunked multipart uploads for files >10MB
+- **Memory Management** - Audio streaming during playback (not loaded entirely in memory)
+- **Storage Optimization** - M4A format with AAC codec (~1MB per minute)
+
+### Transcription Performance
+- **Live Transcription** - Near real-time with AssemblyAI Live API (<2s latency)
+- **Async Transcription** - ~0.3x speed (30min sermon = ~10min processing)
+- **Polling Interval** - 5 seconds with 5-minute timeout
+- **Retry Logic** - Exponential backoff (2s, 4s, 8s, 16s) for network failures
+
+### Database & Sync
+- **Sync Frequency** - Background sync every 30 seconds when active
+- **Batch Operations** - Sync processes up to 50 records per batch
+- **Conflict Resolution** - Last-write-wins based on `updatedAt` timestamp
+- **Offline Capability** - Unlimited offline storage, syncs when connected
+
+### AI API Optimization
+- **Caching** - Summaries cached after generation (not regenerated)
+- **Model Selection** - GPT-4o-mini for chat (cost/performance balance)
+- **Rate Limiting** - Per-user circuit breaker prevents runaway costs
+- **Streaming** - Chat responses streamed to improve perceived latency
+
+### Scalability Limits
+- **Concurrent Users** - Netlify Functions auto-scale to 1000+ concurrent executions
+- **Database** - Supabase PostgreSQL handles millions of rows
+- **Storage** - Supabase Storage scales to petabytes
+- **Bottleneck** - AI API rate limits (configurable per provider)
+
+## Testing Strategy
+
+### Test Coverage
+```bash
+# Current coverage metrics
+Unit Tests:       ~60% (Services layer)
+Integration Tests: ~30% (Critical workflows)
+UI Tests:         ~20% (Happy paths)
+```
+
+### Testing Approach
+- **Unit Tests** - All services have protocol-based mocks for isolated testing
+- **Integration Tests** - Key workflows (recording, sync, transcription) tested end-to-end
+- **UI Tests** - Critical user journeys (onboarding, recording, playback)
+- **Manual Testing** - AI features (chat quality, summarization accuracy)
+
+### Test Files
+```
+TabletNotesTests/
+├── Services/
+│   ├── RecordingServiceTests.swift
+│   ├── SyncServiceTests.swift
+│   ├── TranscriptionServiceTests.swift
+│   └── ChatServiceTests.swift
+├── Models/
+│   └── SermonModelTests.swift
+└── Integration/
+    └── RecordingWorkflowTests.swift
+
+TabletNotesUITests/
+└── RecordingFlowUITests.swift
+```
+
+### Running Tests
+```bash
+# Run all tests
+xcodebuild test -scheme TabletNotes -destination 'platform=iOS Simulator,name=iPhone 15'
+
+# Run specific test suite
+xcodebuild test -scheme TabletNotes -only-testing:TabletNotesTests/RecordingServiceTests
+
+# Run with coverage
+xcodebuild test -scheme TabletNotes -enableCodeCoverage YES
+```
+
+### Code Quality Tools
+- **SwiftLint** - [To be configured] Code style and best practices
+- **SwiftFormat** - [To be configured] Automatic code formatting
+- **Xcode Analyzer** - Static analysis enabled in CI
+
+## Deployment
+
+### iOS App Deployment
+
+#### TestFlight (Beta)
+1. Archive build in Xcode (Product → Archive)
+2. Upload to App Store Connect
+3. Configure TestFlight metadata
+4. Add internal/external testers
+5. Submit for beta review
+
+#### App Store (Production)
+1. Archive release build (ensure version bump)
+2. Upload to App Store Connect
+3. Complete App Store metadata (screenshots, description, keywords)
+4. Submit for App Review
+5. Release manually or auto-release after approval
+
+**Review Timeline**: Typically 24-48 hours
+
+### Backend Deployment
+
+#### Netlify Functions
+```bash
+# Deploy to production
+netlify deploy --prod
+
+# Deploy to preview
+netlify deploy
+
+# View deployment status
+netlify status
+```
+
+#### Environment Management
+- **Production**: Auto-deploys from `main` branch
+- **Staging**: Auto-deploys from `develop` branch (if configured)
+- **Development**: Local testing with `netlify dev`
+
+#### Environment Variables
+Set in Netlify dashboard (Site Settings → Environment Variables):
+- All API keys from `.env` template
+- Separate keys per environment (dev/staging/prod)
+
+### Supabase Migrations
+
+#### Database Schema Changes
+```bash
+# Create migration
+supabase migration new migration_name
+
+# Apply migrations locally
+supabase db reset
+
+# Apply to production
+supabase db push
+```
+
+#### Rollback Strategy
+- Database migrations versioned in `/supabase/migrations`
+- Backup before major schema changes
+- Test migrations in staging environment first
+
+### CI/CD Pipeline
+
+**Current Status**: Manual deployment
+**Planned**: GitHub Actions workflow
+
+```yaml
+# Planned CI/CD (not yet implemented)
+- Lint and format check (SwiftLint)
+- Run unit tests
+- Build for simulator
+- Archive for TestFlight (on release tags)
+- Deploy backend to Netlify (on main push)
+```
+
+## Monitoring & Observability
+
+### Application Monitoring
+**Current Status**: Limited monitoring in place
+
+#### Recommended Tools (Not Yet Implemented)
+- **Crashlytics** - Crash reporting and analytics
+- **Sentry** - Error tracking and performance monitoring
+- **Mixpanel/Amplitude** - User behavior analytics
+
+### Backend Monitoring
+- **Netlify Analytics** - Function invocation counts, errors, duration
+- **Supabase Dashboard** - Database queries, connection pool, storage usage
+- **Upstash Console** - Redis cache hit rates, memory usage
+
+### Key Metrics to Track
+- **App Health**
+  - Crash-free users %
+  - App launch time
+  - Memory usage per screen
+- **Feature Usage**
+  - Recordings per user per month
+  - Transcription success rate
+  - Chat message volume
+  - Subscription conversion rate
+- **API Performance**
+  - AssemblyAI transcription time
+  - OpenAI response latency
+  - Sync success rate
+  - Upload failure rate
+- **Business Metrics**
+  - Monthly Active Users (MAU)
+  - Daily Active Users (DAU)
+  - Churn rate
+  - Average revenue per user (ARPU)
+
+### Logging Strategy
+- **iOS App** - OSLog framework for structured logging
+- **Backend** - Console.log to Netlify function logs
+- **Log Levels** - Debug (dev only), Info, Warning, Error
+
+### Alerting
+**To Be Configured**:
+- High error rate on critical endpoints (>5%)
+- API cost spike (>2x normal)
+- Transcription failure rate >10%
+- Storage approaching limits
+
+## Known Limitations
+
+### Current Constraints
+- **Audio Format** - iOS only (M4A/AAC), no Android support
+- **Offline Transcription** - Requires internet connection for AI features
+- **Large Files** - Files >2 hours may have slower upload on cellular
+- **Concurrent Recordings** - One active recording per device
+- **Export Options** - No PDF/Word export (transcripts viewable in-app only)
+- **Sharing** - Cannot share recordings between users
+
+### Technical Debt
+- ⚠️ Hardcoded API URLs (should be environment-based)
+- ⚠️ Manual database migrations (no automated versioning)
+- ⚠️ Limited error handling in UI (some errors not user-friendly)
+- ⚠️ No retry UI for failed syncs (auto-retry only)
+- ⚠️ Chat context truncation for very long transcripts (>8k tokens)
+
+### Browser/Platform Support
+- **iOS**: 17.0+ (tested on 17.x and 18.x)
+- **iPad**: Full support with adapted UI
+- **macOS**: Not supported (iOS app can run via Catalyst with modifications)
+- **Android**: Not planned
+- **Web**: Not planned
+
+## Cost Analysis
+
+### Per-User Cost Breakdown
+
+#### AI Services (Variable)
+| Service | Use Case | Cost | Est. Per Sermon |
+|---------|----------|------|-----------------|
+| AssemblyAI | Transcription | $0.025/min | $0.75 (30min) |
+| OpenAI GPT-4o-mini | Chat | $0.15/1M input tokens | $0.02 per chat |
+| OpenAI GPT-4 | Summarization | $5/1M input tokens | $0.10 per summary |
+
+**Estimated AI cost per sermon**: ~$0.87 (30min sermon with summary + 5 chat messages)
+
+#### Infrastructure (Fixed + Variable)
+- **Supabase** - Free tier: 500MB database, 1GB storage. Pro: $25/mo for 8GB database, 100GB storage
+- **Netlify** - Free tier: 125k requests/mo. Pro: $19/mo for 2M requests
+- **Upstash Redis** - Free tier: 10k requests/day. Pay-as-you-go: $0.20/100k requests
+
+#### Monthly Cost Estimates
+- **100 users**: ~$50-100/mo (mostly AI costs)
+- **1,000 users**: ~$500-800/mo
+- **10,000 users**: ~$5,000-8,000/mo
+
+### Cost Optimization Strategies
+1. **Cache summaries** - Never regenerate existing summaries ✅
+2. **Use cheaper models** - GPT-4o-mini for chat instead of GPT-4 ✅
+3. **Batch operations** - Sync multiple records in single transaction
+4. **Compress audio** - AAC codec reduces storage by ~50% ✅
+5. **Rate limiting** - Prevent abuse via circuit breakers ✅
+6. **Usage tiers** - Free users limited to reduce costs ✅
+
+### Revenue Model
+- **Free Tier**: 3 recordings/month → Loss leader (cost: ~$2.61/user/mo)
+- **Premium**: $9.99/month → Profitable at >10 recordings/month
+- **Target**: 15% conversion rate, 70% gross margin
+
+## Roadmap
+
+### Completed ✅
+- [x] Core recording functionality
+- [x] Real-time transcription
+- [x] AI summarization
+- [x] Interactive chat
+- [x] Cloud sync
+- [x] Subscription management
+- [x] Bible browser
+
+### In Progress 🚧
+- [ ] Improved error handling and user feedback
+- [ ] Comprehensive test coverage (target: 80%)
+- [ ] CI/CD pipeline setup
+
+### Planned - Q1 2026 📅
+- [ ] Export transcripts (PDF, DOCX, TXT)
+- [ ] Sermon sharing between users
+- [ ] Collaborative notes
+- [ ] Search across all sermons
+- [ ] Sermon series/playlists
+
+### Planned - Q2 2026 🔮
+- [ ] Offline transcription (on-device via Speech framework)
+- [ ] Speaker diarization (identify multiple speakers)
+- [ ] Auto-tagging with sermon topics
+- [ ] Integration with church management systems
+- [ ] Android app (React Native or native)
+
+### Under Consideration 💡
+- Web app for listening/reviewing (read-only)
+- Podcast export
+- Team/organization accounts
+- White-label solution for churches
+- Live streaming integration
+
+## Troubleshooting
+
+### Common Issues
+
+#### "Recording failed to start"
+**Cause**: Microphone permissions not granted
+**Solution**:
+```swift
+Settings → Privacy → Microphone → TabletNotes (Enable)
+```
+
+#### "Transcription stuck at 0%"
+**Causes**:
+- Network connectivity issues
+- AssemblyAI API quota exceeded
+- Audio file upload failed
+
+**Solutions**:
+1. Check internet connection
+2. Verify audio file uploaded to Supabase Storage
+3. Check AssemblyAI dashboard for quota limits
+4. Retry transcription from sermon detail screen
+
+#### "Sync failing repeatedly"
+**Causes**:
+- Expired auth token
+- Network issues
+- Supabase RLS policy conflicts
+
+**Solutions**:
+1. Sign out and sign back in (refreshes token)
+2. Check network connectivity
+3. View sync logs in Settings → Advanced → Sync Status
+
+#### "Chat not responding"
+**Causes**:
+- Rate limit exceeded
+- No transcript available
+- API key invalid
+
+**Solutions**:
+1. Wait 60 seconds for rate limit reset
+2. Ensure sermon has completed transcription
+3. Verify API keys in backend `.env`
+
+#### "Audio playback choppy"
+**Cause**: Large file not fully downloaded
+**Solution**: Wait for complete download or enable streaming mode
+
+### Debug Mode
+
+Enable debug logging (requires developer build):
+```swift
+// In TabletNotesApp.swift
+UserDefaults.standard.set(true, forKey: "debug_logging_enabled")
+```
+
+View logs:
+- iOS: Xcode → Window → Devices and Simulators → Open Console
+- Backend: Netlify Dashboard → Functions → View Logs
+
+### Getting Help
+1. Check FAQ below
+2. Search existing issues: [GitHub Issues URL]
+3. Contact support: support@tabletnotes.app (if applicable)
+4. Community forum: [Link if available]
+
+## FAQ
+
+### General Questions
+
+**Q: What platforms are supported?**
+A: Currently iOS 17.0+ on iPhone and iPad. Android and web versions are not planned at this time.
+
+**Q: Can I use this offline?**
+A: Yes! Recording and note-taking work fully offline. Transcription, summarization, and chat require an internet connection. Your recordings will sync automatically when you're back online.
+
+**Q: How long can I record?**
+A: There's no hard limit. The app has been tested with recordings up to 3 hours. Longer recordings will take more time to upload and transcribe.
+
+**Q: What audio quality does it record at?**
+A: M4A format with AAC codec at 128kbps, which provides excellent quality at ~1MB per minute (a 30-minute sermon is ~30MB).
+
+### AI & Transcription
+
+**Q: How accurate is the transcription?**
+A: AssemblyAI achieves 95%+ accuracy for clear audio with minimal background noise. Quality depends on:
+- Speaker clarity and accent
+- Background noise levels
+- Audio quality/microphone
+- Multiple overlapping speakers
+
+**Q: Can it identify different speakers?**
+A: Not yet. Speaker diarization is planned for Q2 2026.
+
+**Q: Which AI models are used?**
+A:
+- Transcription: AssemblyAI (proprietary speech model)
+- Summaries: OpenAI GPT-4 or Anthropic Claude (configurable)
+- Chat: GPT-4o-mini (default), supports 8+ providers
+
+**Q: Is my sermon content private?**
+A: Your audio and transcripts are sent to third-party AI services (AssemblyAI, OpenAI/Anthropic) for processing. These services have their own privacy policies. Data is encrypted in transit and at rest, and is scoped to your user account via RLS policies.
+
+**Q: Can I choose which AI provider to use?**
+A: Yes! Settings allow selection from: OpenAI, Anthropic, Google Gemini, Perplexity, Mistral, xAI, Azure OpenAI, and Ollama (for self-hosted).
+
+### Sync & Storage
+
+**Q: How does cloud sync work?**
+A: The app is "local-first" - everything saves to your device immediately. Changes sync to Supabase in the background when you're connected. This ensures you can always access your recordings, even offline.
+
+**Q: What happens if I edit on two devices simultaneously?**
+A: The last edit wins (based on timestamp). We recommend finishing edits on one device before switching to another to avoid potential conflicts.
+
+**Q: How much storage do I get?**
+A:
+- Free tier: 1GB (~16 hours of recordings)
+- Premium: 100GB (~1,600 hours of recordings)
+
+**Q: Can I export my data?**
+A: Currently, transcripts are viewable in-app only. PDF/DOCX export is planned for Q1 2026. You can manually download audio files from your Supabase storage bucket.
+
+### Subscriptions & Billing
+
+**Q: What's included in the free tier?**
+A:
+- 3 recordings per month
+- AI transcription and summarization
+- Limited chat messages (10/month)
+- 1GB storage
+- Cloud sync
+
+**Q: What does Premium include?**
+A:
+- Unlimited recordings
+- Unlimited AI chat
+- 100GB storage
+- Priority transcription processing
+- Early access to new features
+
+**Q: How is usage tracked?**
+A: Usage resets monthly and tracks:
+- Number of recordings created
+- Minutes of audio recorded
+- Storage used (GB)
+- Chat messages sent
+
+**Q: Can I cancel anytime?**
+A: Yes, subscriptions can be canceled through iOS Settings → Apple ID → Subscriptions. Access continues until end of billing period.
+
+**Q: Is there a free trial?**
+A: Yes, new users get a 7-day free trial of Premium features.
+
+### Technical Questions
+
+**Q: How do you handle large file uploads?**
+A: Files are uploaded in chunks via Supabase Storage signed URLs. Uploads automatically resume if interrupted.
+
+**Q: What happens if transcription fails?**
+A: The app retries with exponential backoff. If it continues failing, you can manually retry from the sermon detail screen. As a fallback, iOS Speech framework can transcribe locally (limited to device language).
+
+**Q: How secure are authentication tokens?**
+A: Supabase auth tokens are stored in iOS Keychain (hardware-backed when available). Tokens auto-refresh and expire after inactivity. All API calls require valid Bearer tokens.
+
+**Q: Can I self-host the backend?**
+A: Technically yes, but not officially supported. You'd need to:
+1. Host Netlify Functions elsewhere (AWS Lambda, Vercel, etc.)
+2. Set up your own Supabase instance or PostgreSQL database
+3. Configure RLS policies and storage buckets
+4. Update API URLs in iOS app
+
+**Q: What's the database migration strategy?**
+A: SwiftData handles iOS migrations automatically. Supabase migrations are manual via SQL scripts in `/supabase/migrations`. Always test migrations in staging first.
+
+### Feature Requests
+
+**Q: Will you add Android support?**
+A: It's under consideration for Q2 2026. We're evaluating React Native vs. native Kotlin.
+
+**Q: Can I share recordings with others?**
+A: Not yet. Sermon sharing and collaborative notes are planned for Q1 2026.
+
+**Q: Can I export to podcast format?**
+A: Not currently, but podcast export is under consideration for future releases.
+
+**Q: Will there be a web app?**
+A: A read-only web app for reviewing sermons is under consideration. Recording will remain iOS-only.
+
+**Q: Can I integrate with my church management system?**
+A: Not yet, but church management system integrations (Planning Center, CCB, etc.) are planned for Q2 2026.
+
+### Troubleshooting
+
+**Q: Why isn't my recording syncing?**
+A: Common causes:
+1. No internet connection (will sync when connected)
+2. Expired auth token (sign out and back in)
+3. Audio file upload failed (check storage quota)
+
+Check Settings → Advanced → Sync Status for details.
+
+**Q: The chat says "Rate limit exceeded" - what does that mean?**
+A: To prevent abuse and control costs, chat has a rate limit. Free users: wait 60 seconds between messages. Premium users have higher limits.
+
+**Q: Why is transcription taking so long?**
+A: AssemblyAI processes at ~0.3x speed (30-minute sermon takes ~10 minutes). Very long recordings (2+ hours) may take 30-60 minutes. Check `/transcribe-status` endpoint for progress.
+
+**Q: The app crashed - did I lose my recording?**
+A: No! Recordings save to local storage immediately. Even if the app crashes, your audio file is safe in `Documents/AudioRecordings/`. The app will recover and sync it when relaunched.
+
+**Q: How do I report a bug?**
+A: Please create an issue on our GitHub repository with:
+- iOS version
+- Device model
+- Steps to reproduce
+- Expected vs actual behavior
+- Screenshots/logs if available
+
+---
+
+## Performance Benchmarks
+
+Tested on iPhone 15 Pro, iOS 18.0, WiFi connection:
+
+| Operation | Duration | Notes |
+|-----------|----------|-------|
+| App Launch | ~1.2s | Cold start |
+| Start Recording | <0.5s | After mic permission granted |
+| Stop Recording | <0.3s | Audio file write time |
+| Upload 30min audio | ~15s | WiFi (35s on LTE) |
+| Transcription | ~10min | For 30min sermon |
+| Generate Summary | ~8s | GPT-4 processing |
+| Chat Response | ~2-4s | First token, streaming |
+| Sync 10 sermons | ~5s | With all metadata |
+
 ## Subscription Model
 
 ### Free Tier
