@@ -1,4 +1,4 @@
-# Enhanced Features and Requirements for TabletNotes App
+# Enhanced Features and Requirements for Tablet Notes App
 
 ## User Experience & Flow Enhancements
 

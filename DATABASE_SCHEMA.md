@@ -1,4 +1,4 @@
-# TabletNotes Database Schema Reference
+# Tablet Notes Database Schema Reference
 
 **Last Updated:** 2025-11-05
 **Database:** Supabase PostgreSQL

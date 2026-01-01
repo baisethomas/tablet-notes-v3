@@ -1,6 +1,6 @@
 # TestFlight Beta Distribution Setup Guide
 
-This guide walks through setting up TabletNotes for TestFlight beta testing and managing beta testers effectively.
+This guide walks through setting up Tablet Notes for TestFlight beta testing and managing beta testers effectively.
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ This guide walks through setting up TabletNotes for TestFlight beta testing and 
 
 #### Basic Information
 ```
-App Name: TabletNotes
+App Name: Tablet Notes
 Primary Language: English (U.S.)
 Bundle ID: Creative-Native.TabletNotes
 SKU: tabletnotes-ios-beta
@@ -41,11 +41,11 @@ Age Rating: 4+
 
 #### Test Information
 ```
-Beta App Name: TabletNotes (Beta)
+Beta App Name: Tablet Notes (Beta)
 Beta App Description:
-Help us perfect TabletNotes before the official launch! 
+Help us perfect Tablet Notes before the official launch!
 
-TabletNotes is designed to transform your sermon experience with AI-powered recording, transcription, and intelligent summaries.
+Tablet Notes is designed to transform your sermon experience with AI-powered recording, transcription, and intelligent summaries.
 
 🔍 WHAT TO TEST:
 • Recording quality in different church environments
@@ -156,7 +156,7 @@ Target Contacts:
 - Christian technology communities
 
 Recruitment Message:
-"We're developing TabletNotes, an app designed specifically for recording and studying sermons with AI assistance. We'd love your feedback as a church leader to ensure it meets real ministry needs."
+"We're developing Tablet Notes, an app designed specifically for recording and studying sermons with AI assistance. We'd love your feedback as a church leader to ensure it meets real ministry needs."
 ```
 
 #### Community Engagement
@@ -240,7 +240,7 @@ open TabletNotes.xcodeproj
 ### 3. Release Notes Template
 
 ```markdown
-# TabletNotes Beta - Build [X] ([Date])
+# Tablet Notes Beta - Build [X] ([Date])
 
 ## What's New
 - [List new features and improvements]
@@ -263,7 +263,7 @@ Please pay special attention to:
 ## Support
 Questions? Contact support@tabletnotes.io
 
-Thank you for helping us improve TabletNotes! 🙏
+Thank you for helping us improve Tablet Notes! 🙏
 ```
 
 ## Beta Testing Phases

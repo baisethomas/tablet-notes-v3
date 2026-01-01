@@ -1,4 +1,4 @@
-# Comprehensive iOS Sync Architecture Analysis - TabletNotes
+# Comprehensive iOS Sync Architecture Analysis - Tablet Notes
 
 ## Executive Summary
 

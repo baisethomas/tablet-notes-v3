@@ -1,10 +1,10 @@
 # Security Implementation Guide
 
-This document outlines the security measures implemented in the TabletNotes API.
+This document outlines the security measures implemented in the Tablet Notes API.
 
 ## Overview
 
-The TabletNotes API has been enhanced with comprehensive security measures to protect against common attacks and ensure production readiness for beta testing.
+The Tablet Notes API has been enhanced with comprehensive security measures to protect against common attacks and ensure production readiness for beta testing.
 
 ## Security Features Implemented
 

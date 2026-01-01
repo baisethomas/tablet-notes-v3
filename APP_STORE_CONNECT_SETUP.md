@@ -1,8 +1,8 @@
 # App Store Connect - In-App Purchase Setup Guide
 
-## 📱 TabletNotes Subscription Configuration
+## 📱 Tablet Notes Subscription Configuration
 
-This guide walks you through setting up In-App Purchases in App Store Connect for TabletNotes.
+This guide walks you through setting up In-App Purchases in App Store Connect for Tablet Notes.
 
 ---
 

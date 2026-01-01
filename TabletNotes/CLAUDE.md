@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TabletNotes is an iOS app built with SwiftUI that allows users to record sermons, take notes during recording, and get AI-powered transcription and summaries. The app uses a Netlify backend for API functions and Supabase for data persistence.
+Tablet Notes is an iOS app built with SwiftUI that allows users to record sermons, take notes during recording, and get AI-powered transcription and summaries. The app uses a Netlify backend for API functions and Supabase for data persistence.
 
 ## Development Commands
 

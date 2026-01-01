@@ -1,4 +1,4 @@
-# Updated Todo for TabletNotes App
+# Updated Todo for Tablet Notes App
 
 ## Document Review and Analysis
 - [x] Review PRD.md document

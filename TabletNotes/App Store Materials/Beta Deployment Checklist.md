@@ -1,6 +1,6 @@
-# TabletNotes Beta Deployment Checklist
+# Tablet Notes Beta Deployment Checklist
 
-Use this checklist to ensure TabletNotes is fully prepared for TestFlight beta distribution and eventual App Store submission.
+Use this checklist to ensure Tablet Notes is fully prepared for TestFlight beta distribution and eventual App Store submission.
 
 ## ✅ Phase 3 Completed Items
 

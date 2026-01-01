@@ -1,11 +1,11 @@
-# TabletNotes Privacy Policy
+# Tablet Notes Privacy Policy
 
 **Effective Date:** [Date of Beta Release]  
 **Last Updated:** [Date of Beta Release]
 
 ## Introduction
 
-TabletNotes ("we," "our," or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and related services.
+Tablet Notes ("we," "our," or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and related services.
 
 ## Information We Collect
 
@@ -101,7 +101,7 @@ TabletNotes ("we," "our," or "us") is committed to protecting your privacy. This
 
 ## Children's Privacy
 
-TabletNotes is not intended for children under 13. We do not knowingly collect personal information from children under 13. If you believe we have collected information from a child under 13, please contact us immediately.
+Tablet Notes is not intended for children under 13. We do not knowingly collect personal information from children under 13. If you believe we have collected information from a child under 13, please contact us immediately.
 
 ## Changes to This Policy
 
@@ -134,4 +134,4 @@ If you are located outside the United States, please note that your information 
 
 ---
 
-*This Privacy Policy is designed to comply with applicable privacy laws including CCPA, GDPR principles, and App Store requirements. By using TabletNotes, you agree to the collection and use of information in accordance with this policy.*
+*This Privacy Policy is designed to comply with applicable privacy laws including CCPA, GDPR principles, and App Store requirements. By using Tablet Notes, you agree to the collection and use of information in accordance with this policy.*

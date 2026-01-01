@@ -1,4 +1,4 @@
-# TabletNotes App Enhancement Summary
+# Tablet Notes App Enhancement Summary
 
 ## Overview
 
