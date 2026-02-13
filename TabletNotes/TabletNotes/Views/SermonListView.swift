@@ -335,7 +335,7 @@ struct SectionHeaderView: View {
 }
 
 struct SermonListView: View {
-    @ObservedObject var sermonService: SermonService
+    @Bindable var sermonService: SermonService
     var syncService: SyncServiceProtocol?
     var onSermonSelected: (Sermon) -> Void
     var onSettings: (() -> Void)? = nil

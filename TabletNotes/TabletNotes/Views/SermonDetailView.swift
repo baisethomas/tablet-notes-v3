@@ -239,7 +239,7 @@ struct TranscriptSegmentView: View {
 }
 
 struct SermonDetailView: View {
-    @ObservedObject var sermonService: SermonService
+    var sermonService: SermonService
     @ObservedObject var authManager: AuthenticationManager
     let sermonID: UUID
     var onBack: (() -> Void)?

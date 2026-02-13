@@ -22,7 +22,7 @@ func sermonStatusText(transcriptionStatus: String, summaryStatus: String) -> (St
 }
 
 struct ContentView: View {
-    @ObservedObject var sermonService: SermonService
+    var sermonService: SermonService
     @State private var showServiceTypeModal = false
     @State private var selectedServiceType: String? = nil
     var onStartRecording: ((String) -> Void)?

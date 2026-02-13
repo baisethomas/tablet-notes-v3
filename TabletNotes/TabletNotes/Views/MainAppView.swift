@@ -31,7 +31,7 @@ struct MainAppView: View {
     @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
     @State private var currentRecordingServiceType: String? = nil // Track what type of service is being recorded
     @State private var cancellables = Set<AnyCancellable>() // Store Combine subscriptions for mini player
-    @StateObject private var sermonService: SermonService
+    @State private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
     @StateObject private var recordingService = RecordingService()
     @StateObject private var transcriptionService = TranscriptionService()
@@ -43,7 +43,7 @@ struct MainAppView: View {
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
-        _sermonService = StateObject(wrappedValue: SermonService(modelContext: modelContext))
+        _sermonService = State(initialValue: SermonService(modelContext: modelContext))
         let syncSvc = SyncService(
             modelContext: modelContext,
             supabaseService: SupabaseService.shared,

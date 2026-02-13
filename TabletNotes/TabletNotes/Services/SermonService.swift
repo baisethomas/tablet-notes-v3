@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import Combine
+import Observation
 
 extension Sermon: Identifiable {}
 extension Transcript: Identifiable {}
@@ -13,25 +14,26 @@ enum SortOption: String, CaseIterable {
 }
 
 @MainActor
-class SermonService: ObservableObject {
+@Observable
+class SermonService {
     private let modelContext: ModelContext
     private let authManager: AuthenticationManager
     private var syncService: (any SyncServiceProtocol)?
     private var subscriptionService: (any SubscriptionServiceProtocol)?
-    @Published private(set) var sermons: [Sermon] = []
-    @Published private(set) var filteredSermons: [Sermon] = []
-    @Published var limitReachedMessage: String?
-    @Published var searchText: String = "" {
+    private(set) var sermons: [Sermon] = []
+    private(set) var filteredSermons: [Sermon] = []
+    var limitReachedMessage: String?
+    var searchText: String = "" {
         didSet {
             applyFilters()
         }
     }
-    @Published var sortOption: SortOption = .newest {
+    var sortOption: SortOption = .newest {
         didSet {
             applyFilters()
         }
     }
-    @Published var showArchivedSermons: Bool = false {
+    var showArchivedSermons: Bool = false {
         didSet {
             applyFilters()
         }
@@ -861,8 +863,7 @@ class SermonService: ObservableObject {
 
                             print("[SermonService] ✅ Summary completed for sermon \(sermonId)")
 
-                            // Manually trigger UI update
-                            self.objectWillChange.send()
+                            // @Observable handles UI updates automatically
 
                             // Trigger sync if needed
                             if let currentUser = self.authManager.currentUser, currentUser.canSync {
@@ -885,8 +886,7 @@ class SermonService: ObservableObject {
                             sermon.summaryStatus = "failed"
                             try? self.modelContext.save()
 
-                            // Manually trigger UI update
-                            self.objectWillChange.send()
+                            // @Observable handles UI updates automatically
 
                             // Add to retry queue
                             SummaryRetryService.shared.addPendingSummary(
@@ -902,8 +902,7 @@ class SermonService: ObservableObject {
                         sermon.summaryStatus = "failed"
                         try? self.modelContext.save()
 
-                        // Manually trigger UI update
-                        self.objectWillChange.send()
+                        // @Observable handles UI updates automatically
 
                         // Add to retry queue
                         SummaryRetryService.shared.addPendingSummary(
