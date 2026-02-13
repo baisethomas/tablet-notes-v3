@@ -1,8 +1,10 @@
 import Foundation
 import AVFoundation
 import Combine
+import Observation
 
-class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
+@Observable
+class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var audioEngine = AVAudioEngine()
     private let transcriptSubject = CurrentValueSubject<String, Never>("")
@@ -10,21 +12,82 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     private var sessionToken: String?
     private let supabase = SupabaseService.shared
     private var wasInterrupted = false
+    private var tokenRenewalTimer: Timer?
+    private var sessionStartTime: Date?
+    private let audioProcessingQueue = DispatchQueue(label: "com.tabletnotes.audioprocessing", qos: .userInitiated)
+    private let networkMonitor = NetworkMonitor.shared
+    private var networkObservationTask: Task<Void, Never>?
 
     var transcriptPublisher: AnyPublisher<String, Never> {
         transcriptSubject.eraseToAnyPublisher()
     }
 
-    @Published var isConnected = false
-    @Published var error: String?
+    // Observable properties (no @Published needed with @Observable)
+    var isConnected = false
+    var error: String?
 
     private let sampleRate: Double = 44100 // Use higher quality audio
     private var connectionAttempts = 0
     private let maxConnectionAttempts = 3
+    private let tokenRenewalInterval: TimeInterval = 480 // Renew token every 8 minutes (before 10-minute expiration)
 
     override init() {
         super.init()
         setupAudioInterruptionObserver()
+        setupNetworkObserver()
+    }
+
+    private func setupNetworkObserver() {
+        // Monitor network changes and attempt reconnection when network returns
+        networkObservationTask = Task { [weak self] in
+            guard let self = self else { return }
+
+            var previouslyConnected = networkMonitor.isConnected
+
+            // Poll network status periodically
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // Check every second
+
+                let currentlyConnected = networkMonitor.isConnected
+
+                // Network transitioned from disconnected to connected
+                if !previouslyConnected && currentlyConnected && wasInterrupted {
+                    print("[AssemblyAI Live] Network restored, attempting to reconnect...")
+                    await attemptReconnection()
+                }
+
+                previouslyConnected = currentlyConnected
+            }
+        }
+    }
+
+    private func attemptReconnection() async {
+        guard wasInterrupted && networkMonitor.isConnected else { return }
+
+        print("[AssemblyAI Live] Attempting to reconnect WebSocket after network restoration...")
+
+        do {
+            // Get a new session token
+            try await getSessionToken()
+
+            // Reconnect WebSocket
+            try await startWebSocketConnection()
+
+            // Restart audio capture if needed
+            if !audioEngine.isRunning {
+                try startAudioCapture()
+            }
+
+            wasInterrupted = false
+            print("[AssemblyAI Live] ✅ Reconnection successful")
+
+            await MainActor.run {
+                self.error = nil
+            }
+        } catch {
+            print("[AssemblyAI Live] ⚠️ Reconnection failed: \(error)")
+            // Will try again on next network check
+        }
     }
     
     func startLiveTranscription() async throws {
@@ -59,10 +122,14 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Start audio capture
         try startAudioCapture()
 
+        // Start token renewal timer
+        startTokenRenewalTimer()
+
         // Note: isConnected will be set to true when we receive "SessionBegins" message
     }
     
     func stopLiveTranscription() {
+        stopTokenRenewalTimer()
         stopAudioCapture()
         closeWebSocketConnection()
         isConnected = false
@@ -97,7 +164,9 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
             }
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkRetry.withExponentialBackoff(maxAttempts: 2) {
+            try await URLSession.shared.data(for: request)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
@@ -131,7 +200,9 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10 // 10 second timeout to prevent hanging
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkRetry.withExponentialBackoff(maxAttempts: 2) {
+            try await URLSession.shared.data(for: request)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
@@ -189,6 +260,9 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Add connection state tracking
         webSocketTask?.resume()
 
+        // Record session start time for token renewal
+        sessionStartTime = Date()
+
         // Wait a moment for connection to establish
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
 
@@ -221,13 +295,15 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         // Close the WebSocket connection
         closeWebSocketConnection()
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.isConnected = false
 
             // Determine if it's a network error
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain {
-                self.error = "Network connection lost. Recording continues, but live transcription is paused."
+                self.wasInterrupted = true // Mark for reconnection when network returns
+                self.error = "Network connection lost. Recording continues, will reconnect when network returns."
+                print("[AssemblyAI Live] Network error detected, will attempt reconnection when network is available")
             } else {
                 self.error = error.localizedDescription
             }
@@ -456,14 +532,15 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         }
 
         let frameLength = Int(buffer.frameLength)
-        if frameLength == 0 {
-            print("[AssemblyAI Live] ⚠️ Trying to send empty audio buffer")
+
+        // Validate frame length is reasonable (not 0 and not absurdly large)
+        guard frameLength > 0 && frameLength <= 65536 else {
+            print("[AssemblyAI Live] ⚠️ Invalid frame length: \(frameLength)")
             return
         }
 
         // Handle both PCM16 and Float32 formats
         let data: Data
-        let audioLevel: Float
 
         if buffer.format.commonFormat == .pcmFormatInt16 {
             // PCM16 format (preferred for Universal-Streaming)
@@ -472,12 +549,14 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 return
             }
 
-            data = Data(bytes: channelData, count: frameLength * 2) // 2 bytes per sample for 16-bit int
+            // Validate the pointer is not null and copy data immediately
+            let byteCount = frameLength * 2 // 2 bytes per sample for 16-bit int
+            guard byteCount > 0 && byteCount <= 131072 else { // Max ~64K frames * 2 bytes
+                print("[AssemblyAI Live] Invalid byte count: \(byteCount)")
+                return
+            }
 
-            // Calculate audio level for PCM16
-            audioLevel = (0..<frameLength).reduce(0.0) { sum, i in
-                sum + Float(abs(channelData[i])) / 32768.0 // Normalize to 0-1 range
-            } / Float(frameLength)
+            data = Data(bytes: channelData, count: byteCount)
 
         } else {
             // Float32 format (fallback)
@@ -486,27 +565,29 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
                 return
             }
 
-            data = Data(bytes: channelData, count: frameLength * 4) // 4 bytes per sample for 32-bit float
+            // Validate and copy data immediately
+            let byteCount = frameLength * 4 // 4 bytes per sample for 32-bit float
+            guard byteCount > 0 && byteCount <= 262144 else { // Max ~64K frames * 4 bytes
+                print("[AssemblyAI Live] Invalid byte count: \(byteCount)")
+                return
+            }
 
-            // Calculate audio level for Float32
-            audioLevel = (0..<frameLength).reduce(0.0) { sum, i in
-                sum + abs(channelData[i])
-            } / Float(frameLength)
+            data = Data(bytes: channelData, count: byteCount)
         }
 
-        print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames) from \(buffer.format.channelCount) channel(s), format: \(buffer.format.commonFormat.rawValue), avg level: \(String(format: "%.6f", audioLevel))")
+        // Log occasionally to monitor without spam
+        if Int.random(in: 1...100) == 1 {
+            print("[AssemblyAI Live] Sending audio data: \(data.count) bytes (\(frameLength) frames)")
+        }
 
         // Send binary audio data directly (AssemblyAI Universal-Streaming expects PCM16 binary data)
-        webSocketTask?.send(.data(data)) { error in
+        webSocketTask?.send(.data(data)) { [weak self] error in
             if let error = error {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
-                DispatchQueue.main.async {
+                guard let self = self else { return }
+                Task { @MainActor in
                     self.isConnected = false
-                }
-            } else {
-                // Successful send - log occasionally to avoid spam
-                if frameLength > 0 && Int.random(in: 1...100) == 1 {
-                    print("[AssemblyAI Live] ✅ Audio data sent successfully: \(frameLength) frames")
+                    self.wasInterrupted = true
                 }
             }
         }
@@ -514,11 +595,17 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
     
     private func stopAudioCapture() {
         print("[AssemblyAI Live] Stopping audio capture")
+
+        // Stop the audio engine first to prevent new callbacks
         if audioEngine.isRunning {
-            audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
             print("[AssemblyAI Live] Audio engine stopped")
         }
+
+        // Remove the tap synchronously to ensure no more callbacks fire
+        // This must be done even if the engine is not running to clean up properly
+        audioEngine.inputNode.removeTap(onBus: 0)
+        print("[AssemblyAI Live] Audio tap removed")
 
         // Don't deactivate the audio session since RecordingService is still using it
         print("[AssemblyAI Live] Leaving audio session active for RecordingService")
@@ -602,9 +689,66 @@ class AssemblyAILiveTranscriptionService: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Token Renewal
+
+    private func startTokenRenewalTimer() {
+        print("[AssemblyAI Live] Starting token renewal timer (will renew every \(tokenRenewalInterval) seconds)")
+        stopTokenRenewalTimer() // Ensure no duplicate timers
+
+        tokenRenewalTimer = Timer.scheduledTimer(withTimeInterval: tokenRenewalInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            print("[AssemblyAI Live] Token renewal timer fired")
+            Task {
+                await self.renewSessionToken()
+            }
+        }
+    }
+
+    private func stopTokenRenewalTimer() {
+        tokenRenewalTimer?.invalidate()
+        tokenRenewalTimer = nil
+        sessionStartTime = nil
+        print("[AssemblyAI Live] Token renewal timer stopped")
+    }
+
+    private func renewSessionToken() async {
+        guard isConnected else {
+            print("[AssemblyAI Live] Skipping token renewal - not connected")
+            return
+        }
+
+        print("[AssemblyAI Live] Renewing session token...")
+
+        do {
+            // Get a new session token
+            let oldToken = sessionToken
+            try await getSessionToken()
+
+            // Only reconnect if we got a new token
+            if sessionToken != oldToken, let newToken = sessionToken {
+                print("[AssemblyAI Live] Got new session token, reconnecting WebSocket...")
+
+                // Close old WebSocket
+                webSocketTask?.cancel(with: .goingAway, reason: nil)
+                webSocketTask = nil
+
+                // Reconnect with new token
+                try await startWebSocketConnection()
+
+                print("[AssemblyAI Live] ✅ Session token renewed and reconnected successfully")
+            }
+        } catch {
+            print("[AssemblyAI Live] ⚠️ Failed to renew session token: \(error)")
+            // Don't stop transcription on renewal failure - the existing token might still work
+            // The WebSocket will handle disconnection if the token expires
+        }
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
+        stopTokenRenewalTimer()
         stopLiveTranscription()
+        networkObservationTask?.cancel()
     }
 }
 
