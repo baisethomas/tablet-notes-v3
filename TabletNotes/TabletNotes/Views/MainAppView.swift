@@ -74,103 +74,7 @@ struct MainAppView: View {
         } else {
             NavigationStack {
                 ZStack(alignment: .bottom) {
-                switch currentScreen {
-                case .onboarding:
-                    OnboardingView(
-                        onComplete: {
-                            // Only set hasSeenOnboarding to true if this is the first time
-                            if case .home = onboardingReturnScreen {
-                                UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
-                            }
-                            currentScreen = onboardingReturnScreen
-                        },
-                        onSkip: {
-                            // Only set hasSeenOnboarding to true if this is the first time
-                            if case .home = onboardingReturnScreen {
-                                UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
-                            }
-                            currentScreen = onboardingReturnScreen
-                        }
-                    )
-                case .home:
-                    AnyView(SermonListView(
-                        sermonService: sermonService,
-                        syncService: syncService,
-                        onSermonSelected: { sermon in
-                            currentScreen = .sermonDetail(sermon: sermon)
-                        },
-                        onSettings: {
-                            currentScreen = .settings
-                        },
-                        onStartRecording: {
-                            showServiceTypeModal = true
-                        }
-                    ))
-                case .recording(let serviceType):
-                    AnyView(RecordingView(
-                        serviceType: serviceType ?? "Sermon",
-                        noteService: NoteService(sessionId: currentRecordingSessionId),
-                        onNext: { sermon in
-                            sermonService.fetchSermons() // Refresh the list
-                            lastCreatedSermon = sermon
-                            // Delay clearing session to ensure notes are fully saved to sermon
-                            // This prevents race condition where session clears before async sermon save completes
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                noteService.clearSession()
-                                // Generate new session ID for next recording
-                                currentRecordingSessionId = UUID().uuidString
-                            }
-                            currentScreen = .sermons // Go to the list after recording
-                        },
-                        sermonService: sermonService,
-                        recordingService: recordingService,
-                        transcriptionService: transcriptionService
-                    ))
-                case .sermonDetail(let sermon):
-                    AnyView(SermonDetailView(
-                        sermonService: sermonService,
-                        authManager: authManager,
-                        sermonID: sermon.id,
-                        onBack: { currentScreen = .sermons }
-                    ))
-                case .sermons:
-                    AnyView(SermonListView(
-                        sermonService: sermonService,
-                        syncService: syncService,
-                        onSermonSelected: { sermon in
-                            currentScreen = .sermonDetail(sermon: sermon)
-                        },
-                        onSettings: {
-                            currentScreen = .settings
-                        },
-                        onStartRecording: {
-                            showServiceTypeModal = true
-                        }
-                    ))
-                case .settings:
-                    AnyView(SettingsView(
-                        onNext: { 
-                            currentScreen = .home 
-                        },
-                        onShowOnboarding: {
-                            onboardingReturnScreen = .settings
-                            currentScreen = .onboarding
-                        },
-                        onNavigateToAccount: {
-                            currentScreen = .account
-                        }
-                    ))
-                case .account:
-                    AnyView(AccountView(
-                        onBack: { 
-                            currentScreen = .home 
-                        },
-                        onNavigateToSettings: {
-                            currentScreen = .settings
-                        }
-                    ))
-                }
+                destinationView(for: currentScreen)
 
                 // Show footer and mini-player together when not in onboarding, settings, or account
                 if !isOnboardingScreen(currentScreen) && !isSettingsOrAccountScreen(currentScreen) {
@@ -655,6 +559,108 @@ struct MainAppView: View {
             withAnimation {
                 showTrialPrompt = true
             }
+        }
+    }
+
+    // MARK: - ViewBuilder for Navigation (Performance optimization - removes AnyView type erasure)
+    @ViewBuilder
+    private func destinationView(for screen: AppScreen) -> some View {
+        switch screen {
+        case .onboarding:
+            OnboardingView(
+                onComplete: {
+                    // Only set hasSeenOnboarding to true if this is the first time
+                    if case .home = onboardingReturnScreen {
+                        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                    }
+                    currentScreen = onboardingReturnScreen
+                },
+                onSkip: {
+                    // Only set hasSeenOnboarding to true if this is the first time
+                    if case .home = onboardingReturnScreen {
+                        UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+                    }
+                    currentScreen = onboardingReturnScreen
+                }
+            )
+        case .home:
+            SermonListView(
+                sermonService: sermonService,
+                syncService: syncService,
+                onSermonSelected: { sermon in
+                    currentScreen = .sermonDetail(sermon: sermon)
+                },
+                onSettings: {
+                    currentScreen = .settings
+                },
+                onStartRecording: {
+                    showServiceTypeModal = true
+                }
+            )
+        case .recording(let serviceType):
+            RecordingView(
+                serviceType: serviceType ?? "Sermon",
+                noteService: NoteService(sessionId: currentRecordingSessionId),
+                onNext: { sermon in
+                    sermonService.fetchSermons() // Refresh the list
+                    lastCreatedSermon = sermon
+                    // Delay clearing session to ensure notes are fully saved to sermon
+                    // This prevents race condition where session clears before async sermon save completes
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let noteService = NoteService(sessionId: currentRecordingSessionId)
+                        noteService.clearSession()
+                        // Generate new session ID for next recording
+                        currentRecordingSessionId = UUID().uuidString
+                    }
+                    currentScreen = .sermons // Go to the list after recording
+                },
+                sermonService: sermonService,
+                recordingService: recordingService,
+                transcriptionService: transcriptionService
+            )
+        case .sermonDetail(let sermon):
+            SermonDetailView(
+                sermonService: sermonService,
+                authManager: authManager,
+                sermonID: sermon.id,
+                onBack: { currentScreen = .sermons }
+            )
+        case .sermons:
+            SermonListView(
+                sermonService: sermonService,
+                syncService: syncService,
+                onSermonSelected: { sermon in
+                    currentScreen = .sermonDetail(sermon: sermon)
+                },
+                onSettings: {
+                    currentScreen = .settings
+                },
+                onStartRecording: {
+                    showServiceTypeModal = true
+                }
+            )
+        case .settings:
+            SettingsView(
+                onNext: {
+                    currentScreen = .home
+                },
+                onShowOnboarding: {
+                    onboardingReturnScreen = .settings
+                    currentScreen = .onboarding
+                },
+                onNavigateToAccount: {
+                    currentScreen = .account
+                }
+            )
+        case .account:
+            AccountView(
+                onBack: {
+                    currentScreen = .home
+                },
+                onNavigateToSettings: {
+                    currentScreen = .settings
+                }
+            )
         }
     }
 }

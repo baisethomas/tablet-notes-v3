@@ -282,7 +282,21 @@ struct SermonDetailView: View {
         // Fetch from sermonService which uses SwiftData
         sermonService.sermons.first(where: { $0.id == sermonID })
     }
-    
+
+    // MARK: - Performance Optimizations: Cached sorted arrays (no inline sorting in ForEach)
+
+    /// Sorted transcript segments (cached - avoids O(n log n) on every render)
+    var sortedTranscriptSegments: [TranscriptSegment] {
+        guard let transcript = sermon?.transcript else { return [] }
+        return transcript.segments.sorted(by: { $0.startTime < $1.startTime })
+    }
+
+    /// Sorted notes (cached - avoids O(n log n) on every render)
+    var sortedNotes: [Note] {
+        guard let sermon = sermon else { return [] }
+        return sermon.notes.sorted(by: { $0.timestamp < $1.timestamp })
+    }
+
     var body: some View {
         NavigationView {
             ZStack { // <-- Add ZStack to allow background color
@@ -756,7 +770,7 @@ struct SermonDetailView: View {
                             if let transcript = sermon.transcript {
                                 // Display transcript segments with timestamps
                                 if !transcript.segments.isEmpty {
-                                    ForEach(transcript.segments.sorted(by: { $0.startTime < $1.startTime }), id: \.id) { segment in
+                                    ForEach(sortedTranscriptSegments, id: \.id) { segment in
                                         VStack(alignment: .leading, spacing: 8) {
                                             // Clickable timestamp
                                             Button(action: {
@@ -817,7 +831,7 @@ struct SermonDetailView: View {
                 let _ = print("[DEBUG] SermonDetailView: Found \(sermon.notes.count) notes for sermon \(sermon.title)")
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        ForEach(sermon.notes.sorted(by: { $0.timestamp < $1.timestamp })) { note in
+                        ForEach(sortedNotes) { note in
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
                                     Image(systemName: "note.text")

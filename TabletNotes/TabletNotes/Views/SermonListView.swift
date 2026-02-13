@@ -251,29 +251,9 @@ struct SermonRowView: View {
         return keyPoints.prefix(4).map { "• \($0)" }.joined(separator: "\n")
     }
     
+    /// Removes markdown formatting using optimized cached regex patterns
     private func removeMarkdownFormatting(from text: String) -> String {
-        var cleaned = text
-        
-        // Remove common markdown patterns
-        cleaned = cleaned.replacingOccurrences(of: "**", with: "") // Bold
-        cleaned = cleaned.replacingOccurrences(of: "*", with: "") // Italic (but preserve bullet points)
-        cleaned = cleaned.replacingOccurrences(of: "__", with: "") // Bold alternative
-        cleaned = cleaned.replacingOccurrences(of: "_", with: "") // Italic alternative
-        cleaned = cleaned.replacingOccurrences(of: "~~", with: "") // Strikethrough
-        cleaned = cleaned.replacingOccurrences(of: "`", with: "") // Code
-        cleaned = cleaned.replacingOccurrences(of: "###", with: "") // Headers
-        cleaned = cleaned.replacingOccurrences(of: "##", with: "") // Headers
-        cleaned = cleaned.replacingOccurrences(of: "#", with: "") // Headers
-        
-        // Remove links [text](url)
-        let linkPattern = "\\[([^\\]]+)\\]\\([^\\)]+\\)"
-        cleaned = cleaned.replacingOccurrences(of: linkPattern, with: "$1", options: .regularExpression)
-        
-        // Clean up extra whitespace
-        cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        return cleaned
+        return MarkdownCleaner.clean(text)
     }
 }
 
