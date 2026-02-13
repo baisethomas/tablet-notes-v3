@@ -170,7 +170,7 @@ struct StructuredSummaryView: View {
             if summaryText.contains("**") && summaryText.contains("**") {
                 // Has structured format, display as formatted sections
                 let sections = parseSimpleSections(summaryText)
-                ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                ForEach(Array(sections.enumerated()), id: \.element.title) { index, section in
                     VStack(alignment: .leading, spacing: 8) {
                         // Section header with appropriate icon
                         HStack {

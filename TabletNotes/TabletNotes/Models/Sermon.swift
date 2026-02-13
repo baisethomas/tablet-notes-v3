@@ -27,7 +27,11 @@ final class Sermon {
     // User relationship - each sermon belongs to a user
     var userId: UUID? // Foreign key to User - optional for migration compatibility
     @Relationship(inverse: \User.sermons) var user: User?
-    
+
+    // Cache for file existence check (not persisted, recomputed on demand)
+    @Transient private var _audioFileExistsCache: (checked: Date, exists: Bool)?
+    private static let cacheValidityDuration: TimeInterval = 5.0 // Cache for 5 seconds
+
     // Computed property to dynamically construct the full audio file URL
     var audioFileURL: URL {
         get {
@@ -36,10 +40,26 @@ final class Sermon {
             return audioPath.appendingPathComponent(audioFileName)
         }
     }
-    
-    // Helper method to check if audio file exists
+
+    // Helper method to check if audio file exists (with caching to reduce I/O)
     var audioFileExists: Bool {
-        return FileManager.default.fileExists(atPath: audioFileURL.path)
+        let now = Date()
+
+        // Return cached value if it's still valid
+        if let cache = _audioFileExistsCache,
+           now.timeIntervalSince(cache.checked) < Self.cacheValidityDuration {
+            return cache.exists
+        }
+
+        // Perform actual file check and cache result
+        let exists = FileManager.default.fileExists(atPath: audioFileURL.path)
+        _audioFileExistsCache = (checked: now, exists: exists)
+        return exists
+    }
+
+    // Method to invalidate cache (call when file is created/deleted)
+    func invalidateFileExistenceCache() {
+        _audioFileExistsCache = nil
     }
 
     // Computed property to count user questions (for usage limit tracking)
