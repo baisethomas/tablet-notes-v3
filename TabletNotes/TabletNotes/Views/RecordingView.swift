@@ -153,7 +153,7 @@ struct RecordingView: View {
     @ObservedObject var noteService: NoteService
     var onNext: ((Sermon) -> Void)?
     var sermonService: SermonService
-    @ObservedObject var recordingService: RecordingService
+    var recordingService: RecordingService
     @ObservedObject var transcriptionService: TranscriptionService
     private let recordingSessionId = UUID().uuidString
     @State private var showPermissionAlert = false

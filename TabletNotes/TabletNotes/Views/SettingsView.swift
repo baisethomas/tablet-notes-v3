@@ -3,7 +3,7 @@ import StoreKit
 
 struct SettingsView: View {
     @StateObject private var settings = SettingsService.shared
-    @StateObject private var authManager = AuthenticationManager.shared
+    private let authManager = AuthenticationManager.shared
     @State private var showingResetAlert = false
     @State private var showingAbout = false
     @State private var showingSubscriptionPrompt = false
@@ -545,7 +545,7 @@ struct FeatureRow: View {
 
 // MARK: - Cloud Sync Setting Row
 struct CloudSyncSettingRow: View {
-    @ObservedObject var authManager: AuthenticationManager
+    var authManager: AuthenticationManager
     let sermonService: SermonService?
     @Binding var showingSubscriptionPrompt: Bool
     
@@ -1375,7 +1375,7 @@ struct BibleTranslationSelectionView: View {
 // MARK: - Transcription Provider Picker
 struct TranscriptionProviderPicker: View {
     @ObservedObject var settings: SettingsService
-    @ObservedObject var authManager: AuthenticationManager
+    var authManager: AuthenticationManager
     @Binding var showingSubscriptionPrompt: Bool
 
     var body: some View {

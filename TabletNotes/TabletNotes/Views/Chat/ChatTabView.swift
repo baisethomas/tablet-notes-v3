@@ -9,8 +9,8 @@ import SwiftUI
 import Combine
 
 struct ChatTabView: View {
-    @ObservedObject var chatService: ChatService
-    @ObservedObject var authManager: AuthenticationManager
+    var chatService: ChatService
+    var authManager: AuthenticationManager
     let sermon: Sermon
 
     @State private var messageText = ""

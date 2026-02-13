@@ -240,7 +240,7 @@ struct TranscriptSegmentView: View {
 
 struct SermonDetailView: View {
     var sermonService: SermonService
-    @ObservedObject var authManager: AuthenticationManager
+    var authManager: AuthenticationManager
     let sermonID: UUID
     var onBack: (() -> Void)?
     @State private var selectedTab: Tab = .summary
@@ -260,7 +260,7 @@ struct SermonDetailView: View {
     @State private var summaryCancellables = Set<AnyCancellable>()
 
     // Chat service
-    @StateObject private var chatService = ChatService.shared
+    private let chatService = ChatService.shared
     
     enum Tab: String, CaseIterable {
         case summary = "Summary"

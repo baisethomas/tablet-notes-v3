@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SignInView: View {
-    @ObservedObject var authManager: AuthenticationManager
+    var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     
@@ -230,7 +230,7 @@ struct SignInView: View {
 
 // MARK: - Forgot Password View
 struct ForgotPasswordView: View {
-    @ObservedObject var authManager: AuthenticationManager
+    var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     

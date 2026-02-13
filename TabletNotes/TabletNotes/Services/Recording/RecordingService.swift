@@ -1,18 +1,21 @@
 import Foundation
+import Observation
 #if canImport(AVFoundation) && os(iOS)
 import AVFoundation
 import Combine
 import UIKit
 
-class RecordingService: NSObject, ObservableObject {
+@Observable
+class RecordingService: NSObject {
     private var audioRecorder: AVAudioRecorder?
     private let recordingSession = AVAudioSession.sharedInstance()
     private let fileManager = FileManager.default
     private var recordingURL: URL?
-    @Published var isRecording: Bool = false
-    @Published var isPaused: Bool = false
-    @Published var recordingDuration: TimeInterval = 0
-    @Published var remainingTime: TimeInterval? = nil
+    var isRecording: Bool = false
+    var isPaused: Bool = false
+    var recordingDuration: TimeInterval = 0
+    var remainingTime: TimeInterval? = nil
+    private var cachedMaxDuration: TimeInterval? = nil
     
     // Publishers
     let isRecordingPublisher: AnyPublisher<Bool, Never>
@@ -126,9 +129,7 @@ class RecordingService: NSObject, ObservableObject {
                 stopDurationTimer()
 
                 // Update the paused state
-                Task { @MainActor in
-                    isPaused = true
-                }
+                isPaused = true
                 isPausedSubject.send(true)
                 print("[RecordingService] Recording paused due to interruption")
             }
@@ -150,9 +151,7 @@ class RecordingService: NSObject, ObservableObject {
                     startDurationTimer()
 
                     // Update the paused state
-                    Task { @MainActor in
-                        isPaused = false
-                    }
+                    isPaused = false
                     isPausedSubject.send(false)
                     print("[RecordingService] Recording resumed successfully")
                 } catch {
@@ -184,23 +183,23 @@ class RecordingService: NSObject, ObservableObject {
     }
     
     // MARK: - Duration Limit Checking
-    
+
     /// Check if user can start a new recording based on subscription limits
     @MainActor
     func canStartRecording() -> (canStart: Bool, reason: String?) {
         guard let currentUser = authManager.currentUser else {
             return (false, "User not authenticated")
         }
-        
+
         // Check if user can create new recordings (monthly limit)
         if !currentUser.canCreateNewRecording() {
             let remaining = currentUser.remainingRecordings() ?? 0
             return (false, "Monthly recording limit reached. \(remaining) recordings remaining this month.")
         }
-        
+
         return (true, nil)
     }
-    
+
     /// Get the maximum recording duration for the current user
     @MainActor
     func getMaxRecordingDuration() -> TimeInterval? {
@@ -213,23 +212,21 @@ class RecordingService: NSObject, ObservableObject {
     
     /// Check if current recording duration exceeds limit
     private func checkDurationLimit() {
-        Task { @MainActor in
-            guard let maxDuration = getMaxRecordingDuration() else {
-                // No limit, update remaining time to nil
-                remainingTime = nil
-                return
-            }
-            
-            let remaining = maxDuration - recordingDuration
-            remainingTime = max(0, remaining)
-            
-            // Auto-stop if limit reached
-            if recordingDuration >= maxDuration {
-                print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
-                let audioURL = stopRecording()
-                // Emit auto-stop event with the audio URL and auto-stop flag
-                recordingStoppedSubject.send((audioURL, true))
-            }
+        guard let maxDuration = cachedMaxDuration else {
+            // No limit, update remaining time to nil
+            remainingTime = nil
+            return
+        }
+
+        let remaining = maxDuration - recordingDuration
+        remainingTime = max(0, remaining)
+
+        // Auto-stop if limit reached
+        if recordingDuration >= maxDuration {
+            print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
+            let audioURL = stopRecording()
+            // Emit auto-stop event with the audio URL and auto-stop flag
+            recordingStoppedSubject.send((audioURL, true))
         }
     }
 
@@ -239,14 +236,17 @@ class RecordingService: NSObject, ObservableObject {
         if !canStart {
             throw RecordingError.limitExceeded(reason: reason ?? "Recording limit exceeded")
         }
-        
+
+        // Cache the max duration for this recording session
+        cachedMaxDuration = await getMaxRecordingDuration()
+
         try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
         try recordingSession.setActive(true)
-        
+
         // Use permanent storage instead of temporary directory
         let filename = "sermon_\(UUID().uuidString).m4a"
         let url = getAudioRecordingsDirectory().appendingPathComponent(filename)
-        
+
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 44100,
@@ -257,29 +257,23 @@ class RecordingService: NSObject, ObservableObject {
         audioRecorder?.delegate = self
         audioRecorder?.record()
         recordingURL = url
-        
+
         // Start duration tracking
-        Task { @MainActor in
-            recordingDuration = 0
-            recordingStartTime = Date()
-        }
+        recordingDuration = 0
+        recordingStartTime = Date()
         startDurationTimer()
-        
-        Task { @MainActor in
-            isRecording = true
-        }
+
+        isRecording = true
         isRecordingSubject.send(true)
         audioFileURLSubject.send(url)
         audioFileNameSubject.send(filename)
-        
+
         // Log the duration limit for this recording
-        Task { @MainActor in
-            if let maxDuration = getMaxRecordingDuration() {
-                let maxMinutes = Int(maxDuration / 60)
-                print("[RecordingService] Started recording with \(maxMinutes) minute limit")
-            } else {
-                print("[RecordingService] Started recording with no duration limit")
-            }
+        if let maxDuration = cachedMaxDuration {
+            let maxMinutes = Int(maxDuration / 60)
+            print("[RecordingService] Started recording with \(maxMinutes) minute limit")
+        } else {
+            print("[RecordingService] Started recording with no duration limit")
         }
     }
 
@@ -288,19 +282,16 @@ class RecordingService: NSObject, ObservableObject {
         audioRecorder?.stop()
         stopDurationTimer()
 
-        Task { @MainActor in
-            isRecording = false
-            isPaused = false
-        }
+        isRecording = false
+        isPaused = false
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
 
         // Reset duration tracking
-        Task { @MainActor in
-            recordingDuration = 0
-            remainingTime = nil
-        }
+        recordingDuration = 0
+        remainingTime = nil
         recordingStartTime = nil
+        cachedMaxDuration = nil
 
         return currentURL
     }
@@ -309,19 +300,15 @@ class RecordingService: NSObject, ObservableObject {
         guard isRecording, !isPaused else { return }
         audioRecorder?.pause()
         stopDurationTimer()
-        Task { @MainActor in
-            isPaused = true
-        }
+        isPaused = true
         isPausedSubject.send(true)
     }
-    
+
     func resumeRecording() throws {
         guard isRecording, isPaused else { return }
         audioRecorder?.record()
         startDurationTimer()
-        Task { @MainActor in
-            isPaused = false
-        }
+        isPaused = false
         isPausedSubject.send(false)
     }
     
@@ -361,9 +348,7 @@ class RecordingService: NSObject, ObservableObject {
         let currentDuration = Date().timeIntervalSince(startTime)
         print("[RecordingService] updateDuration: \(String(format: "%.1f", currentDuration))s")
 
-        Task { @MainActor in
-            recordingDuration = currentDuration
-        }
+        recordingDuration = currentDuration
         checkDurationLimit()
     }
     
@@ -404,10 +389,8 @@ class RecordingService: NSObject, ObservableObject {
 
 extension RecordingService: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        Task { @MainActor in
-            isRecording = false
-            isPaused = false
-        }
+        isRecording = false
+        isPaused = false
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
         if flag {

@@ -33,10 +33,10 @@ struct MainAppView: View {
     @State private var cancellables = Set<AnyCancellable>() // Store Combine subscriptions for mini player
     @State private var sermonService: SermonService
     @StateObject private var settingsService = SettingsService.shared
-    @StateObject private var recordingService = RecordingService()
+    @State private var recordingService = RecordingService()
     @StateObject private var transcriptionService = TranscriptionService()
     @StateObject private var trialPromptManager = TrialPromptManager.shared
-    @StateObject private var authManager = AuthenticationManager.shared
+    private let authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager

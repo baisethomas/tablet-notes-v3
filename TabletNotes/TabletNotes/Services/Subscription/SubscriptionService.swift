@@ -45,7 +45,7 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
     
     private func setupObservers() {
         // Listen for auth state changes
-        authManager.$authState
+        authManager.$authStatePublished
             .sink { [weak self] authState in
                 Task { @MainActor in
                     await self?.handleAuthStateChange(authState)

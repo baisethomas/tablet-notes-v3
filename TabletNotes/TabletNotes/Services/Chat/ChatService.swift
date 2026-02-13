@@ -9,8 +9,11 @@ import Foundation
 import Combine
 import SwiftData
 import Supabase
+import Observation
 
-class ChatService: ObservableObject, ChatServiceProtocol {
+@MainActor
+@Observable
+class ChatService: ChatServiceProtocol {
     static let shared = ChatService()
 
     // MARK: - Publishers

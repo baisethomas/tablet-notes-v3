@@ -61,7 +61,7 @@ class SermonService {
     @MainActor
     private func setupAuthStateObserver() {
         // Refresh sermons when auth state changes
-        authManager.$authState
+        authManager.$authStatePublished
             .sink { [weak self] authState in
                 Task { @MainActor in
                     self?.fetchSermons()

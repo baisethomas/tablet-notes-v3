@@ -1,14 +1,19 @@
 import Foundation
 import Combine
 import SwiftUI
+import Observation
 
 @MainActor
-final class AuthenticationManager: ObservableObject {
-    
-    // MARK: - Published Properties
-    @Published private(set) var authState: AuthState = .loading
-    @Published private(set) var currentUser: User? = nil
-    @Published private(set) var isInitialized = false
+@Observable
+final class AuthenticationManager {
+
+    // MARK: - Observable Properties (auto-tracked by @Observable)
+    private(set) var authState: AuthState = .loading
+    private(set) var currentUser: User? = nil
+    private(set) var isInitialized = false
+
+    // MARK: - Combine Publishers (for backward compatibility during migration)
+    @ObservationIgnored @Published var authStatePublished: AuthState = .loading
     
     // MARK: - Private Properties
     private let authService: any AuthServiceProtocol
@@ -72,6 +77,7 @@ final class AuthenticationManager: ObservableObject {
             .sink { [weak self] state in
                 print("[AuthenticationManager] Auth state changed to: \(state)")
                 self?.authState = state
+                self?.authStatePublished = state // Sync for backward compat
             }
             .store(in: &cancellables)
         
@@ -104,6 +110,7 @@ final class AuthenticationManager: ObservableObject {
             } catch {
                 // If refresh fails, user is not authenticated
                 authState = .unauthenticated
+                authStatePublished = .unauthenticated // Sync for backward compat
             }
             
             isInitialized = true
@@ -142,9 +149,9 @@ extension AuthenticationManager {
 
 // MARK: - View Modifier for Authentication
 struct AuthenticationRequired: ViewModifier {
-    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var authManager = AuthenticationManager.shared
     @State private var recheckTimer: Timer?
-    
+
     func body(content: Content) -> some View {
         Group {
             if authManager.isInitialized {
@@ -167,7 +174,7 @@ struct AuthenticationRequired: ViewModifier {
                     ProgressView()
                         .scaleEffect(1.5)
                         .progressViewStyle(CircularProgressViewStyle(tint: .accentColor))
-                    
+
                     Text("Loading...")
                         .font(.headline)
                         .foregroundColor(.secondary)
@@ -177,22 +184,20 @@ struct AuthenticationRequired: ViewModifier {
                 .background(Color(.systemBackground))
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: authManager.authState)
-        .onChange(of: authManager.authState) { _, newState in
-            print("[AuthenticationRequired] Auth state changed to: \(newState), isAuthenticated: \(authManager.isAuthenticated)")
-        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             print("[AuthenticationRequired] App entering foreground - rechecking auth")
             recheckAuthState()
         }
     }
-    
+
     private func startPeriodicRecheck() {
         // Only start periodic check if we have a session to check
         // Check every 30 seconds instead of 2 seconds to avoid spam
         recheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
             // Only recheck if we might have a session
-            if authManager.authState != .unauthenticated {
+            if case .unauthenticated = authManager.authState {
+                // Don't recheck when unauthenticated
+            } else {
                 recheckAuthState()
             }
         }
