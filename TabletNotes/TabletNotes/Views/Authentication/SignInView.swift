@@ -142,6 +142,26 @@ struct SignInView: View {
                         }
                         .padding(.vertical, 8)
                         
+                        // Google Sign In button
+                        Button(action: signInWithGoogle) {
+                            HStack {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 18))
+                                Text("Continue with Google")
+                                    .font(.headline)
+                            }
+                            .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(colorScheme == .dark ? Color(red: 0.14, green: 0.22, blue: 0.33) : Color(.systemGray6))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4), lineWidth: 1)
+                            )
+                        }
+                        .disabled(isLoading)
+                        
                         // Create account button
                         Button(action: {
                             dismiss()
@@ -216,6 +236,42 @@ struct SignInView: View {
                     isLoading = false
                     errorMessage = error.localizedDescription ?? "An error occurred"
                     showingError = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "An unexpected error occurred"
+                    showingError = true
+                }
+            }
+        }
+    }
+    
+    private func signInWithGoogle() {
+        isLoading = true
+        focusedField = nil
+        
+        Task {
+            do {
+                _ = try await authManager.signInWithGoogle()
+                // OAuth flow will complete via callback, so we don't dismiss immediately
+                // The auth state listener will handle the state change
+                await MainActor.run {
+                    isLoading = false
+                    // Don't show error for OAuth initiation message
+                    if !errorMessage.contains("OAuth flow initiated") {
+                        // If we get here without an error, the OAuth flow started successfully
+                        // The callback will handle completion
+                    }
+                }
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    // Don't show error for OAuth initiation - it's expected
+                    if !error.localizedDescription.contains("OAuth flow initiated") {
+                        errorMessage = error.localizedDescription ?? "An error occurred"
+                        showingError = true
+                    }
                 }
             } catch {
                 await MainActor.run {

@@ -6,5 +6,16 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tabletnotes</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>com.tabletnotes.app</string>
+		</dict>
+	</array>
 </dict>
 </plist>
