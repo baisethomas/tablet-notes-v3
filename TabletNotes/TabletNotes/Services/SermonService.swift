@@ -73,7 +73,7 @@ class SermonService {
     private var cancellables = Set<AnyCancellable>()
     private var summaryServiceCancellables: [UUID: Set<AnyCancellable>] = [:]
 
-    func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil) {
+    func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil, completion: ((UUID) -> Void)? = nil) {
         print("[SermonService] saveSermon called with title: \(title), date: \(date), serviceType: \(serviceType)")
         
         Task { @MainActor in
@@ -233,6 +233,9 @@ class SermonService {
             }
             
             fetchSermons()
+
+            // Notify caller that save is complete
+            completion?(sermonID)
         }
     }
 
@@ -776,8 +779,8 @@ class SermonService {
     
     /// Generate summary for a sermon and handle completion at service level
     /// This ensures summaries are updated even if views are dismissed
-    func generateSummaryForSermon(_ sermon: Sermon, transcript: String, serviceType: String) {
-        print("[SermonService] Generating summary for sermon: \(sermon.id)")
+    func generateSummaryForSermon(sermonId: UUID, transcript: String, serviceType: String) {
+        print("[SermonService] Generating summary for sermon: \(sermonId)")
 
         // Note: We don't update the sermon's status here because:
         // 1. If this is called right after saveSermon, the sermon isn't in the context yet
@@ -786,7 +789,6 @@ class SermonService {
 
         // Use shared summary service instance
         let summaryService = SummaryService.shared
-        let sermonId = sermon.id
 
         // Initialize cancellable storage for this sermon
         if summaryServiceCancellables[sermonId] == nil {

@@ -151,7 +151,7 @@ struct PulseButton: View {
 struct RecordingView: View {
     let serviceType: String
     @ObservedObject var noteService: NoteService
-    var onNext: ((Sermon) -> Void)?
+    var onNext: ((UUID) -> Void)?
     var sermonService: SermonService
     var recordingService: RecordingService
     @ObservedObject var transcriptionService: TranscriptionService
@@ -919,9 +919,12 @@ struct RecordingView: View {
             summary: nil,
             transcriptionStatus: "pending", // Mark as pending for later processing
             summaryStatus: "pending",
-            id: sermonId
+            id: sermonId,
+            completion: { savedId in
+                onNext?(savedId)
+            }
         )
-        
+
         // Add to retry queue
         let pendingTranscription = PendingTranscription(
             audioFileURL: audioURL,
@@ -930,23 +933,13 @@ struct RecordingView: View {
             serviceType: serviceType
         )
         transcriptionRetryService.addPendingTranscription(pendingTranscription)
-        
+
         // Clear the error and reset UI
         withAnimation(.easeInOut(duration: 0.5)) {
             transcriptProcessingError = nil
             isRecordingStarted = false
             isPaused = false
             transcript = ""
-        }
-        
-        // Show success message briefly
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            // Navigate back to sermons list or show success message
-            // Try to get the saved sermon and call onNext callback if available
-            if let onNext = onNext, 
-               let savedSermon = sermonService.sermons.first(where: { $0.id == sermonId }) {
-                onNext(savedSermon)
-            }
         }
     }
 
@@ -969,64 +962,30 @@ struct RecordingView: View {
             }
 
             // Save sermon with notes captured above
+            // Completion handler fires AFTER modelContext.save() succeeds
+            print("[RecordingView] Starting summarization for transcript length: \(text.count) via SermonService")
             sermonService.saveSermon(
                 title: title,
                 audioFileURL: url,
                 date: date,
                 serviceType: serviceType,
-                speaker: nil, // Default nil speaker for new recordings
+                speaker: nil,
                 transcript: transcriptModel,
-                notes: latestNotes, // Use captured notes snapshot
+                notes: latestNotes,
                 summary: summaryModel,
                 transcriptionStatus: "complete",
                 summaryStatus: "processing",
-                id: sermonId
-            )
-
-            // 🔥 TRIGGER SUMMARIZATION via service layer
-            // Create a temporary sermon object to pass to generateSummaryForSermon
-            // This avoids race condition where sermon might not be in sermons array yet
-            print("[RecordingView] Starting summarization for transcript length: \(text.count) via SermonService")
-            if let currentUser = AuthenticationManager.shared.currentUser {
-                let tempSermon = Sermon(
-                    id: sermonId,
-                    title: title,
-                    audioFileURL: url,
-                    date: date,
-                    serviceType: serviceType,
-                    speaker: nil,
-                    transcript: transcriptModel,
-                    notes: latestNotes,
-                    summary: summaryModel,
-                    transcriptionStatus: "complete",
-                    summaryStatus: "processing",
-                    userId: currentUser.id
-                )
-                sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
-            }
-            
-            // Create a minimal sermon object for the callback
-            // Note: This is just for the callback - the actual sermon is saved via SermonService
-            Task { @MainActor in
-                if let currentUser = AuthenticationManager.shared.currentUser {
-                    let callbackSermon = Sermon(
-                        id: sermonId,
-                        title: title,
-                        audioFileURL: url,
-                        date: date,
-                        serviceType: serviceType,
-                        speaker: nil,
-                        transcript: transcriptModel,
-                        notes: latestNotes,
-                        summary: summaryModel,
-                        transcriptionStatus: "complete",
-                        summaryStatus: "processing",
-                        userId: currentUser.id
+                id: sermonId,
+                completion: { savedId in
+                    // Trigger summarization using sermon ID only — no phantom @Model objects
+                    sermonService.generateSummaryForSermon(
+                        sermonId: savedId,
+                        transcript: text,
+                        serviceType: serviceType
                     )
-                    
-                    onNext?(callbackSermon)
+                    onNext?(savedId)
                 }
-            }
+            )
         }
     }
     

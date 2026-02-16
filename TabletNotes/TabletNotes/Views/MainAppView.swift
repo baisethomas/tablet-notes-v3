@@ -25,7 +25,6 @@ struct MainAppView: View {
     @State private var currentScreen: AppScreen = .home
     @State private var showServiceTypeModal = false
     @State private var selectedServiceType: String? = nil
-    @State private var lastCreatedSermon: Sermon? = nil
     @State private var showSplash = true
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
     @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
@@ -140,7 +139,7 @@ struct MainAppView: View {
                                                             let noteService = NoteService(sessionId: currentRecordingSessionId)
                                                             let notes = noteService.currentNotes
 
-                                                            // Save sermon with transcript
+                                                            // Save sermon with transcript — completion fires after save
                                                             sermonService.saveSermon(
                                                                 title: title,
                                                                 audioFileURL: audioURL,
@@ -152,31 +151,18 @@ struct MainAppView: View {
                                                                 summary: summaryModel,
                                                                 transcriptionStatus: "complete",
                                                                 summaryStatus: "processing",
-                                                                id: sermonId
+                                                                id: sermonId,
+                                                                completion: { savedId in
+                                                                    // Generate summary using sermon ID only — no phantom @Model
+                                                                    sermonService.generateSummaryForSermon(
+                                                                        sermonId: savedId,
+                                                                        transcript: text,
+                                                                        serviceType: serviceType
+                                                                    )
+                                                                    print("[MiniPlayer] Processing complete, refreshing sermon list")
+                                                                    sermonService.fetchSermons()
+                                                                }
                                                             )
-
-                                                            // Generate summary via service layer
-                                                            // Create a temporary sermon object to avoid race condition
-                                                            if let currentUser = AuthenticationManager.shared.currentUser {
-                                                                let tempSermon = Sermon(
-                                                                    id: sermonId,
-                                                                    title: title,
-                                                                    audioFileURL: audioURL,
-                                                                    date: date,
-                                                                    serviceType: serviceType,
-                                                                    speaker: nil,
-                                                                    transcript: transcriptModel,
-                                                                    notes: notes,
-                                                                    summary: summaryModel,
-                                                                    transcriptionStatus: "complete",
-                                                                    summaryStatus: "processing",
-                                                                    userId: currentUser.id
-                                                                )
-                                                                sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
-                                                            }
-
-                                                            print("[MiniPlayer] Processing complete, refreshing sermon list")
-                                                            sermonService.fetchSermons()
 
                                                         case .failure(let error):
                                                             print("[MiniPlayer] Transcription failed: \(error)")
@@ -203,13 +189,6 @@ struct MainAppView: View {
 
                                             // Clear recording state
                                             currentRecordingServiceType = nil
-                                            // Delay clearing session to ensure notes are fully saved
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                                let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                                noteService.clearSession()
-                                                // Generate new session ID for next recording
-                                                currentRecordingSessionId = UUID().uuidString
-                                            }
                                         }
                                     }
                                 }
@@ -306,7 +285,7 @@ struct MainAppView: View {
                                                     let noteService = NoteService(sessionId: currentRecordingSessionId)
                                                     let notes = noteService.currentNotes
 
-                                                    // Save sermon with transcript
+                                                    // Save sermon with transcript — completion fires after save
                                                     sermonService.saveSermon(
                                                         title: title,
                                                         audioFileURL: audioURL,
@@ -318,31 +297,18 @@ struct MainAppView: View {
                                                         summary: summaryModel,
                                                         transcriptionStatus: "complete",
                                                         summaryStatus: "processing",
-                                                        id: sermonId
+                                                        id: sermonId,
+                                                        completion: { savedId in
+                                                            // Generate summary using sermon ID only — no phantom @Model
+                                                            sermonService.generateSummaryForSermon(
+                                                                sermonId: savedId,
+                                                                transcript: text,
+                                                                serviceType: serviceType
+                                                            )
+                                                            print("[MiniPlayer] Processing complete, refreshing sermon list")
+                                                            sermonService.fetchSermons()
+                                                        }
                                                     )
-
-                                                    // Generate summary via service layer
-                                                    // Create a temporary sermon object to avoid race condition
-                                                    if let currentUser = AuthenticationManager.shared.currentUser {
-                                                        let tempSermon = Sermon(
-                                                            id: sermonId,
-                                                            title: title,
-                                                            audioFileURL: audioURL,
-                                                            date: date,
-                                                            serviceType: serviceType,
-                                                            speaker: nil,
-                                                            transcript: transcriptModel,
-                                                            notes: notes,
-                                                            summary: summaryModel,
-                                                            transcriptionStatus: "complete",
-                                                            summaryStatus: "processing",
-                                                            userId: currentUser.id
-                                                        )
-                                                        sermonService.generateSummaryForSermon(tempSermon, transcript: text, serviceType: serviceType)
-                                                    }
-
-                                                    print("[MiniPlayer] Processing complete, refreshing sermon list")
-                                                    sermonService.fetchSermons()
 
                                                 case .failure(let error):
                                                     print("[MiniPlayer] Transcription failed: \(error)")
@@ -369,13 +335,6 @@ struct MainAppView: View {
 
                                     // Clear recording state
                                     currentRecordingServiceType = nil
-                                    // Delay clearing session to ensure notes are fully saved
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                        let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                        noteService.clearSession()
-                                        // Generate new session ID for next recording
-                                        currentRecordingSessionId = UUID().uuidString
-                                    }
                                 }
                             }
                         }
@@ -601,18 +560,13 @@ struct MainAppView: View {
             RecordingView(
                 serviceType: serviceType ?? "Sermon",
                 noteService: NoteService(sessionId: currentRecordingSessionId),
-                onNext: { sermon in
-                    sermonService.fetchSermons() // Refresh the list
-                    lastCreatedSermon = sermon
-                    // Delay clearing session to ensure notes are fully saved to sermon
-                    // This prevents race condition where session clears before async sermon save completes
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        let noteService = NoteService(sessionId: currentRecordingSessionId)
-                        noteService.clearSession()
-                        // Generate new session ID for next recording
-                        currentRecordingSessionId = UUID().uuidString
-                    }
-                    currentScreen = .sermons // Go to the list after recording
+                onNext: { sermonId in
+                    sermonService.fetchSermons()
+                    // Save is confirmed complete (completion handler) — clear session immediately
+                    let noteService = NoteService(sessionId: currentRecordingSessionId)
+                    noteService.clearSession()
+                    currentRecordingSessionId = UUID().uuidString
+                    currentScreen = .sermons
                 },
                 sermonService: sermonService,
                 recordingService: recordingService,

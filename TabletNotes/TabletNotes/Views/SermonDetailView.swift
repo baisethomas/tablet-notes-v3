@@ -1128,7 +1128,7 @@ struct SermonDetailView: View {
 
         // Use service layer approach to ensure summary completion is handled
         print("[SermonDetailView] Generating summary via SermonService")
-        sermonService.generateSummaryForSermon(sermon, transcript: transcript.text, serviceType: sermon.serviceType)
+        sermonService.generateSummaryForSermon(sermonId: sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
     }
 }
 
