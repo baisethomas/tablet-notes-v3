@@ -167,7 +167,7 @@ Before pushing to TestFlight:
 
 ## Version History
 
-### v1.1.0 (Current)
+### v1.1.0 (Shipped)
 - Added MigrationSafety system
 - Enhanced backup and recovery
 - Automatic sync before migration

@@ -114,7 +114,7 @@ Before merging schema changes to main:
 
 ## Version History
 
-### v1.1.0 (In Progress)
+### v1.1.0 (Shipped)
 - **Change**: Added `id: UUID` field to Transcript model
 - **Migration Type**: Automatic (default value)
 - **Risk**: Low

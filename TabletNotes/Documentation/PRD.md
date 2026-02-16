@@ -177,8 +177,43 @@
 ---
 
 ## Appendix
-- [Branding Assets](#)
-- [Animated Prototypes](#)
-- [Logo Variants](#)
-- [Privacy Policy & Terms](#)
+
+### Current Implementation Status
+
+*Last updated: February 2026*
+
+This section documents the current state of the implementation relative to the original PRD above.
+
+#### Actual Tech Stack
+
+| Layer | Planned | Implemented |
+|-------|---------|-------------|
+| Frontend | iOS (SwiftUI) | iOS (SwiftUI) with `@Observable` (iOS 17+) |
+| Backend | Supabase | Supabase (auth, storage, sync) + Netlify Functions (serverless API) |
+| AI | AssemblyAI | AssemblyAI via Netlify Functions (transcription + summarization) |
+| Scripture | Bible Reference API | API.Bible |
+| Billing | Stripe | StoreKit (in-app purchases) |
+| Email | Resend or MailerSend | Not yet implemented |
+
+#### Additional Shipped Features (Beyond Original PRD)
+
+- **AI Chat**: Sermon Q&A — users can ask questions about sermon content and get AI-powered answers
+- **Live Transcription**: Real-time WebSocket-based transcription during recording via AssemblyAI
+- **Network Resilience**: NWPathMonitor connectivity tracking, exponential backoff retry, WebSocket auto-reconnect
+- **Bible Browser**: In-app Bible text browsing via API.Bible integration
+- **Scripture Detection**: Automatic detection and linking of scripture references in transcripts and summaries
+
+#### Planned But Not Yet Implemented
+
+- Stripe billing integration (using StoreKit instead)
+- Email notifications
+- Export to PDF/Markdown
+- Preaching-style recognition
+- Dynamic tagging and search
+- AI-driven highlights
+- Collaborative notes
+
+#### Architecture Notes
+
+The app uses a service-layer architecture rather than traditional ViewModels. Core services use the `@Observable` macro (iOS 17+ Swift Observation framework) instead of `ObservableObject`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical architecture.
 
