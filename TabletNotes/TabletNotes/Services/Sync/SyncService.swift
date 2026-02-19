@@ -281,9 +281,15 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         if let remoteNotes = remoteData.notes, !remoteNotes.isEmpty {
             print("[SyncService] Updating \(remoteNotes.count) notes from remote")
 
-            // Clear existing notes and add remote ones
-            // Using last-writer-wins strategy: remote data replaces local
+            // Delete existing notes from ModelContext before replacing with remote ones.
+            // IMPORTANT: We must explicitly delete each Note from the ModelContext,
+            // not just removeAll() from the array. Otherwise orphaned Note objects
+            // with the same @Attribute(.unique) UUIDs cause upsert conflicts.
+            let existingNotes = Array(sermon.notes)
             sermon.notes.removeAll()
+            for oldNote in existingNotes {
+                modelContext.delete(oldNote)
+            }
 
             for noteData in remoteNotes {
                 let note = Note(
@@ -292,7 +298,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                     timestamp: noteData.timestamp,
                     remoteId: noteData.id
                 )
-                // IMPORTANT: Insert note into ModelContext so SwiftData can track it
                 modelContext.insert(note)
                 sermon.notes.append(note)
             }

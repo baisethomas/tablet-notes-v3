@@ -241,68 +241,70 @@ class SermonService {
 
     func fetchSermons() {
         print("[SermonService] fetchSermons called.")
-        
-        Task { @MainActor in
-            // If no user is authenticated, show all sermons (for migration compatibility)
-            guard let currentUser = authManager.currentUser else {
-                print("[SermonService] No authenticated user - fetching all sermons")
-                let fetchDescriptor = FetchDescriptor<Sermon>()
-                if let results = try? modelContext.fetch(fetchDescriptor) {
-                    sermons = results
-                    print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
-                } else {
-                    sermons = []
-                }
-                applyFilters()
-                return
-            }
-            
-            print("[SermonService] Fetching sermons for user: \(currentUser.name) (ID: \(currentUser.id))")
-            
-            // First, migrate any existing sermons without userId to current user
-            migrateExistingSermons(to: currentUser.id)
-            
-            // Migrate any sermons that still have absolute URLs to relative filenames
-            migrateAudioFilePaths()
-            
-            // Check for recoverable audio files after database operations are complete
-            checkForRecoverableAudioFiles()
-            
-            // Create predicate to filter by userId
-            let userIdToMatch = currentUser.id
-            let predicate = #Predicate<Sermon> { sermon in
-                sermon.userId == userIdToMatch
-            }
-            
-            let fetchDescriptor = FetchDescriptor<Sermon>(predicate: predicate)
-            
+
+        // IMPORTANT: This runs synchronously on @MainActor (no Task wrapper) so that
+        // notes relationships are force-loaded BEFORE any @Observable-triggered re-render.
+        // A deferred Task would allow the view to re-render with faulted/empty notes first.
+
+        // If no user is authenticated, show all sermons (for migration compatibility)
+        guard let currentUser = authManager.currentUser else {
+            print("[SermonService] No authenticated user - fetching all sermons")
+            let fetchDescriptor = FetchDescriptor<Sermon>()
             if let results = try? modelContext.fetch(fetchDescriptor) {
                 sermons = results
-                print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
+                print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
+            } else {
+                sermons = []
+            }
+            applyFilters()
+            return
+        }
 
-                // CRITICAL: Force SwiftData to load the notes relationship by explicitly accessing it
-                // SwiftData relationships are lazy-loaded, so we need to touch each sermon's notes
-                // to ensure they're fetched from the database
-                for sermon in sermons {
-                    // Access notes property to force relationship loading
-                    let notesCount = sermon.notes.count
-                    // Also iterate through notes to fully load them
-                    let _ = Array(sermon.notes)
-                    
-                    print("[DEBUG] Sermon '\(sermon.title)' (ID: \(sermon.id)) has \(notesCount) notes")
-                    if notesCount > 0 {
-                        for (index, note) in sermon.notes.enumerated() {
-                            print("[DEBUG]   Note \(index): '\(note.text)' at \(note.timestamp)s, sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
-                        }
+        print("[SermonService] Fetching sermons for user: \(currentUser.name) (ID: \(currentUser.id))")
+
+        // First, migrate any existing sermons without userId to current user
+        migrateExistingSermons(to: currentUser.id)
+
+        // Migrate any sermons that still have absolute URLs to relative filenames
+        migrateAudioFilePaths()
+
+        // Check for recoverable audio files after database operations are complete
+        checkForRecoverableAudioFiles()
+
+        // Create predicate to filter by userId
+        let userIdToMatch = currentUser.id
+        let predicate = #Predicate<Sermon> { sermon in
+            sermon.userId == userIdToMatch
+        }
+
+        let fetchDescriptor = FetchDescriptor<Sermon>(predicate: predicate)
+
+        if let results = try? modelContext.fetch(fetchDescriptor) {
+            sermons = results
+            print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
+
+            // CRITICAL: Force SwiftData to load the notes relationship by explicitly accessing it
+            // SwiftData relationships are lazy-loaded, so we need to touch each sermon's notes
+            // to ensure they're fetched from the database
+            for sermon in sermons {
+                // Access notes property to force relationship loading
+                let notesCount = sermon.notes.count
+                // Also iterate through notes to fully load them
+                let _ = Array(sermon.notes)
+
+                print("[DEBUG] Sermon '\(sermon.title)' (ID: \(sermon.id)) has \(notesCount) notes")
+                if notesCount > 0 {
+                    for (index, note) in sermon.notes.enumerated() {
+                        print("[DEBUG]   Note \(index): '\(note.text)' at \(note.timestamp)s, sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
                     }
                 }
-
-                applyFilters()
-            } else {
-                print("[SermonService] fetch failed for user \(currentUser.id).")
-                sermons = []
-                applyFilters()
             }
+
+            applyFilters()
+        } else {
+            print("[SermonService] fetch failed for user \(currentUser.id).")
+            sermons = []
+            applyFilters()
         }
     }
     
