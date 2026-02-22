@@ -3,6 +3,9 @@ import SwiftData
 import SwiftUI
 import Combine
 import Supabase
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 // Temporary workaround for linter: define TranscriptSegment if not found
 #if canImport(TabletNotes)
 // If available, use the real model
@@ -366,6 +369,48 @@ class AssemblyAITranscriptionService: ObservableObject {
     func transcribeAudioFile(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         transcribeAudioFileWithRetry(url: url, maxRetries: 3, currentAttempt: 1, completion: completion)
     }
+
+    private func validateAudioFileForTranscription(url: URL, fileSize: Int) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw NSError(domain: "AudioFileValidation", code: 1000, userInfo: [
+                NSLocalizedDescriptionKey: "Audio file not found at \(url.lastPathComponent)"
+            ])
+        }
+
+        guard fileSize > 0 else {
+            throw NSError(domain: "AudioFileValidation", code: 1001, userInfo: [
+                NSLocalizedDescriptionKey: "Audio file is empty (0 bytes)"
+            ])
+        }
+
+        // Header-only AAC/M4A files can be tiny and still report the correct MIME type upstream.
+        guard fileSize >= 2048 else {
+            throw NSError(domain: "AudioFileValidation", code: 1002, userInfo: [
+                NSLocalizedDescriptionKey: "Audio file is too small to contain valid audio (\(fileSize) bytes)"
+            ])
+        }
+
+#if canImport(AVFoundation)
+        let asset = AVURLAsset(url: url)
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else {
+            throw NSError(domain: "AudioFileValidation", code: 1003, userInfo: [
+                NSLocalizedDescriptionKey: "Audio container has no audio track"
+            ])
+        }
+
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        guard durationSeconds.isFinite && durationSeconds > 0 else {
+            throw NSError(domain: "AudioFileValidation", code: 1004, userInfo: [
+                NSLocalizedDescriptionKey: "Audio duration is invalid (\(durationSeconds))"
+            ])
+        }
+
+        print("[API] Local audio preflight passed: \(url.lastPathComponent), size=\(fileSize) bytes, duration=\(String(format: "%.2f", durationSeconds))s, tracks=\(audioTracks.count)")
+#else
+        print("[API] Local audio preflight passed: \(url.lastPathComponent), size=\(fileSize) bytes")
+#endif
+    }
     
     private func transcribeAudioFileWithRetry(url: URL, maxRetries: Int, currentAttempt: Int, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         let fileName = url.lastPathComponent
@@ -376,6 +421,7 @@ class AssemblyAITranscriptionService: ObservableObject {
         do {
             let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
             let fileSize = resourceValues.fileSize ?? 0
+            try validateAudioFileForTranscription(url: url, fileSize: fileSize)
             
             // Determine content type from file extension
             let pathExtension = url.pathExtension.lowercased()
@@ -506,6 +552,8 @@ class AssemblyAITranscriptionService: ObservableObject {
             userMessage = "Authentication failed. Please sign in again and try again."
         } else if nsError.domain == "UploadFailed" {
             userMessage = "Failed to upload audio file. Please try again."
+        } else if nsError.domain == "AudioFileValidation" {
+            userMessage = "This recording file looks invalid or empty. Please try recording again."
         } else if nsError.domain == "TranscriptionError" {
             userMessage = "Transcription service is temporarily unavailable. Please try again later."
         } else {

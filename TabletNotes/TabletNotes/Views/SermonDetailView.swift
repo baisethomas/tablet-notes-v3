@@ -253,6 +253,7 @@ struct SermonDetailView: View {
     @State private var isEditingTitle = false
     @State private var editableSpeaker: String = ""
     @State private var isEditingSpeaker = false
+    @State private var summaryTextSnapshot: String = "No summary available."
 
     // Transcription retry
     @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
@@ -473,6 +474,7 @@ struct SermonDetailView: View {
                         editableTitle = sermon.title
                         editableSpeaker = sermon.speaker ?? ""
                         setupAudioPlayer()
+                        refreshSummaryTextSnapshot()
 
                         // Log note count for debugging
                         print("[SermonDetailView] onAppear: Sermon '\(sermon.title)' has \(sermon.notes.count) notes")
@@ -488,7 +490,14 @@ struct SermonDetailView: View {
                         if let completedSermonId = notification.object as? UUID,
                            completedSermonId == sermon.id {
                             // The sermon will automatically refresh through the @ObservedObject sermonService
+                            scheduleSummaryTextSnapshotRefresh()
                         }
+                    }
+                    .onChange(of: sermon.summaryStatus) { _, _ in
+                        scheduleSummaryTextSnapshotRefresh()
+                    }
+                    .onChange(of: sermon.updatedAt ?? Date.distantPast) { _, _ in
+                        scheduleSummaryTextSnapshotRefresh()
                     }
                     .onDisappear {
                         cleanup()
@@ -538,6 +547,7 @@ struct SermonDetailView: View {
                 editableTitle = sermon.title
                 editableSpeaker = sermon.speaker ?? ""
                 setupAudioPlayer()
+                refreshSummaryTextSnapshot()
             }
         }
         .onDisappear {
@@ -557,6 +567,29 @@ struct SermonDetailView: View {
         
         // Reset audio session to playback mode after potential recording
         setupAudioSessionForPlayback()
+    }
+
+    private func scheduleSummaryTextSnapshotRefresh() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard self.sermon?.id == self.sermonID else { return }
+            self.refreshSummaryTextSnapshot()
+        }
+    }
+
+    private func refreshSummaryTextSnapshot() {
+        guard let sermon = sermon else {
+            summaryTextSnapshot = "No summary available."
+            return
+        }
+
+        guard sermon.summaryStatus == "complete" else {
+            summaryTextSnapshot = "No summary available."
+            return
+        }
+
+        // Snapshot once and render cached text in body to avoid repeated relationship-backed reads.
+        let rawSummaryText = sermon.summary?.text ?? "No summary available."
+        summaryTextSnapshot = rawSummaryText.replacingOccurrences(of: "**", with: "")
     }
     
     private func setupAudioSessionForPlayback() {
@@ -659,10 +692,8 @@ struct SermonDetailView: View {
                 default:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            let cleanSummary = (sermon.summary?.text ?? "No summary available.").replacingOccurrences(of: "**", with: "")
-                            
                             SummaryTextView(
-                                summaryText: cleanSummary,
+                                summaryText: summaryTextSnapshot,
                                 serviceType: sermon.serviceType
                             )
                             .padding(.horizontal)

@@ -251,6 +251,15 @@ class SermonService {
             print("[SermonService] No authenticated user - fetching all sermons")
             let fetchDescriptor = FetchDescriptor<Sermon>()
             if let results = try? modelContext.fetch(fetchDescriptor) {
+                // Force-load relationship-backed data BEFORE assigning to sermons.
+                // Assignment triggers @Observable, and views must see loaded relationships.
+                for sermon in results {
+                    let _ = sermon.notes.count
+                    let _ = Array(sermon.notes)
+                    let _ = sermon.transcript?.text
+                    let _ = sermon.summary?.status
+                    let _ = sermon.summary?.text
+                }
                 sermons = results
                 print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
             } else {
@@ -280,25 +289,26 @@ class SermonService {
         let fetchDescriptor = FetchDescriptor<Sermon>(predicate: predicate)
 
         if let results = try? modelContext.fetch(fetchDescriptor) {
-            sermons = results
-            print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
-
-            // CRITICAL: Force SwiftData to load the notes relationship by explicitly accessing it
-            // SwiftData relationships are lazy-loaded, so we need to touch each sermon's notes
-            // to ensure they're fetched from the database
-            for sermon in sermons {
-                // Access notes property to force relationship loading
+            // CRITICAL: Force SwiftData to load relationship-backed data BEFORE assigning to sermons.
+            // Assignment triggers @Observable, and views must see loaded values — not faulted data.
+            for sermon in results {
                 let notesCount = sermon.notes.count
-                // Also iterate through notes to fully load them
                 let _ = Array(sermon.notes)
+                let transcriptTextLength = sermon.transcript?.text.count ?? 0
+                let summaryStatus = sermon.summaryStatus
+                let summaryTextLength = sermon.summary?.text.count ?? 0
 
                 print("[DEBUG] Sermon '\(sermon.title)' (ID: \(sermon.id)) has \(notesCount) notes")
+                print("[DEBUG]   Transcript length: \(transcriptTextLength), summaryStatus: \(summaryStatus), summary length: \(summaryTextLength)")
                 if notesCount > 0 {
                     for (index, note) in sermon.notes.enumerated() {
                         print("[DEBUG]   Note \(index): '\(note.text)' at \(note.timestamp)s, sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
                     }
                 }
             }
+
+            sermons = results  // @Observable fires AFTER notes are loaded
+            print("[SermonService] sermons fetched for user \(currentUser.id): \(sermons.map { $0.title })")
 
             applyFilters()
         } else {

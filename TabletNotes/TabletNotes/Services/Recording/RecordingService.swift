@@ -102,7 +102,10 @@ class RecordingService: NSObject {
                 if let recorder = audioRecorder {
                     if !recorder.isRecording && !isPaused {
                         print("[RecordingService] Recorder stopped during backgrounding, resuming...")
-                        recorder.record()
+                        let didResume = recorder.record()
+                        if !didResume {
+                            print("[RecordingService] Recorder failed to resume after foreground transition")
+                        }
                     }
                 } else {
                     print("[RecordingService] Audio recorder was deallocated, cannot resume")
@@ -145,7 +148,11 @@ class RecordingService: NSObject {
                 print("[RecordingService] Resuming recording after interruption")
                 do {
                     try recordingSession.setActive(true)
-                    audioRecorder?.record()
+                    let didResume = audioRecorder?.record() ?? false
+                    guard didResume else {
+                        print("[RecordingService] Failed to resume recorder after interruption")
+                        return
+                    }
 
                     // Resume the duration timer
                     startDurationTimer()
@@ -255,7 +262,16 @@ class RecordingService: NSObject {
         ]
         audioRecorder = try AVAudioRecorder(url: url, settings: settings)
         audioRecorder?.delegate = self
-        audioRecorder?.record()
+        audioRecorder?.prepareToRecord()
+        let didStartRecording = audioRecorder?.record() ?? false
+        guard didStartRecording else {
+            print("[RecordingService] Failed to start AVAudioRecorder.record() for file: \(url.lastPathComponent)")
+            if fileManager.fileExists(atPath: url.path) {
+                try? fileManager.removeItem(at: url)
+            }
+            audioRecorder = nil
+            throw RecordingError.recordingFailed
+        }
         recordingURL = url
 
         // Start duration tracking
@@ -279,8 +295,10 @@ class RecordingService: NSObject {
 
     func stopRecording() -> URL? {
         let currentURL = recordingURL
+        let currentTime = audioRecorder?.currentTime ?? 0
         audioRecorder?.stop()
         stopDurationTimer()
+        recordingURL = nil
 
         isRecording = false
         isPaused = false
@@ -292,6 +310,11 @@ class RecordingService: NSObject {
         remainingTime = nil
         recordingStartTime = nil
         cachedMaxDuration = nil
+
+        if let currentURL = currentURL {
+            let fileSize = (try? fileManager.attributesOfItem(atPath: currentURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            print("[RecordingService] stopRecording() called for \(currentURL.lastPathComponent) - recorderTime=\(String(format: "%.2f", currentTime))s, fileSize=\(fileSize) bytes")
+        }
 
         return currentURL
     }
@@ -306,7 +329,11 @@ class RecordingService: NSObject {
 
     func resumeRecording() throws {
         guard isRecording, isPaused else { return }
-        audioRecorder?.record()
+        let didResume = audioRecorder?.record() ?? false
+        guard didResume else {
+            print("[RecordingService] Failed to resume AVAudioRecorder.record()")
+            throw RecordingError.resumeFailed
+        }
         startDurationTimer()
         isPaused = false
         isPausedSubject.send(false)

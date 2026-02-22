@@ -17,6 +17,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
     private let audioProcessingQueue = DispatchQueue(label: "com.tabletnotes.audioprocessing", qos: .userInitiated)
     private let networkMonitor = NetworkMonitor.shared
     private var networkObservationTask: Task<Void, Never>?
+    private var isInputTapInstalled = false
 
     var transcriptPublisher: AnyPublisher<String, Never> {
         transcriptSubject.eraseToAnyPublisher()
@@ -436,6 +437,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         print("[AssemblyAI Live] Input format: \(recordingFormat)")
 
+        if isInputTapInstalled {
+            print("[AssemblyAI Live] Removing stale audio tap before installing a new one")
+            inputNode.removeTap(onBus: 0)
+            isInputTapInstalled = false
+        }
+
         // Use input format directly to avoid unnecessary conversion
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
@@ -518,6 +525,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 self.sendAudioData(convertedBuffer)
             }
         }
+        isInputTapInstalled = true
 
         print("[AssemblyAI Live] Installing audio tap and starting engine")
         audioEngine.prepare()
@@ -604,8 +612,13 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         // Remove the tap synchronously to ensure no more callbacks fire
         // This must be done even if the engine is not running to clean up properly
-        audioEngine.inputNode.removeTap(onBus: 0)
-        print("[AssemblyAI Live] Audio tap removed")
+        if isInputTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            isInputTapInstalled = false
+            print("[AssemblyAI Live] Audio tap removed")
+        } else {
+            print("[AssemblyAI Live] No audio tap installed, skipping removeTap")
+        }
 
         // Don't deactivate the audio session since RecordingService is still using it
         print("[AssemblyAI Live] Leaving audio session active for RecordingService")
@@ -651,7 +664,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
                 // Stop the audio engine
                 audioEngine.stop()
-                audioEngine.inputNode.removeTap(onBus: 0)
+                if isInputTapInstalled {
+                    audioEngine.inputNode.removeTap(onBus: 0)
+                    isInputTapInstalled = false
+                }
                 print("[AssemblyAI Live] Audio engine stopped due to interruption")
             }
 

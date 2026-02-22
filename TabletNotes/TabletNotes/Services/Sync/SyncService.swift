@@ -139,7 +139,26 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
     
+    @MainActor
     private func syncSermonToCloud(_ sermon: Sermon) async throws {
+        // Snapshot relationship-backed SwiftData objects before crossing async boundaries.
+        // Accessing sermon.transcript/notes/summary after awaits can trap with InvalidFutureBackingData.
+        let notesSnapshot = sermon.notes.map { note in
+            NoteSyncPayload(id: note.id, text: note.text, timestamp: note.timestamp)
+        }
+        let transcriptSnapshot = sermon.transcript.map { transcript in
+            TranscriptSyncPayload(id: transcript.id, text: transcript.text)
+        }
+        let summarySnapshot = sermon.summary.map { summary in
+            SummarySyncPayload(
+                id: summary.id,
+                title: summary.title,
+                text: summary.text,
+                type: summary.type,
+                status: summary.status
+            )
+        }
+
         let sermonData = SermonSyncData(
             id: sermon.id,
             title: sermon.title,
@@ -151,16 +170,22 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             summaryStatus: sermon.summaryStatus,
             isArchived: sermon.isArchived,
             userId: sermon.userId,
-            updatedAt: sermon.updatedAt ?? Date()
+            updatedAt: sermon.updatedAt ?? Date(),
+            notes: notesSnapshot,
+            transcript: transcriptSnapshot,
+            summary: summarySnapshot
         )
 
         // Upload to Supabase
-        if let remoteId = sermon.remoteId {
+        if let remoteId = sermon.remoteId, !remoteId.isEmpty {
             // Update existing record - pass full sermon to include notes/transcript/summary
-            try await updateRemoteSermon(sermon: sermon, remoteId: remoteId, data: sermonData)
+            try await updateRemoteSermon(remoteId: remoteId, data: sermonData)
         } else {
-            // Create new record - pass full sermon to include notes/transcript/summary
-            let newRemoteId = try await createRemoteSermon(sermon: sermon, data: sermonData)
+            let newRemoteId = try await createRemoteSermon(data: sermonData)
+            guard !newRemoteId.isEmpty else {
+                print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
+                throw SyncError.conflictResolution
+            }
             sermon.remoteId = newRemoteId
         }
 
@@ -482,7 +507,7 @@ extension SyncService {
         return sermons
     }
     
-    private func createRemoteSermon(sermon: Sermon, data: SermonSyncData) async throws -> String {
+    private func createRemoteSermon(data: SermonSyncData) async throws -> String {
         print("[SyncService] Creating remote sermon: \(data.title)")
 
         guard let supabaseService = self.supabaseService as? SupabaseService else {
@@ -552,9 +577,9 @@ extension SyncService {
         ]
 
         // Add notes if present
-        if !sermon.notes.isEmpty {
-            print("[SyncService] Including \(sermon.notes.count) notes in payload")
-            let notesArray = sermon.notes.map { note in
+        if !data.notes.isEmpty {
+            print("[SyncService] Including \(data.notes.count) notes in payload")
+            let notesArray = data.notes.map { note in
                 return [
                     "id": note.id.uuidString,
                     "text": note.text,
@@ -565,7 +590,7 @@ extension SyncService {
         }
 
         // Add transcript if present
-        if let transcript = sermon.transcript {
+        if let transcript = data.transcript {
             print("[SyncService] Including transcript in payload (length: \(transcript.text.count) chars)")
             payload["transcript"] = [
                 "id": transcript.id.uuidString,
@@ -576,7 +601,7 @@ extension SyncService {
         }
 
         // Add summary if present
-        if let summary = sermon.summary {
+        if let summary = data.summary {
             print("[SyncService] Including summary in payload: \(summary.title)")
             payload["summary"] = [
                 "id": summary.id.uuidString,
@@ -651,7 +676,7 @@ extension SyncService {
         }
     }
     
-    private func updateRemoteSermon(sermon: Sermon, remoteId: String, data: SermonSyncData) async throws {
+    private func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
         print("[SyncService] Updating remote sermon: \(data.title) (remoteId: \(remoteId))")
 
         guard let supabaseService = self.supabaseService as? SupabaseService else {
@@ -674,9 +699,9 @@ extension SyncService {
         ]
 
         // Add notes if present
-        if !sermon.notes.isEmpty {
-            print("[SyncService] Including \(sermon.notes.count) notes in update payload")
-            let notesArray = sermon.notes.map { note in
+        if !data.notes.isEmpty {
+            print("[SyncService] Including \(data.notes.count) notes in update payload")
+            let notesArray = data.notes.map { note in
                 return [
                     "id": note.id.uuidString,
                     "text": note.text,
@@ -687,7 +712,7 @@ extension SyncService {
         }
 
         // Add transcript if present
-        if let transcript = sermon.transcript {
+        if let transcript = data.transcript {
             print("[SyncService] Including transcript in update payload (length: \(transcript.text.count) chars)")
             payload["transcript"] = [
                 "id": transcript.id.uuidString,
@@ -698,7 +723,7 @@ extension SyncService {
         }
 
         // Add summary if present
-        if let summary = sermon.summary {
+        if let summary = data.summary {
             print("[SyncService] Including summary in update payload: \(summary.title)")
             payload["summary"] = [
                 "id": summary.id.uuidString,
@@ -814,6 +839,28 @@ struct SermonSyncData {
     let isArchived: Bool
     let userId: UUID?
     let updatedAt: Date
+    let notes: [NoteSyncPayload]
+    let transcript: TranscriptSyncPayload?
+    let summary: SummarySyncPayload?
+}
+
+struct NoteSyncPayload {
+    let id: UUID
+    let text: String
+    let timestamp: TimeInterval
+}
+
+struct TranscriptSyncPayload {
+    let id: UUID
+    let text: String
+}
+
+struct SummarySyncPayload {
+    let id: UUID
+    let title: String
+    let text: String
+    let type: String
+    let status: String
 }
 
 struct RemoteSermonData: Codable {

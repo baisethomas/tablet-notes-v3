@@ -107,8 +107,9 @@ struct SermonRowView: View {
                     Spacer()
                 }
                 
-                // Summary key points or notes preview
-                if let summary = sermon.summary, !summary.text.isEmpty, summary.status == "complete" {
+                // Avoid dereferencing relationship-backed Summary in this hot list row.
+                // Summary objects may be invalidated during sync updates and can trap in SwiftData.
+                if sermon.summaryStatus == "complete" {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
                             Image(systemName: "lightbulb")
@@ -119,11 +120,11 @@ struct SermonRowView: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(.adaptiveAccent)
                         }
-                        
-                        Text(extractKeyPoints(from: summary.text))
+
+                        Text("Summary available")
                             .font(.subheadline)
                             .foregroundColor(.adaptiveSecondaryText)
-                            .lineLimit(4)
+                            .lineLimit(1)
                             .multilineTextAlignment(.leading)
                     }
                 } else if !sermon.notes.isEmpty {
@@ -652,7 +653,7 @@ struct SermonListView: View {
                                             }
                                             
                                             // Regenerate Summary option (only show if summary failed or is processing)
-                                            if let summary = sermon.summary, (summary.status == "failed" || summary.status == "processing") {
+                                            if sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" {
                                                 Button(action: {
                                                     regenerateSummary(for: sermon)
                                                     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
