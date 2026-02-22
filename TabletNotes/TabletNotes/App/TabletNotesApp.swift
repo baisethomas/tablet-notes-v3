@@ -8,6 +8,8 @@
 import SwiftUI
 import CoreData
 import SwiftData
+import FirebaseCore
+import Firebase
 
 @main
 struct TabletNotesApp: App {
@@ -15,6 +17,8 @@ struct TabletNotesApp: App {
     @StateObject private var deepLinkHandler = DeepLinkHandler()
     
     init() {
+        FirebaseApp.configure()
+
         do {
             // Configure the container with migration options - include User models
             let schema = Schema([
