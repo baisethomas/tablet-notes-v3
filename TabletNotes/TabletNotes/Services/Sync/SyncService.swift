@@ -3,6 +3,7 @@ import Combine
 import SwiftData
 import Supabase
 
+@MainActor
 class SyncService: ObservableObject, SyncServiceProtocol {
 
     // MARK: - Properties
@@ -28,6 +29,123 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         self.modelContext = modelContext
         self.supabaseService = supabaseService
         self.authService = authService
+    }
+
+    private struct TranscriptSegmentSnapshot {
+        let id: UUID
+        let text: String
+        let startTime: TimeInterval
+        let endTime: TimeInterval
+    }
+
+    private struct TranscriptSnapshot {
+        let id: UUID
+        let text: String
+        let segments: [TranscriptSegmentSnapshot]
+        let remoteId: String?
+    }
+
+    private struct SummarySnapshot {
+        let id: UUID
+        let title: String
+        let text: String
+        let type: String
+        let status: String
+        let remoteId: String?
+    }
+
+    private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
+        guard let snapshot else {
+            if let existingTranscript = sermon.transcript {
+                sermon.transcript = nil
+                modelContext.delete(existingTranscript)
+            }
+            return
+        }
+
+        let newSegments = snapshot.segments.map { segment in
+            TranscriptSegment(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+
+        if let existingTranscript = sermon.transcript {
+            let oldSegments = Array(existingTranscript.segments)
+            existingTranscript.segments.removeAll()
+            for segment in oldSegments {
+                modelContext.delete(segment)
+            }
+
+            existingTranscript.text = snapshot.text
+            existingTranscript.segments = newSegments
+            existingTranscript.remoteId = snapshot.remoteId
+            return
+        }
+
+        let transcript = Transcript(
+            id: snapshot.id,
+            text: snapshot.text,
+            segments: newSegments,
+            remoteId: snapshot.remoteId
+        )
+        modelContext.insert(transcript)
+        sermon.transcript = transcript
+    }
+
+    private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
+        guard let snapshot else {
+            if let existingSummary = sermon.summary {
+                sermon.summary = nil
+                modelContext.delete(existingSummary)
+            }
+            sermon.summaryPreviewText = nil
+            return
+        }
+
+        if let existingSummary = sermon.summary {
+            existingSummary.title = snapshot.title
+            existingSummary.text = snapshot.text
+            existingSummary.type = snapshot.type
+            existingSummary.status = snapshot.status
+            existingSummary.remoteId = snapshot.remoteId
+            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+            return
+        }
+
+        let summary = Summary(
+            id: snapshot.id,
+            title: snapshot.title,
+            text: snapshot.text,
+            type: snapshot.type,
+            status: snapshot.status,
+            remoteId: snapshot.remoteId
+        )
+        modelContext.insert(summary)
+        sermon.summary = summary
+        sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+    }
+
+    private func transcriptSnapshot(from remoteData: RemoteTranscriptData) -> TranscriptSnapshot {
+        TranscriptSnapshot(
+            id: remoteData.localId,
+            text: remoteData.text,
+            segments: [], // TODO: deserialize remote transcript segments when available
+            remoteId: remoteData.id
+        )
+    }
+
+    private func summarySnapshot(from remoteData: RemoteSummaryData) -> SummarySnapshot {
+        SummarySnapshot(
+            id: remoteData.localId,
+            title: remoteData.title,
+            text: remoteData.text,
+            type: remoteData.type,
+            status: remoteData.status,
+            remoteId: remoteData.id
+        )
     }
     
     // MARK: - Helper Methods
@@ -66,7 +184,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     
     // MARK: - Sync Operations
     
-    @MainActor
     private func performFullSync() async {
         print("[SyncService] 🔄 Starting full sync...")
 
@@ -106,7 +223,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
 
-    @MainActor
     private func pushLocalChanges() async throws {
         // Get all local sermons that need syncing
         // Only sync sermons that are explicitly marked needsSync=true
@@ -127,7 +243,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
     
     private func pullCloudChanges() async throws {
-        guard let currentUser = await authService.currentUser else { return }
+        guard let currentUser = authService.currentUser else { return }
 
         // Fetch all remote sermons for current user
         let remoteSermons = try await fetchRemoteSermons(for: currentUser.id)
@@ -139,7 +255,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
     
-    @MainActor
     private func syncSermonToCloud(_ sermon: Sermon) async throws {
         // Snapshot relationship-backed SwiftData objects before crossing async boundaries.
         // Accessing sermon.transcript/notes/summary after awaits can trap with InvalidFutureBackingData.
@@ -213,21 +328,35 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
         let existingSermons = try modelContext.fetch(descriptor)
 
-        if let existingSermon = existingSermons.first {
+        if let initialSermon = existingSermons.first {
             print("[SyncService] Found existing local sermon with remoteId: \(remoteId)")
+            let localSermonId = initialSermon.id
 
             // Download audio file if it doesn't exist locally
-            if !existingSermon.audioFileExists {
+            if !initialSermon.audioFileExists {
                 print("[SyncService] Audio file missing locally, attempting download...")
                 do {
                     let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL, remotePath: remoteSermon.audioFilePath)
-                    existingSermon.audioFileName = localAudioURL.lastPathComponent
-                    print("[SyncService] ✅ Audio file downloaded successfully")
+                    let localDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+                        sermon.id == localSermonId
+                    })
+                    if let refreshedSermon = try modelContext.fetch(localDescriptor).first {
+                        refreshedSermon.audioFileName = localAudioURL.lastPathComponent
+                        print("[SyncService] ✅ Audio file downloaded successfully")
+                    }
                 } catch {
                     print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
                     // Continue with sync even if audio download fails
                     // The sermon metadata will still be synced
                 }
+            }
+
+            let localDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+                sermon.id == localSermonId
+            })
+            guard let existingSermon = try modelContext.fetch(localDescriptor).first else {
+                print("[SyncService] ⚠️ Local sermon disappeared during sync, skipping update")
+                return
             }
 
             // Update existing sermon if remote is newer
@@ -264,7 +393,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
     
     private func performCloudDataDeletion() async {
-        guard let currentUser = await authService.currentUser else { return }
+        guard let currentUser = authService.currentUser else { return }
         
         do {
             try await deleteAllRemoteData(for: currentUser.id)
@@ -337,23 +466,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         if let transcriptData = remoteData.transcript {
             print("[SyncService] Updating transcript from remote (length: \(transcriptData.text.count) chars)")
 
-            if let existingTranscript = sermon.transcript {
-                // Update existing transcript
-                existingTranscript.text = transcriptData.text
-                existingTranscript.segments = [] // TODO: deserialize segments from JSON if needed
-                existingTranscript.remoteId = transcriptData.id
-                print("[SyncService] ✅ Existing transcript updated from remote")
-            } else {
-                // Create new transcript
-                let transcript = Transcript(
-                    id: transcriptData.localId,
-                    text: transcriptData.text,
-                    segments: [],
-                    remoteId: transcriptData.id
-                )
-                sermon.transcript = transcript
-                print("[SyncService] ✅ New transcript created from remote")
-            }
+            applyTranscriptSnapshot(transcriptSnapshot(from: transcriptData), to: sermon)
+            print("[SyncService] ✅ Transcript upserted from remote")
         } else if sermon.transcript != nil {
             let localLength = sermon.transcript?.text.count ?? 0
             print("[SyncService] ⚠️ Preserving local transcript (\(localLength) chars) - remote returned no transcript")
@@ -365,41 +479,15 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         if let summaryData = remoteData.summary {
             print("[SyncService] Updating summary from remote (length: \(summaryData.text.count) chars)")
 
-            if let existingSummary = sermon.summary {
-                // Update existing summary
-                existingSummary.title = summaryData.title
-                existingSummary.text = summaryData.text
-                existingSummary.type = summaryData.type
-                existingSummary.status = summaryData.status
-                existingSummary.remoteId = summaryData.id
+            applySummarySnapshot(summarySnapshot(from: summaryData), to: sermon)
 
-                // Update sermon title with AI-generated title from summary
-                if !summaryData.title.isEmpty {
-                    print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
-                    sermon.title = summaryData.title
-                }
-
-                print("[SyncService] ✅ Existing summary updated from remote")
-            } else {
-                // Create new summary
-                let summary = Summary(
-                    id: summaryData.localId,
-                    title: summaryData.title,
-                    text: summaryData.text,
-                    type: summaryData.type,
-                    status: summaryData.status,
-                    remoteId: summaryData.id
-                )
-                sermon.summary = summary
-
-                // Update sermon title with AI-generated title from summary
-                if !summaryData.title.isEmpty {
-                    print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
-                    sermon.title = summaryData.title
-                }
-
-                print("[SyncService] ✅ New summary created from remote")
+            // Update sermon title with AI-generated title from summary
+            if !summaryData.title.isEmpty {
+                print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
+                sermon.title = summaryData.title
             }
+
+            print("[SyncService] ✅ Summary upserted from remote")
         } else if sermon.summary != nil {
             let localLength = sermon.summary?.text.count ?? 0
             print("[SyncService] ⚠️ Preserving local summary (\(localLength) chars) - remote returned no summary")
@@ -437,6 +525,8 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 updatedAt: remoteData.updatedAt
             )
 
+            modelContext.insert(sermon)
+
             // Create related records
             if let remoteNotes = remoteData.notes {
                 print("[SyncService] Creating \(remoteNotes.count) notes")
@@ -448,6 +538,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                         remoteId: noteData.id
                     )
                     // IMPORTANT: Insert note into ModelContext so SwiftData can track it
+                    note.sermon = sermon
                     modelContext.insert(note)
                     sermon.notes.append(note)
                 }
@@ -456,26 +547,12 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
             if let transcriptData = remoteData.transcript {
                 print("[SyncService] Creating transcript")
-                let transcript = Transcript(
-                    id: transcriptData.localId,
-                    text: transcriptData.text,
-                    segments: [],
-                    remoteId: transcriptData.id
-                )
-                sermon.transcript = transcript
+                applyTranscriptSnapshot(transcriptSnapshot(from: transcriptData), to: sermon)
             }
 
             if let summaryData = remoteData.summary {
                 print("[SyncService] Creating summary: \(summaryData.title)")
-                let summary = Summary(
-                    id: summaryData.localId,
-                    title: summaryData.title,
-                    text: summaryData.text,
-                    type: summaryData.type,
-                    status: summaryData.status,
-                    remoteId: summaryData.id
-                )
-                sermon.summary = summary
+                applySummarySnapshot(summarySnapshot(from: summaryData), to: sermon)
 
                 // Update sermon title with AI-generated title from summary
                 if !summaryData.title.isEmpty {
@@ -484,7 +561,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 }
             }
 
-            modelContext.insert(sermon)
             try modelContext.save()
             print("[SyncService] ✅ Local sermon created and saved: \(sermon.title)")
         } catch {

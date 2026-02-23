@@ -16,6 +16,7 @@ final class Sermon {
     var syncStatus: String // e.g., "localOnly", "syncing", "synced", "error"
     var transcriptionStatus: String // e.g., "processing", "complete", "failed"
     var summaryStatus: String // e.g., "processing", "complete", "failed"
+    var summaryPreviewText: String?
     var isArchived: Bool = false // Whether the sermon is archived
     
     // Sync metadata for cross-device sync
@@ -67,7 +68,21 @@ final class Sermon {
         return chatMessages.filter { $0.countsTowardLimit }.count
     }
 
-    init(id: UUID = UUID(), title: String, audioFileName: String, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+    static func makeSummaryPreview(from text: String) -> String {
+        let collapsedWhitespace = text.replacingOccurrences(
+            of: "\\s+",
+            with: " ",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if collapsedWhitespace.isEmpty {
+            return "Summary available"
+        }
+
+        return String(collapsedWhitespace.prefix(160))
+    }
+
+    init(id: UUID = UUID(), title: String, audioFileName: String, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
         self.id = id
         self.title = title
         self.audioFileName = audioFileName
@@ -80,6 +95,7 @@ final class Sermon {
         self.syncStatus = syncStatus
         self.transcriptionStatus = transcriptionStatus
         self.summaryStatus = summaryStatus
+        self.summaryPreviewText = summaryPreviewText
         self.isArchived = isArchived
         self.userId = userId
         self.lastSyncedAt = lastSyncedAt
@@ -89,7 +105,7 @@ final class Sermon {
     }
     
     // Convenience initializer that accepts a URL and extracts the filename
-    convenience init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+    convenience init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
         self.init(
             id: id,
             title: title,
@@ -103,6 +119,7 @@ final class Sermon {
             syncStatus: syncStatus,
             transcriptionStatus: transcriptionStatus,
             summaryStatus: summaryStatus,
+            summaryPreviewText: summaryPreviewText,
             isArchived: isArchived,
             userId: userId,
             lastSyncedAt: lastSyncedAt,

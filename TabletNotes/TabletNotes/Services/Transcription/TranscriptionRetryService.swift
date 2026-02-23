@@ -45,6 +45,7 @@ struct PendingTranscription: Codable, Identifiable {
     }
 }
 
+@MainActor
 class TranscriptionRetryService: ObservableObject {
     static let shared = TranscriptionRetryService()
     
@@ -67,6 +68,29 @@ class TranscriptionRetryService: ObservableObject {
         loadPendingTranscriptions()
         startNetworkMonitoring()
     }
+
+    private func upsertTranscript(
+        on sermon: Sermon,
+        in context: ModelContext,
+        text: String,
+        segments: [TranscriptSegment]
+    ) {
+        if let existingTranscript = sermon.transcript {
+            let oldSegments = Array(existingTranscript.segments)
+            existingTranscript.segments.removeAll()
+            for segment in oldSegments {
+                context.delete(segment)
+            }
+
+            existingTranscript.text = text
+            existingTranscript.segments = segments
+            return
+        }
+
+        let transcript = Transcript(text: text, segments: segments)
+        context.insert(transcript)
+        sermon.transcript = transcript
+    }
     
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
@@ -78,7 +102,7 @@ class TranscriptionRetryService: ObservableObject {
     
     private func startNetworkMonitoring() {
         networkMonitor.pathUpdateHandler = { [weak self] path in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 let wasAvailable = self?.isNetworkAvailable ?? false
                 self?.isNetworkAvailable = path.status == .satisfied
                 
@@ -137,7 +161,7 @@ class TranscriptionRetryService: ObservableObject {
             print("[TranscriptionRetryService] Processing pending transcription: \(nextTranscription.sermonTitle)")
             
             transcriptionService.transcribeAudioFileWithResult(url: nextTranscription.audioFileURL) { [weak self] result in
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     switch result {
                     case .success(let (text, segments)):
                         print("[TranscriptionRetryService] Successfully processed pending transcription")
@@ -155,22 +179,14 @@ class TranscriptionRetryService: ObservableObject {
                             
                             // Set transcription status and create transcript
                             sermon.transcriptionStatus = "complete"
-                            
-                            let transcript = Transcript(
-                                text: text
-                            )
-                            
-                            // Add transcript segments
-                            for segment in segments {
-                                let transcriptSegment = TranscriptSegment(
+
+                            let transcriptSegments = segments.map { segment in
+                                TranscriptSegment(
                                     text: segment.text,
                                     startTime: segment.startTime,
                                     endTime: segment.endTime
                                 )
-                                transcript.segments.append(transcriptSegment)
                             }
-                            
-                            sermon.transcript = transcript
 
                             // CRITICAL: Mark sermon for sync so transcript gets pushed to backend
                             sermon.needsSync = true
@@ -179,6 +195,7 @@ class TranscriptionRetryService: ObservableObject {
 
                             // Save to SwiftData
                             context.insert(sermon)
+                            self?.upsertTranscript(on: sermon, in: context, text: text, segments: transcriptSegments)
                             try? context.save()
 
                             print("[TranscriptionRetryService] ✅ Marked sermon for sync after transcript completion")
@@ -216,7 +233,9 @@ class TranscriptionRetryService: ObservableObject {
                     // Continue processing if there are more items
                     if !(self?.pendingTranscriptions.isEmpty ?? true) {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            self?.processQueue()
+                            Task { @MainActor in
+                                self?.processQueue()
+                            }
                         }
                     }
                 }

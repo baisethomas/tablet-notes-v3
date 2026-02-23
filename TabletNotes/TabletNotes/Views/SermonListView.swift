@@ -121,7 +121,7 @@ struct SermonRowView: View {
                                 .foregroundColor(.adaptiveAccent)
                         }
 
-                        Text("Summary available")
+                        Text(sermon.summaryPreviewText ?? "Summary available")
                             .font(.subheadline)
                             .foregroundColor(.adaptiveSecondaryText)
                             .lineLimit(1)

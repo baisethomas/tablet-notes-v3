@@ -493,6 +493,15 @@ struct SermonDetailView: View {
                             scheduleSummaryTextSnapshotRefresh()
                         }
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: SummaryRetryService.summaryCompletedNotification)) { notification in
+                        guard let completedSermonId = notification.object as? UUID,
+                              completedSermonId == sermon.id else { return }
+
+                        print("[SermonDetailView] Summary completion notification received for sermon \(completedSermonId)")
+                        // Force a service refresh so the computed sermon lookup sees the latest summary status/data.
+                        sermonService.fetchSermons()
+                        scheduleSummaryTextSnapshotRefresh()
+                    }
                     .onChange(of: sermon.summaryStatus) { _, _ in
                         scheduleSummaryTextSnapshotRefresh()
                     }
@@ -1103,49 +1112,23 @@ struct SermonDetailView: View {
                 
                 switch result {
                 case .success(let (text, segments)):
-                    // Create or update transcript
-                    if sermon.transcript == nil {
-                        let transcript = Transcript(text: text)
-                        
-                        // Add transcript segments
-                        for segment in segments {
-                            let transcriptSegment = TranscriptSegment(
-                                text: segment.text,
-                                startTime: segment.startTime,
-                                endTime: segment.endTime
-                            )
-                            transcript.segments.append(transcriptSegment)
-                        }
-                        
-                        sermon.transcript = transcript
-                    } else {
-                        // Update existing transcript
-                        sermon.transcript?.text = text
-                        sermon.transcript?.segments.removeAll()
-                        
-                        for segment in segments {
-                            let transcriptSegment = TranscriptSegment(
-                                text: segment.text,
-                                startTime: segment.startTime,
-                                endTime: segment.endTime
-                            )
-                            sermon.transcript?.segments.append(transcriptSegment)
-                        }
-                    }
-                    
-                    // Update status
-                    sermon.transcriptionStatus = "complete"
-                    
-                    // Save changes
-                    sermonService.updateSermon(sermon)
+                    sermonService.applyTranscriptionResult(
+                        sermonId: sermon.id,
+                        text: text,
+                        segments: segments
+                    )
                     
                     // Generate summary after successful transcription
-                    generateSummaryForSermon(sermon)
+                    print("[SermonDetailView] Generating summary via SermonService")
+                    sermonService.generateSummaryForSermon(
+                        sermonId: sermon.id,
+                        transcript: text,
+                        serviceType: sermon.serviceType
+                    )
                     
                 case .failure(let error):
                     print("Transcription retry failed: \(error)")
-                    sermon.transcriptionStatus = "failed"
-                    sermonService.updateSermon(sermon)
+                    sermonService.markTranscriptionFailed(sermonId: sermon.id)
                 }
             }
         }
@@ -1170,4 +1153,3 @@ struct SermonDetailView: View {
         sermonID: UUID()
     )
 }
-

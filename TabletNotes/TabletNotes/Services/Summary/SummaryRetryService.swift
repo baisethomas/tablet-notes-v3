@@ -45,6 +45,7 @@ struct PendingSummary: Codable, Identifiable {
     }
 }
 
+@MainActor
 class SummaryRetryService: ObservableObject {
     static let shared = SummaryRetryService()
     
@@ -69,6 +70,38 @@ class SummaryRetryService: ObservableObject {
         loadPendingSummaries()
         startNetworkMonitoring()
     }
+
+    private func upsertSummary(
+        on sermon: Sermon,
+        in context: ModelContext,
+        title: String,
+        text: String,
+        type: String,
+        status: String
+    ) {
+        if let existingSummary = sermon.summary {
+            existingSummary.title = title
+            existingSummary.text = text
+            existingSummary.type = type
+            existingSummary.status = status
+            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: text)
+            return
+        }
+
+        let summary = Summary(
+            title: title,
+            text: text,
+            type: type,
+            status: status
+        )
+        context.insert(summary)
+        sermon.summary = summary
+        sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: text)
+    }
+
+    private func resetActiveRequestSubscriptions() {
+        cancellables.removeAll()
+    }
     
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
@@ -80,7 +113,7 @@ class SummaryRetryService: ObservableObject {
     
     private func startNetworkMonitoring() {
         networkMonitor.pathUpdateHandler = { [weak self] path in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 let wasAvailable = self?.isNetworkAvailable ?? false
                 self?.isNetworkAvailable = path.status == .satisfied
                 
@@ -177,23 +210,50 @@ class SummaryRetryService: ObservableObject {
     
     func processQueue() {
         guard !isProcessingQueue && !pendingSummaries.isEmpty && isNetworkAvailable else { return }
-        
+
+        // SummaryService is a shared singleton. Avoid stealing/cancelling an in-flight UI request.
+        if SummaryService.shared.statusSubject.value == "pending" {
+            print("[SummaryRetryService] ⏳ SummaryService busy (pending); deferring queue processing")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                Task { @MainActor in
+                    self?.processQueue()
+                }
+            }
+            return
+        }
+
         isProcessingQueue = true
-        
+
         // Process one at a time to avoid overwhelming the service
         if let nextSummary = pendingSummaries.first {
             print("[SummaryRetryService] Processing pending summary for sermon \(nextSummary.sermonId)")
 
             let summaryService = SummaryService.shared
-            summaryService.generateSummary(for: nextSummary.transcript, type: nextSummary.serviceType)
-            
+            resetActiveRequestSubscriptions()
+
+            var hasSeenPending = false
+
             // Subscribe to summary completion
             summaryService.statusPublisher
                 .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+                .dropFirst() // Ignore stale replay from previous SummaryService requests.
                 .sink { [weak self] (status, titleText, summaryText) in
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         guard let self = self else { return }
-                        
+
+                        if status == "pending" {
+                            hasSeenPending = true
+                            print("[SummaryRetryService] 🔄 Summary retry request started for sermon \(nextSummary.sermonId)")
+                            return
+                        }
+
+                        if (status == "complete" || status == "failed") && !hasSeenPending {
+                            print("[SummaryRetryService] ⚠️ Ignoring stale terminal state '\(status)'")
+                            return
+                        }
+
+                        var shouldAdvanceQueue = false
+
                         switch status {
                         case "complete":
                             if let summaryText = summaryText, let context = self.modelContext {
@@ -206,13 +266,14 @@ class SummaryRetryService: ObservableObject {
                                 
                                 if let sermon = try? context.fetch(fetchDescriptor).first {
                                     let summaryTitle = titleText ?? "Sermon Summary"
-                                    let summary = Summary(
+                                    self.upsertSummary(
+                                        on: sermon,
+                                        in: context,
                                         title: summaryTitle,
                                         text: summaryText,
                                         type: nextSummary.serviceType,
                                         status: "complete"
                                     )
-                                    sermon.summary = summary
                                     sermon.summaryStatus = "complete"
                                     
                                     // Mark for sync
@@ -231,12 +292,13 @@ class SummaryRetryService: ObservableObject {
                                     )
                                 }
                             }
-                            
+
                             self.removePendingSummary(withId: nextSummary.id)
-                            
+                            shouldAdvanceQueue = true
+
                         case "failed":
                             print("[SummaryRetryService] Summary generation failed for sermon \(nextSummary.sermonId), retry count: \(nextSummary.retryCount)")
-                            
+
                             if nextSummary.retryCount < self.maxRetries {
                                 // Update retry count and move to end of queue with exponential backoff delay
                                 self.removePendingSummary(withId: nextSummary.id)
@@ -247,7 +309,9 @@ class SummaryRetryService: ObservableObject {
                                 let delay = backoffMinutes * 60
                                 
                                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                                    self.addPendingSummary(updatedSummary)
+                                    Task { @MainActor in
+                                        self.addPendingSummary(updatedSummary)
+                                    }
                                 }
                                 
                                 print("[SummaryRetryService] Will retry summary in \(backoffMinutes) minutes")
@@ -256,74 +320,138 @@ class SummaryRetryService: ObservableObject {
                                 print("[SummaryRetryService] Max retries reached, attempting basic summary fallback")
                                 self.attemptBasicSummaryFallback(for: nextSummary)
                                 self.removePendingSummary(withId: nextSummary.id)
+                                // Queue advancement is handled by the fallback subscription terminal state.
+                                shouldAdvanceQueue = false
                             }
-                            
+                            if nextSummary.retryCount < self.maxRetries {
+                                shouldAdvanceQueue = true
+                            }
+
                         default:
-                            break
+                            return
                         }
-                        
+
+                        guard shouldAdvanceQueue else { return }
+                        self.resetActiveRequestSubscriptions()
                         self.isProcessingQueue = false
-                        
+
                         // Continue processing if there are more items
                         if !self.pendingSummaries.isEmpty {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                self.processQueue()
+                                Task { @MainActor in
+                                    self.processQueue()
+                                }
                             }
                         }
                     }
                 }
                 .store(in: &cancellables)
+
+            // Start generation after subscription is attached.
+            summaryService.generateSummary(for: nextSummary.transcript, type: nextSummary.serviceType)
         }
     }
     
     private func attemptBasicSummaryFallback(for pendingSummary: PendingSummary) {
-        guard let context = modelContext else { return }
-        
-        let fetchDescriptor = FetchDescriptor<Sermon>(
-            predicate: #Predicate<Sermon> { sermon in
-                sermon.id == pendingSummary.sermonId
-            }
-        )
-        
-        guard let sermon = try? context.fetch(fetchDescriptor).first else { return }
-
         let summaryService = SummaryService.shared
-        summaryService.generateBasicSummary(for: pendingSummary.transcript, type: pendingSummary.serviceType)
-        
+        resetActiveRequestSubscriptions()
+
+        var hasSeenPending = false
+
         // Subscribe to basic summary completion
         summaryService.statusPublisher
             .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+            .dropFirst() // Ignore stale replay from the previous request.
             .sink { (status, titleText, summaryText) in
-                DispatchQueue.main.async {
-                    if status == "complete", let summaryText = summaryText {
-                        let summaryTitle = titleText ?? "Sermon Summary"
-                        let summary = Summary(
-                            title: summaryTitle,
-                            text: summaryText,
-                            type: pendingSummary.serviceType,
-                            status: "complete"
-                        )
-                        sermon.summary = summary
-                        sermon.summaryStatus = "complete"
-                        
-                        // Mark for sync
-                        sermon.needsSync = true
-                        sermon.updatedAt = Date()
-                        sermon.syncStatus = "pending"
-                        
+                Task { @MainActor in
+                    if status == "pending" {
+                        hasSeenPending = true
+                        print("[SummaryRetryService] 🔄 Basic summary fallback started for sermon \(pendingSummary.sermonId)")
+                        return
+                    }
+
+                    if (status == "complete" || status == "failed") && !hasSeenPending {
+                        print("[SummaryRetryService] ⚠️ Ignoring stale basic-summary terminal state '\(status)'")
+                        return
+                    }
+
+                    guard let context = self.modelContext else {
+                        print("[SummaryRetryService] No model context available for basic summary fallback")
+                        self.resetActiveRequestSubscriptions()
+                        return
+                    }
+
+                    let fetchDescriptor = FetchDescriptor<Sermon>(
+                        predicate: #Predicate<Sermon> { sermon in
+                            sermon.id == pendingSummary.sermonId
+                        }
+                    )
+
+                    guard let sermon = try? context.fetch(fetchDescriptor).first else {
+                        print("[SummaryRetryService] Sermon \(pendingSummary.sermonId) not found for basic summary fallback")
+                        self.resetActiveRequestSubscriptions()
+                        return
+                    }
+
+                    switch status {
+                    case "complete":
+                        if let summaryText {
+                            let summaryTitle = titleText ?? "Sermon Summary"
+                            self.upsertSummary(
+                                on: sermon,
+                                in: context,
+                                title: summaryTitle,
+                                text: summaryText,
+                                type: pendingSummary.serviceType,
+                                status: "complete"
+                            )
+                            sermon.summaryStatus = "complete"
+
+                            // Mark for sync
+                            sermon.needsSync = true
+                            sermon.updatedAt = Date()
+                            sermon.syncStatus = "pending"
+
+                            try? context.save()
+
+                            print("[SummaryRetryService] ✅ Basic summary fallback completed for sermon \(sermon.id)")
+
+                            // Notify UI
+                            NotificationCenter.default.post(
+                                name: SummaryRetryService.summaryCompletedNotification,
+                                object: sermon.id
+                            )
+                        } else {
+                            sermon.summaryStatus = "failed"
+                            try? context.save()
+                            print("[SummaryRetryService] ❌ Basic summary fallback reported complete without summary text")
+                        }
+
+                    case "failed":
+                        sermon.summaryStatus = "failed"
                         try? context.save()
-                        
-                        print("[SummaryRetryService] ✅ Basic summary fallback completed for sermon \(sermon.id)")
-                        
-                        // Notify UI
-                        NotificationCenter.default.post(
-                            name: SummaryRetryService.summaryCompletedNotification,
-                            object: sermon.id
-                        )
+                        print("[SummaryRetryService] ❌ Basic summary fallback failed for sermon \(sermon.id)")
+
+                    default:
+                        return
+                    }
+
+                    self.resetActiveRequestSubscriptions()
+                    self.isProcessingQueue = false
+
+                    if !self.pendingSummaries.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            Task { @MainActor in
+                                self.processQueue()
+                            }
+                        }
                     }
                 }
             }
             .store(in: &cancellables)
+
+        // Start generation after subscription is attached. generateBasicSummary sends pending synchronously.
+        summaryService.generateBasicSummary(for: pendingSummary.transcript, type: pendingSummary.serviceType)
     }
     
     private func savePendingSummaries() {
@@ -359,4 +487,3 @@ class SummaryRetryService: ObservableObject {
         }
     }
 }
-

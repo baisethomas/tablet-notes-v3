@@ -72,6 +72,188 @@ class SermonService {
     
     private var cancellables = Set<AnyCancellable>()
     private var summaryServiceCancellables: [UUID: Set<AnyCancellable>] = [:]
+    private let summaryGenerationTimeout: TimeInterval = 90
+
+    private struct TranscriptSegmentSnapshot {
+        let id: UUID
+        let text: String
+        let startTime: TimeInterval
+        let endTime: TimeInterval
+    }
+
+    private struct TranscriptSnapshot {
+        let id: UUID
+        let text: String
+        let segments: [TranscriptSegmentSnapshot]
+        let remoteId: String?
+        let updatedAt: Date?
+        let needsSync: Bool
+    }
+
+    private struct SummarySnapshot {
+        let id: UUID
+        let title: String
+        let text: String
+        let type: String
+        let status: String
+        let remoteId: String?
+        let updatedAt: Date?
+        let needsSync: Bool
+    }
+
+    private func makeTranscriptSnapshot(from transcript: Transcript?) -> TranscriptSnapshot? {
+        guard let transcript else { return nil }
+
+        let segments = transcript.segments.map { segment in
+            TranscriptSegmentSnapshot(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+
+        return TranscriptSnapshot(
+            id: transcript.id,
+            text: transcript.text,
+            segments: segments,
+            remoteId: transcript.remoteId,
+            updatedAt: transcript.updatedAt,
+            needsSync: transcript.needsSync
+        )
+    }
+
+    private func makeSummarySnapshot(from summary: Summary?) -> SummarySnapshot? {
+        guard let summary else { return nil }
+
+        return SummarySnapshot(
+            id: summary.id,
+            title: summary.title,
+            text: summary.text,
+            type: summary.type,
+            status: summary.status,
+            remoteId: summary.remoteId,
+            updatedAt: summary.updatedAt,
+            needsSync: summary.needsSync
+        )
+    }
+
+    private func makeTranscriptSnapshot(
+        text: String,
+        segments: [TranscriptSegment],
+        existingTranscript: Transcript?
+    ) -> TranscriptSnapshot {
+        let segmentSnapshots = segments.map { segment in
+            TranscriptSegmentSnapshot(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+
+        return TranscriptSnapshot(
+            id: existingTranscript?.id ?? UUID(),
+            text: text,
+            segments: segmentSnapshots,
+            remoteId: existingTranscript?.remoteId,
+            updatedAt: Date(),
+            needsSync: true
+        )
+    }
+
+    private func findSermon(by id: UUID) -> Sermon? {
+        if let sermon = sermons.first(where: { $0.id == id }) {
+            return sermon
+        }
+
+        let fetchDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+            sermon.id == id
+        })
+        return try? modelContext.fetch(fetchDescriptor).first
+    }
+
+    private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
+        guard let snapshot else {
+            if let existingTranscript = sermon.transcript {
+                sermon.transcript = nil
+                modelContext.delete(existingTranscript)
+            }
+            return
+        }
+
+        let newSegments = snapshot.segments.map { segment in
+            TranscriptSegment(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+
+        if let existingTranscript = sermon.transcript {
+            let oldSegments = Array(existingTranscript.segments)
+            existingTranscript.segments.removeAll()
+            for segment in oldSegments {
+                modelContext.delete(segment)
+            }
+
+            existingTranscript.text = snapshot.text
+            existingTranscript.segments = newSegments
+            existingTranscript.remoteId = snapshot.remoteId
+            existingTranscript.updatedAt = snapshot.updatedAt
+            existingTranscript.needsSync = snapshot.needsSync
+            return
+        }
+
+        let transcript = Transcript(
+            id: snapshot.id,
+            text: snapshot.text,
+            segments: newSegments,
+            remoteId: snapshot.remoteId,
+            updatedAt: snapshot.updatedAt,
+            needsSync: snapshot.needsSync
+        )
+        modelContext.insert(transcript)
+        sermon.transcript = transcript
+    }
+
+    private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
+        guard let snapshot else {
+            if let existingSummary = sermon.summary {
+                sermon.summary = nil
+                modelContext.delete(existingSummary)
+            }
+            sermon.summaryPreviewText = nil
+            return
+        }
+
+        if let existingSummary = sermon.summary {
+            existingSummary.title = snapshot.title
+            existingSummary.text = snapshot.text
+            existingSummary.type = snapshot.type
+            existingSummary.status = snapshot.status
+            existingSummary.remoteId = snapshot.remoteId
+            existingSummary.updatedAt = snapshot.updatedAt
+            existingSummary.needsSync = snapshot.needsSync
+            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+            return
+        }
+
+        let summary = Summary(
+            id: snapshot.id,
+            title: snapshot.title,
+            text: snapshot.text,
+            type: snapshot.type,
+            status: snapshot.status,
+            remoteId: snapshot.remoteId,
+            updatedAt: snapshot.updatedAt,
+            needsSync: snapshot.needsSync
+        )
+        modelContext.insert(summary)
+        sermon.summary = summary
+        sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+    }
 
     func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil, completion: ((UUID) -> Void)? = nil) {
         print("[SermonService] saveSermon called with title: \(title), date: \(date), serviceType: \(serviceType)")
@@ -122,6 +304,8 @@ class SermonService {
                 )
             }
             print("[DEBUG] saveSermon: Created \(freshNotes.count) fresh Note objects for SwiftData")
+            let transcriptSnapshot = makeTranscriptSnapshot(from: transcript)
+            let summarySnapshot = makeSummarySnapshot(from: summary)
 
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
@@ -130,7 +314,7 @@ class SermonService {
                 existing.date = date
                 existing.serviceType = serviceType
                 existing.speaker = speaker
-                existing.transcript = transcript
+                applyTranscriptSnapshot(transcriptSnapshot, to: existing)
                 
                 // For existing sermon, handle notes carefully
                 // First, delete all old notes - SwiftData cascade will handle cleanup
@@ -148,7 +332,7 @@ class SermonService {
                     existing.notes.append(note) // SwiftData will set note.sermon automatically
                 }
                 
-                existing.summary = summary
+                applySummarySnapshot(summarySnapshot, to: existing)
                 existing.transcriptionStatus = transcriptionStatus
                 existing.summaryStatus = summaryStatus
                 existing.isArchived = isArchived
@@ -163,9 +347,9 @@ class SermonService {
                     date: date,
                     serviceType: serviceType,
                     speaker: speaker,
-                    transcript: transcript,
+                    transcript: nil,
                     notes: [], // Start empty, add notes after insertion
-                    summary: summary,
+                    summary: nil,
                     syncStatus: "localOnly",
                     transcriptionStatus: transcriptionStatus,
                     summaryStatus: summaryStatus,
@@ -175,6 +359,10 @@ class SermonService {
                 
                 // Insert sermon first
                 modelContext.insert(sermon)
+
+                // Create related models inside this ModelContext to avoid detached @Model relationships.
+                applyTranscriptSnapshot(transcriptSnapshot, to: sermon)
+                applySummarySnapshot(summarySnapshot, to: sermon)
                 
                 // Now add notes with explicit relationship setting
                 for note in freshNotes {
@@ -256,9 +444,6 @@ class SermonService {
                 for sermon in results {
                     let _ = sermon.notes.count
                     let _ = Array(sermon.notes)
-                    let _ = sermon.transcript?.text
-                    let _ = sermon.summary?.status
-                    let _ = sermon.summary?.text
                 }
                 sermons = results
                 print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
@@ -294,12 +479,12 @@ class SermonService {
             for sermon in results {
                 let notesCount = sermon.notes.count
                 let _ = Array(sermon.notes)
-                let transcriptTextLength = sermon.transcript?.text.count ?? 0
+                let hasTranscript = sermon.transcript != nil
                 let summaryStatus = sermon.summaryStatus
-                let summaryTextLength = sermon.summary?.text.count ?? 0
+                let hasSummary = sermon.summary != nil
 
                 print("[DEBUG] Sermon '\(sermon.title)' (ID: \(sermon.id)) has \(notesCount) notes")
-                print("[DEBUG]   Transcript length: \(transcriptTextLength), summaryStatus: \(summaryStatus), summary length: \(summaryTextLength)")
+                print("[DEBUG]   hasTranscript: \(hasTranscript), summaryStatus: \(summaryStatus), hasSummary: \(hasSummary)")
                 if notesCount > 0 {
                     for (index, note) in sermon.notes.enumerated() {
                         print("[DEBUG]   Note \(index): '\(note.text)' at \(note.timestamp)s, sermon ref: \(note.sermon?.id.uuidString ?? "nil")")
@@ -400,9 +585,9 @@ class SermonService {
             filtered = filtered.filter { sermon in
                 sermon.title.localizedCaseInsensitiveContains(searchText) ||
                 sermon.serviceType.localizedCaseInsensitiveContains(searchText) ||
-                (sermon.speaker?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                (sermon.transcript?.text.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                (sermon.summary?.text.localizedCaseInsensitiveContains(searchText) ?? false)
+                (sermon.speaker?.localizedCaseInsensitiveContains(searchText) ?? false)
+                // Intentionally avoid transcript/summary persisted-property reads here.
+                // Corrupted local SwiftData relationship records can assert when faulted.
             }
         }
         
@@ -462,6 +647,53 @@ class SermonService {
             triggerSyncIfNeeded()
         }
         
+        applyFilters()
+    }
+
+    func applyTranscriptionResult(sermonId: UUID, text: String, segments: [TranscriptSegment]) {
+        guard let sermon = findSermon(by: sermonId) else {
+            print("[SermonService] Could not find sermon \(sermonId) to apply transcription result")
+            return
+        }
+
+        let transcriptSnapshot = makeTranscriptSnapshot(
+            text: text,
+            segments: segments,
+            existingTranscript: sermon.transcript
+        )
+        applyTranscriptSnapshot(transcriptSnapshot, to: sermon)
+
+        sermon.transcriptionStatus = "complete"
+        sermon.needsSync = true
+        sermon.updatedAt = Date()
+        sermon.syncStatus = "pending"
+
+        try? modelContext.save()
+
+        if let currentUser = authManager.currentUser, currentUser.canSync {
+            triggerSyncIfNeeded()
+        }
+
+        applyFilters()
+    }
+
+    func markTranscriptionFailed(sermonId: UUID) {
+        guard let sermon = findSermon(by: sermonId) else {
+            print("[SermonService] Could not find sermon \(sermonId) to mark transcription failed")
+            return
+        }
+
+        sermon.transcriptionStatus = "failed"
+        sermon.needsSync = true
+        sermon.updatedAt = Date()
+        sermon.syncStatus = "pending"
+
+        try? modelContext.save()
+
+        if let currentUser = authManager.currentUser, currentUser.canSync {
+            triggerSyncIfNeeded()
+        }
+
         applyFilters()
     }
 
@@ -806,9 +1038,8 @@ class SermonService {
         if summaryServiceCancellables[sermonId] == nil {
             summaryServiceCancellables[sermonId] = Set<AnyCancellable>()
         }
-
-        // Generate summary
-        summaryService.generateSummary(for: transcript, type: serviceType)
+        // Replace any previous subscription for the same sermon request.
+        summaryServiceCancellables[sermonId]?.removeAll()
 
         // Track whether we've seen the request start (pending state)
         // This helps filter out stale "complete" states from previous summaries
@@ -817,6 +1048,7 @@ class SermonService {
         // Listen for summary completion - this subscription persists at service level
         summaryService.statusPublisher
             .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+            .dropFirst() // Ignore the CurrentValueSubject replay from a previous request.
             .sink { [weak self] (status, titleText, summaryText) in
                 guard let self = self else { return }
 
@@ -828,10 +1060,10 @@ class SermonService {
                     print("[SermonService] 🔄 Request started for sermon \(sermonId)")
                 }
 
-                // Ignore "complete" status if we haven't seen the request start yet
-                // This filters out stale completions from previous summaries in the singleton
-                if status == "complete" && !hasSeenPending {
-                    print("[SermonService] ⚠️ Ignoring stale completion (haven't seen pending yet)")
+                // Ignore terminal states if we haven't seen the request start yet.
+                // This filters out stale events from previous requests in the singleton SummaryService.
+                if (status == "complete" || status == "failed") && !hasSeenPending {
+                    print("[SermonService] ⚠️ Ignoring stale terminal state '\(status)' (haven't seen pending yet)")
                     return
                 }
 
@@ -860,6 +1092,7 @@ class SermonService {
                                 status: "complete"
                             )
                             sermon.summary = summary
+                            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: summaryText)
                             sermon.summaryStatus = "complete"
 
                             // Update sermon title with AI-generated title if available
@@ -933,6 +1166,40 @@ class SermonService {
                 }
             }
             .store(in: &summaryServiceCancellables[sermonId]!)
+
+        // Start summary generation after the subscription is attached.
+        summaryService.generateSummary(for: transcript, type: serviceType)
+
+        // Fail-safe: if no terminal event arrives, move sermon to retry flow instead of staying in processing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + summaryGenerationTimeout) { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard self.summaryServiceCancellables[sermonId] != nil else { return }
+
+                let fetchDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+                    sermon.id == sermonId
+                })
+
+                guard let sermon = try? self.modelContext.fetch(fetchDescriptor).first else {
+                    self.summaryServiceCancellables.removeValue(forKey: sermonId)
+                    return
+                }
+
+                guard sermon.summaryStatus == "processing" else {
+                    return
+                }
+
+                print("[SermonService] ⏱️ Summary generation timed out for sermon \(sermonId); moving to retry queue")
+                sermon.summaryStatus = "failed"
+                try? self.modelContext.save()
+
+                SummaryRetryService.shared.addPendingSummary(
+                    PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
+                )
+
+                self.summaryServiceCancellables.removeValue(forKey: sermonId)
+            }
+        }
     }
     
     /// Check for sermons with stuck processing status and recover them

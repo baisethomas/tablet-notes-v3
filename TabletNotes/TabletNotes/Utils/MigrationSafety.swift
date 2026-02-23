@@ -278,6 +278,7 @@ class MigrationSafety {
                             needsSync: summaryData["needsSync"] as? Bool ?? false
                         )
                         sermon.summary = summary
+                        sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: text)
                     }
                     
                     modelContext.insert(sermon)
@@ -300,4 +301,3 @@ class MigrationSafety {
         return restoredCount
     }
 }
-

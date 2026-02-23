@@ -14,7 +14,7 @@ enum AppScreen {
     case onboarding
     case home
     case recording(serviceType: String?)
-    case sermonDetail(sermon: Sermon)
+    case sermonDetail(id: UUID)
     case sermons
     case settings
     case account
@@ -547,7 +547,7 @@ struct MainAppView: View {
                 sermonService: sermonService,
                 syncService: syncService,
                 onSermonSelected: { sermon in
-                    currentScreen = .sermonDetail(sermon: sermon)
+                    currentScreen = .sermonDetail(id: sermon.id)
                 },
                 onSettings: {
                     currentScreen = .settings
@@ -572,11 +572,11 @@ struct MainAppView: View {
                 recordingService: recordingService,
                 transcriptionService: transcriptionService
             )
-        case .sermonDetail(let sermon):
+        case .sermonDetail(let sermonID):
             SermonDetailView(
                 sermonService: sermonService,
                 authManager: authManager,
-                sermonID: sermon.id,
+                sermonID: sermonID,
                 onBack: { currentScreen = .sermons }
             )
         case .sermons:
@@ -584,7 +584,7 @@ struct MainAppView: View {
                 sermonService: sermonService,
                 syncService: syncService,
                 onSermonSelected: { sermon in
-                    currentScreen = .sermonDetail(sermon: sermon)
+                    currentScreen = .sermonDetail(id: sermon.id)
                 },
                 onSettings: {
                     currentScreen = .settings

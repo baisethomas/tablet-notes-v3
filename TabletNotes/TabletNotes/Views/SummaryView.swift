@@ -57,12 +57,16 @@ struct SummaryView: View {
                             
                             HStack(spacing: 12) {
                                 Button("Retry") {
-                                    summaryService.retrySummary(for: transcript?.text ?? "", type: serviceType)
+                                    startSummaryRequest {
+                                        summaryService.retrySummary(for: transcript?.text ?? "", type: serviceType)
+                                    }
                                 }
                                 .buttonStyle(.borderedProminent)
                                 
                                 Button("Basic Summary") {
-                                    summaryService.generateBasicSummary(for: transcript?.text ?? "", type: serviceType)
+                                    startSummaryRequest {
+                                        summaryService.generateBasicSummary(for: transcript?.text ?? "", type: serviceType)
+                                    }
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -93,26 +97,45 @@ struct SummaryView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .onAppear {
-            summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
-            summaryService.titlePublisher
-                .receive(on: RunLoop.main)
-                .sink { value in
-                    title = value
-                }
-                .store(in: &cancellables)
-            summaryService.summaryPublisher
-                .receive(on: RunLoop.main)
-                .sink { value in
-                    summary = value
-                }
-                .store(in: &cancellables)
-            summaryService.statusPublisher
-                .receive(on: RunLoop.main)
-                .sink { value in
-                    status = value
-                }
-                .store(in: &cancellables)
+            startSummaryRequest {
+                summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
+            }
         }
+        .onDisappear {
+            cancellables.removeAll()
+        }
+    }
+
+    private func startSummaryRequest(_ trigger: @escaping () -> Void) {
+        cancellables.removeAll()
+        title = nil
+        summary = nil
+        status = "pending"
+
+        var hasSeenPending = false
+
+        summaryService.statusPublisher
+            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
+            .dropFirst() // Ignore stale CurrentValueSubject replay from a previous request.
+            .receive(on: RunLoop.main)
+            .sink { statusValue, titleValue, summaryValue in
+                if statusValue == "pending" {
+                    hasSeenPending = true
+                }
+
+                if (statusValue == "complete" || statusValue == "failed") && !hasSeenPending {
+                    print("[SummaryView] ⚠️ Ignoring stale terminal state '\(statusValue)'")
+                    return
+                }
+
+                status = statusValue
+                title = titleValue
+                summary = summaryValue
+            }
+            .store(in: &cancellables)
+
+        // Start after the subscription is attached to avoid missing pending/terminal events.
+        trigger()
     }
 
     private func saveSermonAndContinue() {
