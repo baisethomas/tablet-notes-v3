@@ -12,6 +12,7 @@ struct SignInView: View {
     @State private var errorMessage = ""
     @State private var showingForgotPassword = false
     @State private var showingResetSuccess = false
+    @State private var activeSocialProvider: SocialAuthProvider?
     
     @FocusState private var focusedField: Field?
     
@@ -142,6 +143,38 @@ struct SignInView: View {
                         }
                         .padding(.vertical, 8)
                         
+                        VStack(spacing: 12) {
+                            SocialAuthButton(
+                                provider: .google,
+                                isLoading: activeSocialProvider == .google && isLoading
+                            ) {
+                                signInWithSocial(.google)
+                            }
+                            .disabled(isLoading)
+                            
+                            NativeAppleSignInButton(
+                                authManager: authManager,
+                                isLoading: activeSocialProvider == .apple && isLoading,
+                                onStart: {
+                                    if !isLoading {
+                                        activeSocialProvider = .apple
+                                        isLoading = true
+                                    }
+                                },
+                                onSuccess: {
+                                    isLoading = false
+                                    activeSocialProvider = nil
+                                    dismiss()
+                                },
+                                onError: { message in
+                                    isLoading = false
+                                    activeSocialProvider = nil
+                                    errorMessage = message
+                                    showingError = true
+                                }
+                            )
+                        }
+                        
                         // Create account button
                         Button(action: {
                             dismiss()
@@ -198,6 +231,7 @@ struct SignInView: View {
         guard isFormValid else { return }
         
         isLoading = true
+        activeSocialProvider = nil
         focusedField = nil
         
         Task {
@@ -209,18 +243,56 @@ struct SignInView: View {
                 
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     dismiss()
                 }
             } catch let error as AuthError {
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     errorMessage = error.localizedDescription ?? "An error occurred"
                     showingError = true
                 }
             } catch {
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     errorMessage = "An unexpected error occurred"
+                    showingError = true
+                }
+            }
+        }
+    }
+    
+    private func signInWithSocial(_ provider: SocialAuthProvider) {
+        guard !isLoading else { return }
+        guard provider == .google else { return }
+        
+        isLoading = true
+        activeSocialProvider = provider
+        focusedField = nil
+        
+        Task {
+            do {
+                _ = try await authManager.signInWithSocial(provider: provider)
+                
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    dismiss()
+                }
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = error.localizedDescription ?? "Unable to continue with \(provider.displayName)"
+                    showingError = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = "Unable to continue with \(provider.displayName)"
                     showingError = true
                 }
             }

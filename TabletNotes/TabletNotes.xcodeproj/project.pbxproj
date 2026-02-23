@@ -19,6 +19,7 @@
 		BB82C8332F4ABCBF001CD88C /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB82C8322F4ABCBF001CD88C /* FirebaseAnalyticsCore */; };
 		BB82C8352F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = BB82C8342F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport */; };
 		BB8DDCAE2F4AE591000ABA54 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = BB8DDCAD2F4AE591000ABA54 /* FirebaseCrashlytics */; };
+		BBF1A0012F6D000100000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BBF1A0022F6D000100000001 /* GoogleSignIn */; };
 		BBA138EC2E2CE80A004EEFEE /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBA138EB2E2CE80A004EEFEE /* StoreKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -92,6 +93,7 @@
 				BB82C8332F4ABCBF001CD88C /* FirebaseAnalyticsCore in Frameworks */,
 				BB82C8352F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport in Frameworks */,
 				BB8DDCAE2F4AE591000ABA54 /* FirebaseCrashlytics in Frameworks */,
+				BBF1A0012F6D000100000001 /* GoogleSignIn in Frameworks */,
 				BB40B58C2E066AD000219C83 /* Storage in Frameworks */,
 				BB82C8312F4ABCBF001CD88C /* FirebaseAnalytics in Frameworks */,
 				BB40B58A2E066ACC00219C83 /* Realtime in Frameworks */,
@@ -177,6 +179,7 @@
 				BB82C8322F4ABCBF001CD88C /* FirebaseAnalyticsCore */,
 				BB82C8342F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport */,
 				BB8DDCAD2F4AE591000ABA54 /* FirebaseCrashlytics */,
+				BBF1A0022F6D000100000001 /* GoogleSignIn */,
 			);
 			productName = TabletNotes;
 			productReference = BB281F042DF2CC32007326CB /* TabletNotes.app */;
@@ -263,6 +266,7 @@
 			packageReferences = (
 				BB40B5812E066A8A00219C83 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				BB82C82B2F4ABCBF001CD88C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				BBF1A0032F6D000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BB281F052DF2CC32007326CB /* Products */;
@@ -696,6 +700,14 @@
 				minimumVersion = 12.9.0;
 			};
 		};
+		BBF1A0032F6D000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -758,6 +770,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BB82C82B2F4ABCBF001CD88C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		BBF1A0022F6D000100000001 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BBF1A0032F6D000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

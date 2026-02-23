@@ -1,6 +1,11 @@
 import Foundation
 import Combine
 import Supabase
+import FirebaseCore
+import UIKit
+#if canImport(GoogleSignIn)
+@preconcurrency import GoogleSignIn
+#endif
 
 @MainActor
 final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
@@ -149,6 +154,117 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             throw error
         } catch {
             print("[SupabaseAuthService] Sign in failed: \(error.localizedDescription)")
+            let authError = mapSupabaseError(error)
+            self.authState = .error(authError)
+            throw authError
+        }
+    }
+    
+    func signInWithSocial(provider: SocialAuthProvider) async throws -> User {
+        print("[SupabaseAuthService] Starting social sign in with provider: \(provider.rawValue)")
+        
+        do {
+            let session: Session
+            switch provider {
+            case .google:
+                session = try await signInWithGoogleNative()
+            case .apple:
+                throw AuthError.unknownError(
+                    "Apple Sign-In is handled natively in the app. Please use the Apple button."
+                )
+            }
+            
+            let user = try await ensureProfileComplete(session.user.id.uuidString)
+            self.currentUser = user
+            self.authState = .authenticated(user)
+            
+            print("[SupabaseAuthService] Social sign in successful for provider: \(provider.rawValue)")
+            return user
+        } catch {
+            print("[SupabaseAuthService] Social sign in failed for provider \(provider.rawValue): \(error.localizedDescription)")
+            let authError = mapSupabaseError(error)
+            self.authState = .error(authError)
+            throw authError
+        }
+    }
+    
+    func signInWithApple(idToken: String, nonce: String?, fullName: String?) async throws -> User {
+        print("[SupabaseAuthService] Completing native Apple sign in")
+        
+        do {
+            let session = try await supabase.auth.signInWithIdToken(
+                credentials: .init(
+                    provider: .apple,
+                    idToken: idToken,
+                    nonce: nonce
+                )
+            )
+            
+            let normalizedFullName = fullName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty
+            
+            if let normalizedFullName {
+                _ = try? await supabase.auth.update(
+                    user: UserAttributes(
+                        data: [
+                            "name": .string(normalizedFullName),
+                            "full_name": .string(normalizedFullName)
+                        ]
+                    )
+                )
+            }
+            
+            var user = try await ensureProfileComplete(session.user.id.uuidString)
+            
+            let authEmail = session.user.email?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty
+            let metadataName = session.user.userMetadata["full_name"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty
+                ?? session.user.userMetadata["name"]?.stringValue?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty
+            let fallbackName = displayNameFallback(fromEmail: authEmail)
+            
+            let resolvedName = normalizedFullName
+                ?? metadataName
+                ?? (isPlaceholderProfileName(user.name, userID: user.id) ? fallbackName : nil)
+            let resolvedEmail = authEmail ?? user.email
+            let nextName = resolvedName ?? user.name
+            
+            if nextName != user.name || resolvedEmail != user.email {
+                let updatedUser = User(
+                    id: user.id,
+                    email: resolvedEmail,
+                    name: nextName,
+                    profileImageURL: user.profileImageURL,
+                    createdAt: user.createdAt,
+                    isEmailVerified: user.isEmailVerified,
+                    subscriptionTier: user.subscriptionTier,
+                    subscriptionStatus: user.subscriptionStatus,
+                    subscriptionExpiry: user.subscriptionExpiry,
+                    subscriptionProductId: user.subscriptionProductId,
+                    subscriptionPurchaseDate: user.subscriptionPurchaseDate,
+                    subscriptionRenewalDate: user.subscriptionRenewalDate,
+                    monthlyRecordingCount: user.monthlyRecordingCount,
+                    monthlyRecordingMinutes: user.monthlyRecordingMinutes,
+                    currentStorageUsedGB: user.currentStorageUsedGB,
+                    monthlyExportCount: user.monthlyExportCount,
+                    lastUsageResetDate: user.lastUsageResetDate
+                )
+                try? await saveUserProfile(updatedUser)
+                user = updatedUser
+            }
+            
+            self.currentUser = user
+            self.authState = .authenticated(user)
+            
+            print("[SupabaseAuthService] Native Apple sign in successful")
+            return user
+        } catch {
+            print("[SupabaseAuthService] Native Apple sign in failed: \(error.localizedDescription)")
             let authError = mapSupabaseError(error)
             self.authState = .error(authError)
             throw authError
@@ -366,6 +482,149 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         return false
     }
     
+    private func signInWithGoogleNative() async throws -> Session {
+        #if canImport(GoogleSignIn)
+        guard let rootViewController = topViewController() else {
+            throw AuthError.unknownError("Unable to present Google Sign-In")
+        }
+        
+        let clientID = try googleClientID()
+        try validateGoogleURLSchemeConfiguration(clientID: clientID)
+        let serverClientID = googleServerClientID()
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(
+            clientID: clientID,
+            serverClientID: serverClientID
+        )
+        
+        let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+        
+        guard let idToken = result.user.idToken?.tokenString else {
+            throw AuthError.unknownError("Google Sign-In did not return an ID token")
+        }
+        
+        return try await supabase.auth.signInWithIdToken(
+            credentials: OpenIDConnectCredentials(
+                provider: .google,
+                idToken: idToken,
+                accessToken: result.user.accessToken.tokenString
+            )
+        )
+        #else
+        throw AuthError.unknownError(
+            "GoogleSignIn SDK is not linked. Add the GoogleSignIn Swift package and configure the Google URL scheme."
+        )
+        #endif
+    }
+    
+    private func googleClientID() throws -> String {
+        if
+            let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
+            !clientID.isEmpty
+        {
+            return clientID
+        }
+        
+        if let clientID = FirebaseApp.app()?.options.clientID, !clientID.isEmpty {
+            return clientID
+        }
+        
+        if
+            let gspPath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
+            let plist = NSDictionary(contentsOfFile: gspPath),
+            let clientID = plist["CLIENT_ID"] as? String,
+            !clientID.isEmpty
+        {
+            return clientID
+        }
+        
+        throw AuthError.unknownError(
+            "Missing Google client ID. Add GIDClientID to Info.plist or use a GoogleService-Info.plist that includes CLIENT_ID."
+        )
+    }
+    
+    private func googleServerClientID() -> String? {
+        guard
+            let serverClientID = Bundle.main.object(forInfoDictionaryKey: "GIDServerClientID") as? String,
+            !serverClientID.isEmpty
+        else {
+            return nil
+        }
+        
+        return serverClientID
+    }
+    
+    private func validateGoogleURLSchemeConfiguration(clientID: String) throws {
+        let expectedScheme = googleReversedClientIDScheme(from: clientID)
+        let configuredSchemes = configuredURLSchemes()
+        
+        guard configuredSchemes.contains(expectedScheme) else {
+            throw AuthError.unknownError(
+                "Missing Google URL scheme '\(expectedScheme)'. Add it to Info.plist > CFBundleURLTypes before using Google Sign-In."
+            )
+        }
+    }
+    
+    private func configuredURLSchemes() -> Set<String> {
+        guard let urlTypes = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] else {
+            return []
+        }
+        
+        let schemes = urlTypes
+            .compactMap { $0["CFBundleURLSchemes"] as? [String] }
+            .flatMap { $0 }
+        
+        return Set(schemes)
+    }
+    
+    private func googleReversedClientIDScheme(from clientID: String) -> String {
+        clientID
+            .split(separator: ".")
+            .reversed()
+            .joined(separator: ".")
+    }
+    
+    private func isPlaceholderProfileName(_ name: String, userID: UUID) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        
+        let lowered = trimmed.lowercased()
+        return lowered == "user"
+            || lowered == userID.uuidString.lowercased()
+            || lowered.hasPrefix("user ")
+            || lowered.hasPrefix("user_")
+    }
+    
+    private func displayNameFallback(fromEmail email: String?) -> String? {
+        guard
+            let email,
+            let localPart = email.split(separator: "@").first,
+            !localPart.isEmpty
+        else {
+            return nil
+        }
+        
+        let formatted = localPart
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !formatted.isEmpty else { return nil }
+        return formatted.capitalized
+    }
+    
+    private func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
+    }
+    
     private func ensureProfileComplete(_ userId: String) async throws -> User {
         print("[SupabaseAuthService] Ensuring profile completion for: \(userId)")
         
@@ -481,4 +740,8 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             return .unknownError(error.localizedDescription)
         }
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

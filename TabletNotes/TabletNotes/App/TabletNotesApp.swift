@@ -10,10 +10,14 @@ import CoreData
 import SwiftData
 import FirebaseCore
 import Firebase
+#if canImport(GoogleSignIn)
+@preconcurrency import GoogleSignIn
+#endif
 
 @main
 struct TabletNotesApp: App {
     let container: ModelContainer
+    let modelContext: ModelContext
     @StateObject private var deepLinkHandler = DeepLinkHandler()
     
     init() {
@@ -73,9 +77,10 @@ struct TabletNotesApp: App {
                 fatalError("Failed to create ModelContainer even after reset: \(error)")
             }
         }
+
+        modelContext = ModelContext(container)
     }
-    
-    var modelContext: ModelContext { ModelContext(container) }
+
     var body: some Scene {
         WindowGroup {
             MainAppView(modelContext: modelContext)
@@ -83,6 +88,11 @@ struct TabletNotesApp: App {
                 .environment(\.authManager, AuthenticationManager.shared)
                 .environmentObject(deepLinkHandler)
                 .onOpenURL { url in
+                    #if canImport(GoogleSignIn)
+                    if GIDSignIn.sharedInstance.handle(url) {
+                        return
+                    }
+                    #endif
                     deepLinkHandler.handleURL(url)
                 }
                 .overlay(

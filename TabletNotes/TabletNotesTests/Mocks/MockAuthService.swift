@@ -103,6 +103,63 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
         currentUser = user
         return user
     }
+    
+    func signInWithSocial(provider: SocialAuthProvider) async throws -> User {
+        if shouldFailNextCall {
+            shouldFailNextCall = false
+            throw mockError ?? .networkError
+        }
+        
+        let user = User(
+            id: UUID(),
+            email: "\(provider.rawValue)@example.com",
+            name: "\(provider.displayName) User",
+            profileImageURL: nil,
+            createdAt: Date().addingTimeInterval(-86400),
+            isEmailVerified: true,
+            subscriptionTier: "pro",
+            subscriptionStatus: "active",
+            subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 10, to: Date()),
+            subscriptionProductId: nil,
+            subscriptionPurchaseDate: Date().addingTimeInterval(-86400),
+            subscriptionRenewalDate: Calendar.current.date(byAdding: .day, value: 10, to: Date())
+        )
+        
+        authState = .authenticated(user)
+        currentUser = user
+        return user
+    }
+    
+    func signInWithApple(idToken: String, nonce: String?, fullName: String?) async throws -> User {
+        let user = try await signInWithSocial(provider: .apple)
+        
+        if let fullName, !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let updatedUser = User(
+                id: user.id,
+                email: user.email,
+                name: fullName,
+                profileImageURL: user.profileImageURL,
+                createdAt: user.createdAt,
+                isEmailVerified: user.isEmailVerified,
+                subscriptionTier: user.subscriptionTier,
+                subscriptionStatus: user.subscriptionStatus,
+                subscriptionExpiry: user.subscriptionExpiry,
+                subscriptionProductId: user.subscriptionProductId,
+                subscriptionPurchaseDate: user.subscriptionPurchaseDate,
+                subscriptionRenewalDate: user.subscriptionRenewalDate,
+                monthlyRecordingCount: user.monthlyRecordingCount,
+                monthlyRecordingMinutes: user.monthlyRecordingMinutes,
+                currentStorageUsedGB: user.currentStorageUsedGB,
+                monthlyExportCount: user.monthlyExportCount,
+                lastUsageResetDate: user.lastUsageResetDate
+            )
+            authState = .authenticated(updatedUser)
+            currentUser = updatedUser
+            return updatedUser
+        }
+        
+        return user
+    }
 
     func signOut() async throws {
         if shouldFailNextCall {

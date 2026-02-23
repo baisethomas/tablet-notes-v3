@@ -13,6 +13,7 @@ struct SignUpView: View {
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var showingSuccess = false
+    @State private var activeSocialProvider: SocialAuthProvider?
     
     @FocusState private var focusedField: Field?
     
@@ -161,6 +162,54 @@ struct SignUpView: View {
                         .padding(.top, 8)
                         .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                         
+                        HStack {
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                            
+                            Text("or")
+                                .font(.subheadline)
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                .padding(.horizontal, 16)
+                            
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .frame(height: 1)
+                        }
+                        .padding(.vertical, 8)
+                        
+                        VStack(spacing: 12) {
+                            SocialAuthButton(
+                                provider: .google,
+                                isLoading: activeSocialProvider == .google && isLoading
+                            ) {
+                                signInWithSocial(.google)
+                            }
+                            .disabled(isLoading)
+                            
+                            NativeAppleSignInButton(
+                                authManager: authManager,
+                                isLoading: activeSocialProvider == .apple && isLoading,
+                                onStart: {
+                                    if !isLoading {
+                                        activeSocialProvider = .apple
+                                        isLoading = true
+                                    }
+                                },
+                                onSuccess: {
+                                    isLoading = false
+                                    activeSocialProvider = nil
+                                    dismiss()
+                                },
+                                onError: { message in
+                                    isLoading = false
+                                    activeSocialProvider = nil
+                                    errorMessage = message
+                                    showingError = true
+                                }
+                            )
+                        }
+                        
                         // Sign in link
                         HStack {
                             Text("Already have an account?")
@@ -210,6 +259,7 @@ struct SignUpView: View {
         guard isFormValid else { return }
         
         isLoading = true
+        activeSocialProvider = nil
         focusedField = nil
         
         let signUpData = SignUpData(
@@ -224,18 +274,56 @@ struct SignUpView: View {
                 
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     showingSuccess = true
                 }
             } catch let error as AuthError {
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     errorMessage = error.localizedDescription
                     showingError = true
                 }
             } catch {
                 await MainActor.run {
                     isLoading = false
+                    activeSocialProvider = nil
                     errorMessage = "An unexpected error occurred"
+                    showingError = true
+                }
+            }
+        }
+    }
+    
+    private func signInWithSocial(_ provider: SocialAuthProvider) {
+        guard !isLoading else { return }
+        guard provider == .google else { return }
+        
+        isLoading = true
+        activeSocialProvider = provider
+        focusedField = nil
+        
+        Task {
+            do {
+                _ = try await authManager.signInWithSocial(provider: provider)
+                
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    dismiss()
+                }
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = "Unable to continue with \(provider.displayName)"
                     showingError = true
                 }
             }

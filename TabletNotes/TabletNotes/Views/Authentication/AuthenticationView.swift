@@ -4,6 +4,10 @@ struct AuthenticationView: View {
     @Environment(\.authManager) private var authManager
     @State private var showingSignUp = false
     @State private var showingSignIn = false
+    @State private var isSocialLoading = false
+    @State private var activeSocialProvider: SocialAuthProvider?
+    @State private var showingError = false
+    @State private var errorMessage = ""
     @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
@@ -124,6 +128,53 @@ struct AuthenticationView: View {
                                     )
                                 }
                                 
+                                HStack {
+                                    Rectangle()
+                                        .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                        .frame(height: 1)
+                                    
+                                    Text("or continue with")
+                                        .font(.subheadline)
+                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                        .padding(.horizontal, 12)
+                                    
+                                    Rectangle()
+                                        .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                        .frame(height: 1)
+                                }
+                                .padding(.vertical, 4)
+                                
+                                VStack(spacing: 12) {
+                                    SocialAuthButton(
+                                        provider: .google,
+                                        isLoading: activeSocialProvider == .google && isSocialLoading
+                                    ) {
+                                        signInWithSocial(.google)
+                                    }
+                                    .disabled(isSocialLoading)
+                                    
+                                    NativeAppleSignInButton(
+                                        authManager: authManager,
+                                        isLoading: activeSocialProvider == .apple && isSocialLoading,
+                                        onStart: {
+                                            if !isSocialLoading {
+                                                activeSocialProvider = .apple
+                                                isSocialLoading = true
+                                            }
+                                        },
+                                        onSuccess: {
+                                            isSocialLoading = false
+                                            activeSocialProvider = nil
+                                        },
+                                        onError: { message in
+                                            isSocialLoading = false
+                                            activeSocialProvider = nil
+                                            errorMessage = message
+                                            showingError = true
+                                        }
+                                    )
+                                }
+                                
                                 // Terms and privacy
                                 VStack(spacing: 8) {
                                     Text("By continuing, you agree to our")
@@ -164,6 +215,43 @@ struct AuthenticationView: View {
         }
         .sheet(isPresented: $showingSignIn) {
             SignInView(authManager: authManager)
+        }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+    
+    private func signInWithSocial(_ provider: SocialAuthProvider) {
+        guard !isSocialLoading else { return }
+        guard provider == .google else { return }
+        
+        isSocialLoading = true
+        activeSocialProvider = provider
+        
+        Task {
+            do {
+                _ = try await authManager.signInWithSocial(provider: provider)
+                await MainActor.run {
+                    isSocialLoading = false
+                    activeSocialProvider = nil
+                }
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isSocialLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSocialLoading = false
+                    activeSocialProvider = nil
+                    errorMessage = "Unable to continue with \(provider.displayName)"
+                    showingError = true
+                }
+            }
         }
     }
 }

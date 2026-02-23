@@ -44,6 +44,16 @@ final class AuthenticationManager {
         return try await authService.signIn(email: email, password: password)
     }
     
+    func signInWithSocial(provider: SocialAuthProvider) async throws -> User {
+        print("[AuthenticationManager] signInWithSocial called with provider: \(provider.rawValue)")
+        return try await authService.signInWithSocial(provider: provider)
+    }
+    
+    func signInWithApple(idToken: String, nonce: String?, fullName: String?) async throws -> User {
+        print("[AuthenticationManager] signInWithApple called")
+        return try await authService.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+    }
+    
     func signOut() async throws {
         try await authService.signOut()
     }
