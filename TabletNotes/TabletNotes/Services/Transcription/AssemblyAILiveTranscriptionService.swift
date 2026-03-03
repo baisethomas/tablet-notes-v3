@@ -188,7 +188,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         // Check if API key is configured
         guard AssemblyAIConfig.apiKey != "YOUR_ASSEMBLYAI_API_KEY_HERE" && !AssemblyAIConfig.apiKey.isEmpty else {
-            throw NSError(domain: "APIKeyError", code: 1, userInfo: [NSLocalizedDescriptionKey: "AssemblyAI API key not configured. Please add your API key to AssemblyAIKey.swift"])
+            throw NSError(domain: "APIKeyError", code: 1, userInfo: [NSLocalizedDescriptionKey: "AssemblyAI API key not configured. Set ASSEMBLYAI_API_KEY for direct fallback token flow."])
         }
 
         // Use v3 streaming API endpoint with query parameters
