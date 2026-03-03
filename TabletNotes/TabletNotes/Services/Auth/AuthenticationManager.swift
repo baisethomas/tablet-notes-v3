@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 import Observation
+import FirebaseCrashlytics
 
 @MainActor
 @Observable
@@ -86,8 +87,10 @@ final class AuthenticationManager {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 print("[AuthenticationManager] Auth state changed to: \(state)")
-                self?.authState = state
-                self?.authStatePublished = state // Sync for backward compat
+                guard let self = self else { return }
+                self.authState = state
+                self.authStatePublished = state // Sync for backward compat
+                self.updateCrashlyticsUserContext(user: self.currentUser, authState: state)
             }
             .store(in: &cancellables)
         
@@ -103,6 +106,7 @@ final class AuthenticationManager {
                 }
                 
                 self?.currentUser = user
+                self?.updateCrashlyticsUserContext(user: user, authState: self?.authState ?? .loading)
                 
                 // Validate transcription provider when user changes
                 if user != nil {
@@ -110,6 +114,45 @@ final class AuthenticationManager {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    private func updateCrashlyticsUserContext(user: User?, authState: AuthState) {
+        let crashlytics = Crashlytics.crashlytics()
+
+        if let user {
+            crashlytics.setUserID(user.id.uuidString)
+            crashlytics.setCustomValue(user.id.uuidString, forKey: "app_user_id")
+            crashlytics.setCustomValue(true, forKey: "is_authenticated")
+            crashlytics.setCustomValue(user.subscriptionTier, forKey: "subscription_tier")
+            crashlytics.setCustomValue(user.subscriptionStatus, forKey: "subscription_status")
+            crashlytics.setCustomValue(user.isEmailVerified, forKey: "email_verified")
+
+            let emailDomain = user.email.split(separator: "@").last.map(String.init) ?? ""
+            crashlytics.setCustomValue(emailDomain, forKey: "email_domain")
+        } else {
+            crashlytics.setUserID("")
+            crashlytics.setCustomValue("", forKey: "app_user_id")
+            crashlytics.setCustomValue(false, forKey: "is_authenticated")
+            crashlytics.setCustomValue("", forKey: "subscription_tier")
+            crashlytics.setCustomValue("", forKey: "subscription_status")
+            crashlytics.setCustomValue(false, forKey: "email_verified")
+            crashlytics.setCustomValue("", forKey: "email_domain")
+        }
+
+        crashlytics.setCustomValue(crashlyticsAuthStateLabel(authState), forKey: "auth_state")
+    }
+
+    private func crashlyticsAuthStateLabel(_ authState: AuthState) -> String {
+        switch authState {
+        case .loading:
+            return "loading"
+        case .authenticated:
+            return "authenticated"
+        case .unauthenticated:
+            return "unauthenticated"
+        case .error(let error):
+            return "error:\(error.localizedDescription)"
+        }
     }
     
     private func initializeAuth() {
