@@ -14,6 +14,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
     @Published private var syncStatus: String = "idle"
     @Published private var syncError: Error?
+    private var isSyncInProgress = false
     
     var syncStatusPublisher: AnyPublisher<String, Never> {
         $syncStatus.eraseToAnyPublisher()
@@ -55,13 +56,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
 
     private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
-        guard let snapshot else {
-            if let existingTranscript = sermon.transcript {
-                sermon.transcript = nil
-                modelContext.delete(existingTranscript)
-            }
-            return
+        if let existingTranscript = sermon.transcript {
+            // Replace instead of mutating in-place to avoid invalid-backing traps.
+            sermon.transcript = nil
+            modelContext.delete(existingTranscript)
         }
+
+        guard let snapshot else { return }
 
         let newSegments = snapshot.segments.map { segment in
             TranscriptSegment(
@@ -70,19 +71,6 @@ class SyncService: ObservableObject, SyncServiceProtocol {
                 startTime: segment.startTime,
                 endTime: segment.endTime
             )
-        }
-
-        if let existingTranscript = sermon.transcript {
-            let oldSegments = Array(existingTranscript.segments)
-            existingTranscript.segments.removeAll()
-            for segment in oldSegments {
-                modelContext.delete(segment)
-            }
-
-            existingTranscript.text = snapshot.text
-            existingTranscript.segments = newSegments
-            existingTranscript.remoteId = snapshot.remoteId
-            return
         }
 
         let transcript = Transcript(
@@ -96,22 +84,14 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     }
 
     private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
-        guard let snapshot else {
-            if let existingSummary = sermon.summary {
-                sermon.summary = nil
-                modelContext.delete(existingSummary)
-            }
-            sermon.summaryPreviewText = nil
-            return
+        if let existingSummary = sermon.summary {
+            // Replace instead of mutating in-place to avoid invalid-backing traps.
+            sermon.summary = nil
+            modelContext.delete(existingSummary)
         }
 
-        if let existingSummary = sermon.summary {
-            existingSummary.title = snapshot.title
-            existingSummary.text = snapshot.text
-            existingSummary.type = snapshot.type
-            existingSummary.status = snapshot.status
-            existingSummary.remoteId = snapshot.remoteId
-            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+        guard let snapshot else {
+            sermon.summaryPreviewText = nil
             return
         }
 
@@ -175,6 +155,13 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     // MARK: - Public Methods
     
     func syncAllData() async {
+        guard !isSyncInProgress else {
+            print("[SyncService] ⏭️ Sync already in progress, skipping duplicate trigger")
+            return
+        }
+
+        isSyncInProgress = true
+        defer { isSyncInProgress = false }
         await performFullSync()
     }
     
@@ -469,8 +456,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             applyTranscriptSnapshot(transcriptSnapshot(from: transcriptData), to: sermon)
             print("[SyncService] ✅ Transcript upserted from remote")
         } else if sermon.transcript != nil {
-            let localLength = sermon.transcript?.text.count ?? 0
-            print("[SyncService] ⚠️ Preserving local transcript (\(localLength) chars) - remote returned no transcript")
+            print("[SyncService] ⚠️ Preserving local transcript - remote returned no transcript")
         } else {
             print("[SyncService] ℹ️ No transcript on local or remote")
         }
@@ -489,8 +475,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
             print("[SyncService] ✅ Summary upserted from remote")
         } else if sermon.summary != nil {
-            let localLength = sermon.summary?.text.count ?? 0
-            print("[SyncService] ⚠️ Preserving local summary (\(localLength) chars) - remote returned no summary")
+            print("[SyncService] ⚠️ Preserving local summary - remote returned no summary")
         } else {
             print("[SyncService] ℹ️ No summary on local or remote")
         }
