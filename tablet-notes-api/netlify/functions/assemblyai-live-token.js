@@ -126,7 +126,27 @@ exports.handler = withLogging('assemblyai-live-token', async (event, context) =>
     const additionalHeaders = context.rateLimitHeaders || {};
     additionalHeaders.origin = event.headers.origin;
     
-    return createSuccessResponse(responseData, 200, additionalHeaders);
+    const successResponse = createSuccessResponse(responseData, 200, additionalHeaders);
+
+    // Backward compatibility: older iOS clients decode sessionToken at the top level.
+    // Keep the standardized wrapper while mirroring legacy fields.
+    try {
+      const wrappedBody = JSON.parse(successResponse.body);
+      successResponse.body = JSON.stringify({
+        ...wrappedBody,
+        sessionToken: responseData.sessionToken,
+        expiresIn: responseData.expiresIn,
+        userId: responseData.userId,
+        metadata: responseData.metadata
+      });
+    } catch (responseTransformError) {
+      logger.warn('Failed to append legacy token fields to response body', {
+        userId: user.id,
+        error: responseTransformError.message
+      });
+    }
+
+    return successResponse;
 
   } catch (error) {
     logger.error('Live token generation failed', {

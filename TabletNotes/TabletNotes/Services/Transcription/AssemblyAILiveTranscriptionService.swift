@@ -179,8 +179,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
             throw NSError(domain: "TokenError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get session token: \(responseBody)"])
         }
 
-        let tokenResponse = try JSONDecoder().decode(SessionTokenResponse.self, from: data)
-        self.sessionToken = tokenResponse.sessionToken
+        self.sessionToken = try decodeSessionToken(from: data)
     }
 
     private func getSessionTokenDirect() async throws {
@@ -217,6 +216,30 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         let tokenResponse = try JSONDecoder().decode(DirectTokenResponse.self, from: data)
         self.sessionToken = tokenResponse.token
+    }
+
+    private func decodeSessionToken(from data: Data) throws -> String {
+        let decoder = JSONDecoder()
+
+        if let wrappedResponse = try? decoder.decode(SessionTokenEnvelopeResponse.self, from: data),
+           let token = wrappedResponse.data?.sessionToken,
+           !token.isEmpty {
+            return token
+        }
+
+        if let legacyResponse = try? decoder.decode(SessionTokenResponse.self, from: data),
+           !legacyResponse.sessionToken.isEmpty {
+            return legacyResponse.sessionToken
+        }
+
+        let responseBody = String(data: data, encoding: .utf8) ?? "Non-UTF8 response body"
+        throw NSError(
+            domain: "TokenDecodeError",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Failed to decode session token from response: \(responseBody)"
+            ]
+        )
     }
     
     private func startWebSocketConnection() async throws {
@@ -771,6 +794,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 // MARK: - Response Models
 private struct SessionTokenResponse: Codable {
     let sessionToken: String
+}
+
+private struct SessionTokenEnvelopeResponse: Codable {
+    let success: Bool?
+    let data: SessionTokenResponse?
+    let timestamp: String?
 }
 
 private struct DirectTokenResponse: Codable {
