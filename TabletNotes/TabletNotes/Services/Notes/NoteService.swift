@@ -7,10 +7,10 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     @Published private var notes: [Note] = []
     var notesPublisher: AnyPublisher<[Note], Never> { $notes.eraseToAnyPublisher() }
     var currentNotes: [Note] { notes }
+    let sessionId: String
     
     private let userDefaults = UserDefaults.standard
     private let notesKey = "recordingSessionNotes"
-    private let sessionId: String
     
     init(sessionId: String = UUID().uuidString) {
         self.sessionId = sessionId

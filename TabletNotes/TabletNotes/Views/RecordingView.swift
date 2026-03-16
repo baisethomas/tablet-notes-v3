@@ -778,6 +778,7 @@ struct RecordingView: View {
             }
             
             do {
+                recordingService.prepareRecoverySession(sessionId: noteService.sessionId)
                 try await recordingService.startRecording(serviceType: serviceType)
                 
                 await MainActor.run {

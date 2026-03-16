@@ -147,4 +147,71 @@ struct SermonServiceSaveTests {
         #expect(updatedSermon.summaryNeedsSync == false)
         #expect(updatedSermon.metadataNeedsSync == true)
     }
+
+    @Test func interruptedRecordingRecoveryCreatesDraftEvenWhenExistingSermonsArePresent() async throws {
+        InterruptedRecordingRecoveryStore.clear()
+
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let currentUser = MockAuthService.createMockUser()
+        mockAuthService.setAuthState(.authenticated(currentUser))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+
+        let existingSermon = Sermon(
+            title: "Existing Sermon",
+            audioFileName: "existing.m4a",
+            date: Date().addingTimeInterval(-3600),
+            serviceType: "Sunday Service",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "synced",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            userId: currentUser.id
+        )
+        modelContext.insert(existingSermon)
+        try modelContext.save()
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("interrupted-\(UUID().uuidString).m4a")
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x05, count: 4096))
+
+        let noteService = NoteService(sessionId: "interrupted-session")
+        noteService.addNote(text: "Recovered note", timestamp: 12)
+
+        InterruptedRecordingRecoveryStore.save(
+            InterruptedRecordingManifest(
+                sessionId: "interrupted-session",
+                serviceType: "Bible Study",
+                audioFileName: audioURL.lastPathComponent,
+                startedAt: Date().addingTimeInterval(-120)
+            )
+        )
+
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+
+        let allSermons = sermonService.sermons
+        #expect(allSermons.count == 2)
+
+        guard let recoveredSermon = allSermons.first(where: { $0.audioFileName == audioURL.lastPathComponent }) else {
+            Issue.record("Expected interrupted recording to be recovered into a sermon")
+            try? FileManager.default.removeItem(at: audioURL)
+            InterruptedRecordingRecoveryStore.clear()
+            return
+        }
+
+        #expect(recoveredSermon.serviceType == "Bible Study")
+        #expect(recoveredSermon.transcriptionStatus == "pending")
+        #expect(recoveredSermon.summaryStatus == "pending")
+        #expect(recoveredSermon.notes.count == 1)
+        #expect(recoveredSermon.notes.first?.text == "Recovered note")
+        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(NoteService(sessionId: "interrupted-session").currentNotes.isEmpty)
+
+        try? FileManager.default.removeItem(at: audioURL)
+        InterruptedRecordingRecoveryStore.clear()
+    }
 }

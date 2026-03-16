@@ -5,6 +5,32 @@ import AVFoundation
 import Combine
 import UIKit
 
+struct InterruptedRecordingManifest: Codable, Equatable {
+    let sessionId: String
+    let serviceType: String
+    let audioFileName: String
+    let startedAt: Date
+}
+
+enum InterruptedRecordingRecoveryStore {
+    private static let activeRecordingKey = "active_recording_manifest"
+    private static let userDefaults = UserDefaults.standard
+
+    static func save(_ manifest: InterruptedRecordingManifest) {
+        guard let data = try? JSONEncoder().encode(manifest) else { return }
+        userDefaults.set(data, forKey: activeRecordingKey)
+    }
+
+    static func load() -> InterruptedRecordingManifest? {
+        guard let data = userDefaults.data(forKey: activeRecordingKey) else { return nil }
+        return try? JSONDecoder().decode(InterruptedRecordingManifest.self, from: data)
+    }
+
+    static func clear() {
+        userDefaults.removeObject(forKey: activeRecordingKey)
+    }
+}
+
 @Observable
 class RecordingService: NSObject {
     private var audioRecorder: AVAudioRecorder?
@@ -33,6 +59,7 @@ class RecordingService: NSObject {
     private var durationTimer: Timer?
     private var recordingStartTime: Date?
     private let authManager = AuthenticationManager.shared
+    private var activeRecoverySessionId: String?
 
     override init() {
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
@@ -273,10 +300,32 @@ class RecordingService: NSObject {
             throw RecordingError.recordingFailed
         }
         recordingURL = url
+        if let activeRecoverySessionId {
+            InterruptedRecordingRecoveryStore.save(
+                InterruptedRecordingManifest(
+                    sessionId: activeRecoverySessionId,
+                    serviceType: serviceType,
+                    audioFileName: filename,
+                    startedAt: recordingStartTime ?? Date()
+                )
+            )
+        } else {
+            print("[RecordingService] No recovery session ID was set before recording started")
+        }
 
         // Start duration tracking
         recordingDuration = 0
         recordingStartTime = Date()
+        if let activeRecoverySessionId {
+            InterruptedRecordingRecoveryStore.save(
+                InterruptedRecordingManifest(
+                    sessionId: activeRecoverySessionId,
+                    serviceType: serviceType,
+                    audioFileName: filename,
+                    startedAt: recordingStartTime ?? Date()
+                )
+            )
+        }
         startDurationTimer()
 
         isRecording = true
@@ -310,6 +359,8 @@ class RecordingService: NSObject {
         remainingTime = nil
         recordingStartTime = nil
         cachedMaxDuration = nil
+        activeRecoverySessionId = nil
+        InterruptedRecordingRecoveryStore.clear()
 
         if let currentURL = currentURL {
             let fileSize = (try? fileManager.attributesOfItem(atPath: currentURL.path)[.size] as? NSNumber)?.intValue ?? 0
@@ -317,6 +368,10 @@ class RecordingService: NSObject {
         }
 
         return currentURL
+    }
+
+    func prepareRecoverySession(sessionId: String) {
+        activeRecoverySessionId = sessionId
     }
     
     func pauseRecording() throws {

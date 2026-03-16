@@ -299,6 +299,7 @@ struct MainAppView: View {
                                 
                                 // Start recording immediately
                                 do {
+                                    recordingService.prepareRecoverySession(sessionId: currentRecordingSessionId)
                                     try await recordingService.startRecording(serviceType: type)
                                     print("[MainAppView] Recording started immediately for \(type)")
 

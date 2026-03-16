@@ -20,6 +20,7 @@ class SermonService {
     private let authManager: AuthenticationManager
     private var syncService: (any SyncServiceProtocol)?
     private var subscriptionService: (any SubscriptionServiceProtocol)?
+    private var hasAttemptedInterruptedRecordingRecovery = false
     private(set) var sermons: [Sermon] = []
     private(set) var filteredSermons: [Sermon] = []
     var limitReachedMessage: String?
@@ -44,6 +45,7 @@ class SermonService {
         self.authManager = authManager ?? AuthenticationManager.shared
         self.syncService = syncService
         self.subscriptionService = subscriptionService
+        recoverInterruptedRecordingIfNeeded()
         fetchSermons()
 
         // Listen for auth state changes to refresh sermons
@@ -71,6 +73,7 @@ class SermonService {
     }
     
     private var cancellables = Set<AnyCancellable>()
+    private let interruptedRecordingMinimumSizeBytes: Int64 = 1024
 
     private struct TranscriptSegmentSnapshot {
         let id: UUID
@@ -955,6 +958,71 @@ class SermonService {
     }
     
     // MARK: - Data Recovery
+
+    @MainActor
+    private func recoverInterruptedRecordingIfNeeded() {
+        guard !hasAttemptedInterruptedRecordingRecovery else { return }
+        hasAttemptedInterruptedRecordingRecovery = true
+
+        guard let manifest = InterruptedRecordingRecoveryStore.load() else { return }
+
+        let audioURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings")
+            .appendingPathComponent(manifest.audioFileName)
+
+        if sermons.contains(where: { $0.audioFileName == manifest.audioFileName }) || findSermon(withAudioFileName: manifest.audioFileName) != nil {
+            InterruptedRecordingRecoveryStore.clear()
+            NoteService(sessionId: manifest.sessionId).clearSession()
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: audioURL.path),
+              let fileSize = getFileSize(audioURL),
+              fileSize >= interruptedRecordingMinimumSizeBytes else {
+            print("[SermonService] Interrupted recording manifest found but audio file was unavailable or too small")
+            InterruptedRecordingRecoveryStore.clear()
+            return
+        }
+
+        let noteService = NoteService(sessionId: manifest.sessionId)
+        let recoveredNotes = noteService.currentNotes
+
+        let sermon = Sermon(
+            title: generateInterruptedRecordingTitle(from: manifest.startedAt),
+            audioFileName: manifest.audioFileName,
+            date: manifest.startedAt,
+            serviceType: manifest.serviceType,
+            speaker: nil,
+            transcript: nil,
+            notes: recoveredNotes,
+            summary: nil,
+            syncStatus: "localOnly",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            isArchived: false,
+            userId: authManager.currentUser?.id
+        )
+
+        for note in recoveredNotes {
+            note.sermon = sermon
+            modelContext.insert(note)
+        }
+
+        modelContext.insert(sermon)
+
+        do {
+            try modelContext.save()
+            InterruptedRecordingRecoveryStore.clear()
+            noteService.clearSession()
+            limitReachedMessage = "Recovered an interrupted recording."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                self.limitReachedMessage = nil
+            }
+            print("[SermonService] Recovered interrupted recording \(manifest.audioFileName)")
+        } catch {
+            print("[SermonService] Failed to recover interrupted recording: \(error)")
+        }
+    }
     
     @MainActor
     private func checkForRecoverableAudioFiles() {
@@ -1127,6 +1195,24 @@ class SermonService {
             return "Recovered Recording from \(formatter.string(from: date))"
         }
         return "Recovered Recording"
+    }
+
+    private func generateInterruptedRecordingTitle(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "Recovered Recording from \(formatter.string(from: date))"
+    }
+
+    private func findSermon(withAudioFileName audioFileName: String) -> Sermon? {
+        if let sermon = sermons.first(where: { $0.audioFileName == audioFileName }) {
+            return sermon
+        }
+
+        let descriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+            sermon.audioFileName == audioFileName
+        })
+        return try? modelContext.fetch(descriptor).first
     }
     
     // MARK: - Summary Generation
