@@ -1,270 +1,216 @@
-//
-//  RecordingWorkflowTests.swift
-//  TabletNotesTests
-//
-//  Created by Claude for testing purposes.
-//
-
-import Testing
 import Foundation
-import SwiftData
+import Testing
 @testable import TabletNotes
 
+@MainActor
 struct RecordingWorkflowTests {
     private let mockAuthService = MockAuthService()
     private let mockRecordingService = MockRecordingService()
     private let mockSupabaseService = MockSupabaseService()
-    
-    // MARK: - Setup
+
     private func setupTest() async throws {
-        // Reset all services
         mockRecordingService.resetState()
         mockSupabaseService.clearMockData()
-        
-        // Sign in a test user
+        mockAuthService.resetState()
         _ = try await mockAuthService.signIn(email: "test@example.com", password: "password123")
     }
-    
-    // MARK: - Complete Recording Workflow Tests
+
     @Test func testCompleteRecordingWorkflow() async throws {
-        // Given
         try await setupTest()
-        guard let user = await mockAuthService.getCurrentUser() else {
-            #expect(Bool(false), "User should be signed in")
-            return
-        }
-        
-        // Step 1: Check permissions
+
         let hasPermission = try await mockRecordingService.requestPermissions()
         #expect(hasPermission == true)
-        
-        // Step 2: Start recording
-        let recordingURL = try await mockRecordingService.startRecording()
-        #expect(mockRecordingService.isRecording == true)
-        #expect(recordingURL.pathExtension == "m4a")
-        
-        // Step 3: Simulate recording for a duration
-        try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-        let duration = mockRecordingService.getRecordingDuration()
-        #expect(duration > 0)
-        
-        // Step 4: Stop recording
-        let finalURL = try await mockRecordingService.stopRecording()
-        #expect(mockRecordingService.isRecording == false)
-        #expect(finalURL == recordingURL)
-        
-        // Step 5: Upload to Supabase
-        let testAudioData = "Mock audio data for recording".data(using: .utf8)!
-        let uploadPath = try await mockSupabaseService.uploadFile(
-            data: testAudioData,
-            fileName: recordingURL.lastPathComponent,
-            userId: user.id
-        )
-        
-        #expect(uploadPath.contains(user.id))
-        #expect(uploadPath.contains(recordingURL.lastPathComponent))
-        
-        // Step 6: Verify file can be downloaded
-        let downloadedData = try await mockSupabaseService.downloadFile(filePath: uploadPath)
-        #expect(downloadedData == testAudioData)
-    }
-    
-    @Test func testRecordingWorkflowWithPauseResume() async throws {
-        // Given
-        try await setupTest()
-        
-        // Start recording
-        _ = try await mockRecordingService.startRecording()
-        #expect(mockRecordingService.isRecording == true)
-        
-        // Record for a bit
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        let durationBeforePause = mockRecordingService.getRecordingDuration()
-        
-        // Pause recording
-        try await mockRecordingService.pauseRecording()
-        #expect(mockRecordingService.isRecording == true)
-        #expect(mockRecordingService.isPaused == true)
-        
-        // Wait while paused (duration should not increase)
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        let durationWhilePaused = mockRecordingService.getRecordingDuration()
-        #expect(durationWhilePaused == durationBeforePause)
-        
-        // Resume recording
-        try await mockRecordingService.resumeRecording()
-        #expect(mockRecordingService.isRecording == true)
-        #expect(mockRecordingService.isPaused == false)
-        
-        // Record a bit more
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        let finalDuration = mockRecordingService.getRecordingDuration()
-        #expect(finalDuration > durationWhilePaused)
-        
-        // Stop recording
-        _ = try await mockRecordingService.stopRecording()
-        #expect(mockRecordingService.isRecording == false)
-    }
-    
-    @Test func testRecordingWorkflowWithAuthenticationFailure() async throws {
-        // Given - Start without authentication
-        mockSupabaseService.clearMockData()
-        mockRecordingService.resetState()
-        
-        // Recording should work (local operation)
-        _ = try await mockRecordingService.startRecording()
-        _ = try await mockRecordingService.stopRecording()
-        
-        // But upload should fail without authentication
-        mockSupabaseService.setShouldFailNextCall(true, error: SupabaseError.authenticationRequired)
-        
-        await #expect(throws: SupabaseError.self) {
-            try await mockSupabaseService.uploadFile(
-                data: Data(),
-                fileName: "test.m4a",
-                userId: "no-user"
-            )
-        }
-    }
-    
-    @Test func testRecordingWorkflowWithNetworkFailure() async throws {
-        // Given
-        try await setupTest()
-        guard let user = await mockAuthService.getCurrentUser() else {
-            #expect(Bool(false), "User should be signed in")
+
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        guard let recordingURL = mockRecordingService.getCurrentRecordingURL() else {
+            Issue.record("Expected recording URL after starting recording")
             return
         }
-        
-        // Recording should succeed
-        let recordingURL = try await mockRecordingService.startRecording()
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        _ = try await mockRecordingService.stopRecording()
-        
-        // But upload should fail due to network issues
-        mockSupabaseService.setShouldFailNextCall(true, error: SupabaseError.networkError)
-        
-        await #expect(throws: SupabaseError.self) {
-            try await mockSupabaseService.uploadFile(
-                data: Data(),
-                fileName: recordingURL.lastPathComponent,
-                userId: user.id
+        #expect(mockRecordingService.isRecording == true)
+        #expect(recordingURL.pathExtension == "m4a")
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(mockRecordingService.getRecordingDuration() > 0)
+
+        guard let finalURL = mockRecordingService.stopRecording() else {
+            Issue.record("Expected recording URL when stopping recording")
+            return
+        }
+        #expect(mockRecordingService.isRecording == false)
+        #expect(finalURL == recordingURL)
+
+        let testAudioData = Data("Mock audio data for recording".utf8)
+        let upload = try await mockSupabaseService.getSignedUploadURL(
+            for: finalURL.lastPathComponent,
+            contentType: "audio/m4a",
+            fileSize: testAudioData.count
+        )
+
+        try await mockSupabaseService.uploadFile(data: testAudioData, to: upload.uploadUrl)
+        let downloadURL = try await mockSupabaseService.getSignedDownloadURL(for: upload.path)
+
+        #expect(upload.path.hasSuffix(finalURL.lastPathComponent))
+        #expect(mockSupabaseService.storedFile(at: upload.path) == testAudioData)
+        #expect(downloadURL.absoluteString.contains(finalURL.lastPathComponent))
+    }
+
+    @Test func testRecordingWorkflowWithPauseResume() async throws {
+        try await setupTest()
+
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        #expect(mockRecordingService.isRecording == true)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let durationBeforePause = mockRecordingService.getRecordingDuration()
+
+        try mockRecordingService.pauseRecording()
+        #expect(mockRecordingService.isRecording == true)
+        #expect(mockRecordingService.isPaused == true)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let durationWhilePaused = mockRecordingService.getRecordingDuration()
+        #expect(durationWhilePaused == durationBeforePause)
+
+        try mockRecordingService.resumeRecording()
+        #expect(mockRecordingService.isPaused == false)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let finalDuration = mockRecordingService.getRecordingDuration()
+        #expect(finalDuration > durationWhilePaused)
+
+        _ = mockRecordingService.stopRecording()
+        #expect(mockRecordingService.isRecording == false)
+    }
+
+    @Test func testRecordingWorkflowWithAuthenticationFailure() async throws {
+        mockSupabaseService.clearMockData()
+        mockRecordingService.resetState()
+
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        _ = mockRecordingService.stopRecording()
+
+        mockSupabaseService.setShouldFailNextCall(.authenticationRequired)
+
+        await #expect(throws: MockSupabaseError.self) {
+            try await mockSupabaseService.getSignedUploadURL(
+                for: "test.m4a",
+                contentType: "audio/m4a",
+                fileSize: 0
             )
         }
     }
-    
+
+    @Test func testRecordingWorkflowWithNetworkFailure() async throws {
+        try await setupTest()
+
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        guard let recordingURL = mockRecordingService.getCurrentRecordingURL() else {
+            Issue.record("Expected recording URL after starting recording")
+            return
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = mockRecordingService.stopRecording()
+
+        let upload = try await mockSupabaseService.getSignedUploadURL(
+            for: recordingURL.lastPathComponent,
+            contentType: "audio/m4a",
+            fileSize: 0
+        )
+        mockSupabaseService.setShouldFailNextCall(.networkError)
+
+        await #expect(throws: MockSupabaseError.self) {
+            try await mockSupabaseService.uploadFile(data: Data(), to: upload.uploadUrl)
+        }
+    }
+
     @Test func testRecordingWorkflowWithPermissionDenied() async throws {
-        // Given
         try await setupTest()
         mockRecordingService.setShouldFailNextCall(true, error: RecordingError.permissionDenied)
-        
-        // When/Then - Should fail at permission request
+
         await #expect(throws: RecordingError.self) {
             try await mockRecordingService.requestPermissions()
         }
-        
-        // Recording should also fail
+
         await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.startRecording()
+            try mockRecordingService.startRecording(serviceType: "Sunday Service")
         }
     }
-    
-    // MARK: - Data Persistence Workflow Tests
-    @Test func testSermonCreationAndSyncWorkflow() async throws {
-        // Given
+
+    @Test func testSermonCreationAndAudioUploadWorkflow() async throws {
         try await setupTest()
-        guard let user = await mockAuthService.getCurrentUser() else {
-            #expect(Bool(false), "User should be signed in")
+        guard let user = mockAuthService.currentUser else {
+            Issue.record("User should be signed in")
             return
         }
-        
-        // Create a sermon (simulating local creation)
+
         let sermon = Sermon(
             title: "Integration Test Sermon",
-            serviceType: .sundayService,
-            audioFilePath: "\(user.id)/test-recording.m4a",
-            duration: 1800,
-            recordedAt: Date(),
+            audioFileName: "test-recording.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
             userId: user.id
         )
-        
-        // Upload sermon to cloud
-        try await mockSupabaseService.uploadSermon(sermon, userId: user.id)
-        
-        // Sync user data to get sermons back
-        let syncedSermons = try await mockSupabaseService.syncUserData(userId: user.id)
-        #expect(syncedSermons.count > 0)
-        #expect(syncedSermons.allSatisfy { $0.userId == user.id })
+
+        let upload = try await mockSupabaseService.getSignedUploadURL(
+            for: sermon.audioFileName,
+            contentType: "audio/m4a",
+            fileSize: 32
+        )
+        let sermonAudio = Data("Sermon audio".utf8)
+        try await mockSupabaseService.uploadFile(data: sermonAudio, to: upload.uploadUrl)
+
+        #expect(sermon.userId == user.id)
+        #expect(sermon.audioFileURL.lastPathComponent == sermon.audioFileName)
+        #expect(mockSupabaseService.storedFile(at: upload.path) == sermonAudio)
     }
-    
+
     @Test func testUserProfileUpdateWorkflow() async throws {
-        // Given
         try await setupTest()
-        guard let user = await mockAuthService.getCurrentUser() else {
-            #expect(Bool(false), "User should be signed in")
+        guard let user = mockAuthService.currentUser else {
+            Issue.record("User should be signed in")
             return
         }
-        
-        // Update auth service profile
-        let updatedAuthUser = try await mockAuthService.updateProfile(displayName: "Updated Name")
-        #expect(updatedAuthUser.displayName == "Updated Name")
-        
-        // Sync to Supabase
+
+        let updatedAuthUser = try await mockAuthService.updateProfile(name: "Updated Name", email: nil)
         try await mockSupabaseService.updateUserProfile(updatedAuthUser)
-        
-        // Verify sync
-        let syncedUser = try await mockSupabaseService.getUserProfile(userId: user.id)
-        #expect(syncedUser?.displayName == "Updated Name")
+
+        #expect(updatedAuthUser.name == "Updated Name")
+        #expect(mockSupabaseService.storedUser(id: user.id)?.name == "Updated Name")
     }
-    
-    // MARK: - Error Recovery Workflow Tests
+
     @Test func testWorkflowWithRetryLogic() async throws {
-        // Given
         try await setupTest()
-        guard let user = await mockAuthService.getCurrentUser() else {
-            #expect(Bool(false), "User should be signed in")
-            return
-        }
-        
-        // First attempt should fail
-        mockSupabaseService.setShouldFailNextCall(true, error: SupabaseError.networkError)
-        
-        await #expect(throws: SupabaseError.self) {
-            try await mockSupabaseService.uploadFile(
-                data: Data(),
-                fileName: "test.m4a",
-                userId: user.id
-            )
-        }
-        
-        // Second attempt should succeed (failure flag is reset)
-        let filePath = try await mockSupabaseService.uploadFile(
-            data: "Retry test data".data(using: .utf8)!,
-            fileName: "retry-test.m4a",
-            userId: user.id
+
+        let upload = try await mockSupabaseService.getSignedUploadURL(
+            for: "retry-test.m4a",
+            contentType: "audio/m4a",
+            fileSize: 15
         )
-        
-        #expect(filePath.contains(user.id))
-        #expect(filePath.contains("retry-test.m4a"))
-    }
-    
-    @Test func testConcurrentRecordingAttempts() async throws {
-        // Given
-        try await setupTest()
-        
-        // Start first recording
-        _ = try await mockRecordingService.startRecording()
-        #expect(mockRecordingService.isRecording == true)
-        
-        // Attempt to start second recording concurrently
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.startRecording()
+        mockSupabaseService.setShouldFailNextCall(.networkError)
+
+        await #expect(throws: MockSupabaseError.self) {
+            try await mockSupabaseService.uploadFile(data: Data(), to: upload.uploadUrl)
         }
-        
-        // First recording should still be active
+
+        let retryData = Data("Retry test data".utf8)
+        try await mockSupabaseService.uploadFile(data: retryData, to: upload.uploadUrl)
+
+        #expect(mockSupabaseService.storedFile(at: upload.path) == retryData)
+    }
+
+    @Test func testConcurrentRecordingAttempts() async throws {
+        try await setupTest()
+
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         #expect(mockRecordingService.isRecording == true)
-        
-        // Should be able to stop the first recording
-        _ = try await mockRecordingService.stopRecording()
+
+        await #expect(throws: RecordingError.self) {
+            try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        }
+
+        #expect(mockRecordingService.isRecording == true)
+
+        _ = mockRecordingService.stopRecording()
         #expect(mockRecordingService.isRecording == false)
     }
 }

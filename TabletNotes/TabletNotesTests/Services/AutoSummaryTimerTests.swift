@@ -23,7 +23,7 @@ struct AutoSummaryTimerTests {
         @Published private(set) var currentRecordingURL: URL?
 
         private var durationLimit: TimeInterval? = nil
-        private var durationTimer: Timer?
+        private var durationTimer: DispatchSourceTimer?
         private let mockRecordingURL = URL(fileURLWithPath: "/tmp/mock-recording.m4a")
 
         // Publishers
@@ -46,8 +46,7 @@ struct AutoSummaryTimerTests {
             recordingDuration = 0
             remainingTime = nil
             currentRecordingURL = nil
-            durationTimer?.invalidate()
-            durationTimer = nil
+            stopDurationTimer()
         }
 
         func startRecording(serviceType: String) throws {
@@ -69,8 +68,7 @@ struct AutoSummaryTimerTests {
             let currentURL = currentRecordingURL
             isRecording = false
             isPaused = false
-            durationTimer?.invalidate()
-            durationTimer = nil
+            stopDurationTimer()
             currentRecordingURL = nil
             recordingDuration = 0
             remainingTime = nil
@@ -82,8 +80,7 @@ struct AutoSummaryTimerTests {
                 throw RecordingError.recordingFailed
             }
             isPaused = true
-            durationTimer?.invalidate()
-            durationTimer = nil
+            stopDurationTimer()
         }
 
         func resumeRecording() throws {
@@ -95,7 +92,11 @@ struct AutoSummaryTimerTests {
         }
 
         private func startDurationTimer() {
-            durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            stopDurationTimer()
+
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+            timer.setEventHandler { [weak self] in
                 guard let self = self else { return }
 
                 self.recordingDuration += 0.1
@@ -112,16 +113,25 @@ struct AutoSummaryTimerTests {
                     }
                 }
             }
+            timer.resume()
+            durationTimer = timer
+        }
+
+        private func stopDurationTimer() {
+            durationTimer?.cancel()
+            durationTimer = nil
         }
     }
 
     // MARK: - Mock Summary Service for Testing
 
     class MockSummaryService: SummaryServiceProtocol {
+        private let titleSubject = CurrentValueSubject<String?, Never>(nil)
         private let summarySubject = CurrentValueSubject<String?, Never>(nil)
         private let statusSubject = CurrentValueSubject<String, Never>("idle")
         private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
 
+        var titlePublisher: AnyPublisher<String?, Never> { titleSubject.eraseToAnyPublisher() }
         var summaryPublisher: AnyPublisher<String?, Never> { summarySubject.eraseToAnyPublisher() }
         var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
         var errorPublisher: AnyPublisher<Error?, Never> { errorSubject.eraseToAnyPublisher() }
@@ -140,6 +150,7 @@ struct AutoSummaryTimerTests {
 
             // Simulate async summary generation
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.titleSubject.send("Mock Title")
                 self.summarySubject.send("Mock summary for: \(transcript.prefix(50))...")
                 self.statusSubject.send("complete")
             }
@@ -153,6 +164,7 @@ struct AutoSummaryTimerTests {
             generateSummaryCalled = false
             lastTranscript = nil
             lastServiceType = nil
+            titleSubject.send(nil)
             summarySubject.send(nil)
             statusSubject.send("idle")
             errorSubject.send(nil)
@@ -189,12 +201,16 @@ struct AutoSummaryTimerTests {
         #expect(mockRecordingService.isRecording == false)
         #expect(recordingStoppedEvents.count == 1)
 
-        let (audioURL, wasAutoStopped) = recordingStoppedEvents[0]
+        guard let (audioURL, wasAutoStopped) = recordingStoppedEvents.first else {
+            Issue.record("Expected an auto-stop event")
+            cancellable.cancel()
+            return
+        }
         #expect(audioURL != nil)
         #expect(wasAutoStopped == true) // This should be true for auto-stop
 
         // Simulate what RecordingView would do - trigger transcription and summary
-        if wasAutoStopped, let url = audioURL {
+        if wasAutoStopped, audioURL != nil {
             // This simulates the processTranscription call that would happen in RecordingView
             let mockTranscript = "This is a mock transcript of the sermon recording."
             mockSummaryService.generateSummary(for: mockTranscript, type: "Sunday Service")
@@ -236,11 +252,15 @@ struct AutoSummaryTimerTests {
 
         // Then - Verify auto-stop occurred
         #expect(recordingStoppedEvents.count == 1)
-        let (audioURL, wasAutoStopped) = recordingStoppedEvents[0]
+        guard let (audioURL, wasAutoStopped) = recordingStoppedEvents.first else {
+            Issue.record("Expected an auto-stop event")
+            cancellable.cancel()
+            return
+        }
         #expect(wasAutoStopped == true)
 
         // Simulate RecordingView response to auto-stop
-        if wasAutoStopped, let url = audioURL {
+        if wasAutoStopped, audioURL != nil {
             let mockTranscript = "This is a mock transcript of the bible study recording."
             mockSummaryService.generateSummary(for: mockTranscript, type: "Bible Study")
         }
@@ -297,8 +317,13 @@ struct AutoSummaryTimerTests {
 
         // Then
         #expect(mockRecordingService.remainingTime != nil)
-        #expect(mockRecordingService.remainingTime! < 1.0)
-        #expect(mockRecordingService.remainingTime! > 0.0)
+        if let remainingTime = mockRecordingService.remainingTime {
+            #expect(remainingTime < 1.0)
+            #expect(remainingTime > 0.0)
+        } else {
+            Issue.record("Expected remaining time to be available while recording")
+            return
+        }
 
         // Wait for auto-stop
         try await Task.sleep(nanoseconds: 800_000_000) // 0.8 more seconds
@@ -341,4 +366,3 @@ struct AutoSummaryTimerTests {
         cancellable.cancel()
     }
 }
-

@@ -65,7 +65,7 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
             profileImageURL: nil,
             createdAt: Date(),
             isEmailVerified: true,
-            subscriptionTier: "pro",
+            subscriptionTier: "premium",
             subscriptionStatus: "active",
             subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 14, to: Date()),
             subscriptionProductId: nil,
@@ -91,7 +91,7 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
             profileImageURL: nil,
             createdAt: Date().addingTimeInterval(-86400), // Yesterday
             isEmailVerified: true,
-            subscriptionTier: "pro",
+            subscriptionTier: "premium",
             subscriptionStatus: "active",
             subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 10, to: Date()),
             subscriptionProductId: nil,
@@ -117,7 +117,7 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
             profileImageURL: nil,
             createdAt: Date().addingTimeInterval(-86400),
             isEmailVerified: true,
-            subscriptionTier: "pro",
+            subscriptionTier: "premium",
             subscriptionStatus: "active",
             subscriptionExpiry: Calendar.current.date(byAdding: .day, value: 10, to: Date()),
             subscriptionProductId: nil,
@@ -244,11 +244,11 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
 
 // MARK: - Test Helpers
 extension MockAuthService {
-    static func createMockUser(
+    nonisolated static func createMockUser(
         id: UUID = UUID(),
         email: String = "test@example.com",
         name: String = "Test User",
-        tier: String = "pro"
+        tier: String = "premium"
     ) -> User {
         return User(
             id: id,

@@ -1,222 +1,137 @@
-//
-//  MockSupabaseService.swift
-//  TabletNotesTests
-//
-//  Created by Claude for testing purposes.
-//
-
 import Foundation
 import Supabase
 @testable import TabletNotes
 
-class MockSupabaseService: SupabaseServiceProtocol {
-    var client: SupabaseClient {
-        // Return a dummy client for testing
-        fatalError("Not implemented in mock")
-    }
+enum MockSupabaseError: LocalizedError, Equatable {
+    case authenticationRequired
+    case networkError
+    case signedURLFailed
+    case uploadFailed
+    case downloadURLFailed
+    case updateFailed
+    case fileNotFound
 
-    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
-        return (URL(string: "https://example.com")!, "test/path")
-    }
-
-    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
-        return (URL(string: "https://example.com")!, "test/path")
-    }
-
-    func uploadFile(data: Data, to uploadUrl: URL) async throws {
-        // Mock implementation
-    }
-
-    func getSignedDownloadURL(for path: String) async throws -> URL {
-        return URL(string: "https://example.com")!
-    }
-
-    func updateUserProfile(_ user: TabletNotes.User) async throws {
-        // Mock implementation
-    }
-
-    /*
-    // Temporarily commenting out extra methods that don't match protocol
-    // MARK: - Mock State
-    private var shouldFailNextCall = false
-    private var mockError: Error?
-    private var mockFiles: [String: Data] = [:]
-    private var mockUsers: [UUID: User] = [:]
-    
-    // MARK: - Test Configuration
-    func setShouldFailNextCall(_ shouldFail: Bool, error: Error? = nil) {
-        shouldFailNextCall = shouldFail
-        mockError = error ?? SupabaseError.networkError
-    }
-    
-    func addMockFile(path: String, data: Data) {
-        mockFiles[path] = data
-    }
-    
-    func addMockUser(_ user: User) {
-        mockUsers[user.id] = user
-    }
-    
-    func clearMockData() {
-        mockFiles.removeAll()
-        mockUsers.removeAll()
-    }
-    
-    // MARK: - SupabaseServiceProtocol Implementation
-    func uploadFile(data: Data, fileName: String, userId: String) async throws -> String {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.uploadFailed
+    var errorDescription: String? {
+        switch self {
+        case .authenticationRequired:
+            return "Authentication required"
+        case .networkError:
+            return "Network error"
+        case .signedURLFailed:
+            return "Failed to generate signed URL"
+        case .uploadFailed:
+            return "File upload failed"
+        case .downloadURLFailed:
+            return "Failed to generate download URL"
+        case .updateFailed:
+            return "Profile update failed"
+        case .fileNotFound:
+            return "File not found"
         }
-        
-        let filePath = "\(userId)/\(fileName)"
-        mockFiles[filePath] = data
-        
-        return filePath
-    }
-    
-    func downloadFile(filePath: String) async throws -> Data {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.downloadFailed
-        }
-        
-        guard let data = mockFiles[filePath] else {
-            throw SupabaseError.fileNotFound
-        }
-        
-        return data
-    }
-    
-    func deleteFile(filePath: String) async throws {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.deleteFailed
-        }
-        
-        guard mockFiles[filePath] != nil else {
-            throw SupabaseError.fileNotFound
-        }
-        
-        mockFiles.removeValue(forKey: filePath)
-    }
-    
-    func generateSignedUploadURL(fileName: String, userId: String) async throws -> (url: URL, path: String) {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.signedURLFailed
-        }
-        
-        let path = "\(userId)/\(fileName)"
-        let url = URL(string: "https://mock-supabase-url.com/upload/\(path)")!
-        
-        return (url: url, path: path)
-    }
-    
-    func getUserProfile(userId: String) async throws -> User? {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.networkError
-        }
-        
-        return mockUsers[userId]
-    }
-    
-    func updateUserProfile(_ user: User) async throws {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.updateFailed
-        }
-        
-        mockUsers[user.id] = user
-    }
-    
-    func syncUserData(userId: String) async throws -> [Sermon] {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.syncFailed
-        }
-        
-        // Return mock sermon data
-        return createMockSermons(userId: UUID(uuidString: userId) ?? UUID())
-    }
-    
-    func uploadSermon(_ sermon: Sermon, userId: String) async throws {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.uploadFailed
-        }
-        
-        // Mock sermon upload - no-op for testing
-    }
-    
-    func downloadSermon(sermonId: String, userId: String) async throws -> Sermon? {
-        if shouldFailNextCall {
-            shouldFailNextCall = false
-            throw mockError ?? SupabaseError.downloadFailed
-        }
-        
-        // Return mock sermon if it matches expected pattern
-        if sermonId.hasPrefix("mock-sermon") {
-            return createMockSermon(id: sermonId, userId: userId)
-        }
-        
-        return nil
-    }
-    
-    // MARK: - Mock Data Helpers
-    private func createMockSermons(userId: UUID, count: Int = 3) -> [Sermon] {
-        return (1...count).map { index in
-            createMockSermon(id: "mock-sermon-\(index)", userId: userId)
-        }
-    }
-    
-    private func createMockSermon(id: String, userId: UUID) -> Sermon {
-        return Sermon(
-            id: UUID(),
-            title: "Mock Sermon \(id.suffix(1))",
-            audioFileName: "mock-audio-\(id).m4a",
-            date: Date().addingTimeInterval(-Double.random(in: 0...604800)), // Within last week
-            serviceType: "Sunday Service",
-            speaker: "Test Speaker",
-            userId: userId
-        )
     }
 }
 
-// MARK: - Supabase Errors for Testing
-enum SupabaseError: LocalizedError {
-    case networkError
-    case uploadFailed
-    case downloadFailed
-    case deleteFailed
-    case fileNotFound
-    case signedURLFailed
-    case updateFailed
-    case syncFailed
-    case authenticationRequired
-    
-    var errorDescription: String? {
-        switch self {
-        case .networkError:
-            return "Network connection error"
-        case .uploadFailed:
-            return "File upload failed"
-        case .downloadFailed:
-            return "File download failed"
-        case .deleteFailed:
-            return "File deletion failed"
-        case .fileNotFound:
-            return "File not found"
-        case .signedURLFailed:
-            return "Failed to generate signed URL"
-        case .updateFailed:
-            return "Profile update failed"
-        case .syncFailed:
-            return "Data synchronization failed"
-        case .authenticationRequired:
-            return "Authentication required"
-        }
+final class MockSupabaseService: SupabaseServiceProtocol {
+    private enum Constants {
+        static let baseURL = "https://mock-supabase.local"
+        static let defaultPathPrefix = "mock-user"
     }
-    */
+
+    private var pendingError: MockSupabaseError?
+    private var uploadPathsByURL: [URL: String] = [:]
+    private var storedFiles: [String: Data] = [:]
+    private var storedUsers: [UUID: TabletNotes.User] = [:]
+
+    var client: SupabaseClient {
+        fatalError("MockSupabaseService.client is not implemented for tests")
+    }
+
+    func setShouldFailNextCall(_ error: MockSupabaseError) {
+        pendingError = error
+    }
+
+    func clearMockData() {
+        pendingError = nil
+        uploadPathsByURL.removeAll()
+        storedFiles.removeAll()
+        storedUsers.removeAll()
+    }
+
+    func seedFile(data: Data, at path: String) {
+        storedFiles[path] = data
+    }
+
+    func storedFile(at path: String) -> Data? {
+        storedFiles[path]
+    }
+
+    func seedUser(_ user: TabletNotes.User) {
+        storedUsers[user.id] = user
+    }
+
+    func storedUser(id: UUID) -> TabletNotes.User? {
+        storedUsers[id]
+    }
+
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
+        _ = contentType
+        _ = fileSize
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .signedURLFailed])
+
+        let path = "\(Constants.defaultPathPrefix)/\(fileName)"
+        let uploadURL = URL(string: "\(Constants.baseURL)/upload/\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)")!
+        uploadPathsByURL[uploadURL] = path
+        return (uploadURL, path)
+    }
+
+    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
+        let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let contentType = fileURL.pathExtension.lowercased() == "m4a" ? "audio/m4a" : "application/octet-stream"
+        return try await getSignedUploadURL(for: fileURL.lastPathComponent, contentType: contentType, fileSize: fileSize)
+    }
+
+    func uploadFile(data: Data, to uploadUrl: URL) async throws {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .uploadFailed])
+
+        guard let path = uploadPathsByURL[uploadUrl] ?? storagePath(from: uploadUrl) else {
+            throw MockSupabaseError.uploadFailed
+        }
+
+        storedFiles[path] = data
+    }
+
+    func getSignedDownloadURL(for path: String) async throws -> URL {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .downloadURLFailed])
+
+        guard storedFiles[path] != nil else {
+            throw MockSupabaseError.fileNotFound
+        }
+
+        return URL(string: "\(Constants.baseURL)/download/\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)")!
+    }
+
+    func updateUserProfile(_ user: TabletNotes.User) async throws {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .updateFailed])
+        storedUsers[user.id] = user
+    }
+
+    private func throwIfNeeded(for supportedErrors: [MockSupabaseError]) throws {
+        guard let pendingError else { return }
+        self.pendingError = nil
+
+        if supportedErrors.contains(pendingError) {
+            throw pendingError
+        }
+
+        throw MockSupabaseError.networkError
+    }
+
+    private func storagePath(from uploadUrl: URL) -> String? {
+        let pathComponents = uploadUrl.pathComponents
+        guard let markerIndex = pathComponents.firstIndex(of: "upload"), markerIndex + 1 < pathComponents.count else {
+            return nil
+        }
+
+        return pathComponents[(markerIndex + 1)...].joined(separator: "/")
+    }
 }

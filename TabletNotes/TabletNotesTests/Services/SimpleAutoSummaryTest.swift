@@ -35,7 +35,11 @@ struct SimpleAutoSummaryTest {
         #expect(mockRecordingService.isRecording == false)
         #expect(recordingStoppedEvents.count == 1)
 
-        let (audioURL, wasAutoStopped) = recordingStoppedEvents[0]
+        guard let (audioURL, wasAutoStopped) = recordingStoppedEvents.first else {
+            Issue.record("Expected an auto-stop event")
+            cancellable.cancel()
+            return
+        }
         #expect(audioURL != nil)
         #expect(wasAutoStopped == true) // This confirms auto-stop triggered
 
@@ -56,8 +60,13 @@ struct SimpleAutoSummaryTest {
 
         // Then
         #expect(mockRecordingService.remainingTime != nil)
-        #expect(mockRecordingService.remainingTime! < 1.0)
-        #expect(mockRecordingService.remainingTime! > 0.0)
+        if let remainingTime = mockRecordingService.remainingTime {
+            #expect(remainingTime < 1.0)
+            #expect(remainingTime > 0.0)
+        } else {
+            Issue.record("Expected remaining time to be available while recording")
+            return
+        }
 
         // Clean up
         _ = mockRecordingService.stopRecording()
@@ -74,7 +83,7 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
     @Published private(set) var currentRecordingURL: URL?
 
     private var durationLimit: TimeInterval? = nil
-    private var durationTimer: Timer?
+    private var durationTimer: DispatchSourceTimer?
     private let mockRecordingURL = URL(fileURLWithPath: "/tmp/mock-recording.m4a")
 
     // Publishers
@@ -97,8 +106,7 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
         recordingDuration = 0
         remainingTime = nil
         currentRecordingURL = nil
-        durationTimer?.invalidate()
-        durationTimer = nil
+        stopDurationTimer()
     }
 
     func startRecording(serviceType: String) throws {
@@ -120,8 +128,7 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
         let currentURL = currentRecordingURL
         isRecording = false
         isPaused = false
-        durationTimer?.invalidate()
-        durationTimer = nil
+        stopDurationTimer()
         currentRecordingURL = nil
         recordingDuration = 0
         remainingTime = nil
@@ -133,8 +140,7 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
             throw RecordingError.recordingFailed
         }
         isPaused = true
-        durationTimer?.invalidate()
-        durationTimer = nil
+        stopDurationTimer()
     }
 
     func resumeRecording() throws {
@@ -146,7 +152,11 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
     }
 
     private func startDurationTimer() {
-        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        stopDurationTimer()
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        timer.setEventHandler { [weak self] in
             guard let self = self else { return }
 
             self.recordingDuration += 0.1
@@ -163,5 +173,12 @@ class MockRecordingServiceWithLimits: RecordingServiceProtocol {
                 }
             }
         }
+        timer.resume()
+        durationTimer = timer
+    }
+
+    private func stopDurationTimer() {
+        durationTimer?.cancel()
+        durationTimer = nil
     }
 }

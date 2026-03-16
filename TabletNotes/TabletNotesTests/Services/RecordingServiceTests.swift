@@ -70,12 +70,13 @@ struct RecordingServiceTests {
         setupTest()
         
         // When
-        let recordingURL = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        let recordingURL = mockRecordingService.getCurrentRecordingURL()
         
         // Then
         #expect(mockRecordingService.isRecording == true)
         #expect(mockRecordingService.isPaused == false)
-        #expect(recordingURL.pathExtension == "m4a")
+        #expect(recordingURL?.pathExtension == "m4a")
         #expect(mockRecordingService.getCurrentRecordingURL() == recordingURL)
     }
     
@@ -85,8 +86,8 @@ struct RecordingServiceTests {
         mockRecordingService.setShouldFailNextCall(true, error: RecordingError.recordingFailed)
         
         // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.startRecording()
+        #expect(throws: RecordingError.self) {
+            try mockRecordingService.startRecording(serviceType: "Sunday Service")
         }
         
         #expect(mockRecordingService.isRecording == false)
@@ -95,11 +96,11 @@ struct RecordingServiceTests {
     @Test func testStartRecordingWhenAlreadyRecording() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         
         // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.startRecording()
+        #expect(throws: RecordingError.self) {
+            try mockRecordingService.startRecording(serviceType: "Sunday Service")
         }
     }
     
@@ -107,10 +108,11 @@ struct RecordingServiceTests {
     @Test func testStopRecordingSuccess() async throws {
         // Given
         setupTest()
-        let startURL = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        let startURL = mockRecordingService.getCurrentRecordingURL()
         
         // When
-        let stopURL = try await mockRecordingService.stopRecording()
+        let stopURL = mockRecordingService.stopRecording()
         
         // Then
         #expect(mockRecordingService.isRecording == false)
@@ -123,32 +125,36 @@ struct RecordingServiceTests {
         // Given
         setupTest()
         
-        // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.stopRecording()
-        }
+        // When
+        let recordingURL = mockRecordingService.stopRecording()
+
+        // Then
+        #expect(recordingURL == nil)
+        #expect(mockRecordingService.isRecording == false)
     }
     
-    @Test func testStopRecordingFailure() async throws {
+    @Test func testStopRecordingAfterFailureFlagStillReturnsURL() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         mockRecordingService.setShouldFailNextCall(true, error: RecordingError.recordingFailed)
         
-        // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.stopRecording()
-        }
+        // When
+        let recordingURL = mockRecordingService.stopRecording()
+
+        // Then
+        #expect(recordingURL != nil)
+        #expect(mockRecordingService.isRecording == false)
     }
     
     // MARK: - Recording Pause/Resume Tests
     @Test func testPauseRecordingSuccess() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         
         // When
-        try await mockRecordingService.pauseRecording()
+        try mockRecordingService.pauseRecording()
         
         // Then
         #expect(mockRecordingService.isRecording == true)
@@ -160,19 +166,19 @@ struct RecordingServiceTests {
         setupTest()
         
         // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.pauseRecording()
+        #expect(throws: RecordingError.self) {
+            try mockRecordingService.pauseRecording()
         }
     }
     
     @Test func testResumeRecordingSuccess() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
-        try await mockRecordingService.pauseRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        try mockRecordingService.pauseRecording()
         
         // When
-        try await mockRecordingService.resumeRecording()
+        try mockRecordingService.resumeRecording()
         
         // Then
         #expect(mockRecordingService.isRecording == true)
@@ -182,11 +188,11 @@ struct RecordingServiceTests {
     @Test func testResumeRecordingWhenNotPaused() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         
         // When/Then
-        await #expect(throws: RecordingError.self) {
-            try await mockRecordingService.resumeRecording()
+        #expect(throws: RecordingError.self) {
+            try mockRecordingService.resumeRecording()
         }
     }
     
@@ -196,7 +202,7 @@ struct RecordingServiceTests {
         setupTest()
         
         // When
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         
         // Wait for duration to update
         try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
@@ -210,13 +216,13 @@ struct RecordingServiceTests {
     @Test func testRecordingDurationPausesOnPause() async throws {
         // Given
         setupTest()
-        _ = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
         
         // Wait for some duration
         try await Task.sleep(nanoseconds: 150_000_000) // 0.15 seconds
         
         // When
-        try await mockRecordingService.pauseRecording()
+        try mockRecordingService.pauseRecording()
         let pausedDuration = mockRecordingService.getRecordingDuration()
         
         // Wait a bit more
@@ -238,8 +244,8 @@ struct RecordingServiceTests {
             }
         
         // When
-        _ = try await mockRecordingService.startRecording()
-        _ = try await mockRecordingService.stopRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        _ = mockRecordingService.stopRecording()
         
         // Allow publishers to emit
         try await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
@@ -261,9 +267,9 @@ struct RecordingServiceTests {
             }
         
         // When
-        _ = try await mockRecordingService.startRecording()
-        try await mockRecordingService.pauseRecording()
-        try await mockRecordingService.resumeRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        try mockRecordingService.pauseRecording()
+        try mockRecordingService.resumeRecording()
         
         // Allow publishers to emit
         try await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
@@ -286,23 +292,24 @@ struct RecordingServiceTests {
         #expect(mockRecordingService.getCurrentRecordingURL() == nil)
         
         // Start recording
-        let recordingURL = try await mockRecordingService.startRecording()
+        try mockRecordingService.startRecording(serviceType: "Sunday Service")
+        let recordingURL = mockRecordingService.getCurrentRecordingURL()
         #expect(mockRecordingService.isRecording == true)
         #expect(mockRecordingService.isPaused == false)
         #expect(mockRecordingService.getCurrentRecordingURL() == recordingURL)
         
         // Pause recording
-        try await mockRecordingService.pauseRecording()
+        try mockRecordingService.pauseRecording()
         #expect(mockRecordingService.isRecording == true)
         #expect(mockRecordingService.isPaused == true)
         
         // Resume recording
-        try await mockRecordingService.resumeRecording()
+        try mockRecordingService.resumeRecording()
         #expect(mockRecordingService.isRecording == true)
         #expect(mockRecordingService.isPaused == false)
         
         // Stop recording
-        _ = try await mockRecordingService.stopRecording()
+        _ = mockRecordingService.stopRecording()
         #expect(mockRecordingService.isRecording == false)
         #expect(mockRecordingService.isPaused == false)
         #expect(mockRecordingService.getCurrentRecordingURL() == nil)

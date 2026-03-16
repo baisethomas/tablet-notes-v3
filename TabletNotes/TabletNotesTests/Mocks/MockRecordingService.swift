@@ -20,7 +20,8 @@ class MockRecordingService: RecordingServiceProtocol {
     
     private var shouldFailNextCall = false
     private var mockError: Error?
-    private var recordingTimer: Timer?
+    private var hasMockPermission = true
+    private var recordingTimer: DispatchSourceTimer?
     private let mockRecordingURL = URL(fileURLWithPath: "/tmp/mock-recording.m4a")
     
     // MARK: - Publishers
@@ -54,6 +55,11 @@ class MockRecordingService: RecordingServiceProtocol {
     func setShouldFailNextCall(_ shouldFail: Bool, error: Error? = nil) {
         shouldFailNextCall = shouldFail
         mockError = error ?? RecordingError.recordingFailed
+        if let recordingError = mockError as? RecordingError,
+           case .permissionDenied = recordingError,
+           shouldFail {
+            hasMockPermission = false
+        }
     }
     
     func resetState() {
@@ -62,8 +68,8 @@ class MockRecordingService: RecordingServiceProtocol {
         recordingDuration = 0
         currentRecordingURL = nil
         currentRecordingFileName = nil
-        recordingTimer?.invalidate()
-        recordingTimer = nil
+        hasMockPermission = true
+        stopMockTimer()
     }
     
     // MARK: - RecordingServiceProtocol Implementation
@@ -71,6 +77,10 @@ class MockRecordingService: RecordingServiceProtocol {
         if shouldFailNextCall {
             shouldFailNextCall = false
             throw mockError ?? RecordingError.recordingFailed
+        }
+
+        guard hasMockPermission else {
+            throw RecordingError.permissionDenied
         }
         
         guard !isRecording else {
@@ -91,8 +101,10 @@ class MockRecordingService: RecordingServiceProtocol {
         let currentURL = currentRecordingURL
         isRecording = false
         isPaused = false
-        recordingTimer?.invalidate()
-        recordingTimer = nil
+        stopMockTimer()
+        currentRecordingURL = nil
+        currentRecordingFileName = nil
+        recordingStoppedSubject.send((currentURL, false))
         return currentURL
     }
     
@@ -107,8 +119,7 @@ class MockRecordingService: RecordingServiceProtocol {
         }
         
         isPaused = true
-        recordingTimer?.invalidate()
-        recordingTimer = nil
+        stopMockTimer()
     }
     
     func resumeRecording() throws {
@@ -128,14 +139,19 @@ class MockRecordingService: RecordingServiceProtocol {
     func requestPermissions() async throws -> Bool {
         if shouldFailNextCall {
             shouldFailNextCall = false
+            if let recordingError = mockError as? RecordingError,
+               case .permissionDenied = recordingError {
+                hasMockPermission = false
+            }
             throw mockError ?? RecordingError.permissionDenied
         }
         
+        hasMockPermission = true
         return true // Mock always grants permission
     }
     
     func hasPermission() -> Bool {
-        return !shouldFailNextCall // Return false if next call should fail
+        return hasMockPermission && !shouldFailNextCall
     }
     
     func getCurrentRecordingURL() -> URL? {
@@ -148,9 +164,19 @@ class MockRecordingService: RecordingServiceProtocol {
     
     // MARK: - Private Helpers
     private func startMockTimer() {
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        stopMockTimer()
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        timer.setEventHandler { [weak self] in
             self?.recordingDuration += 0.1
         }
+        timer.resume()
+        recordingTimer = timer
+    }
+
+    private func stopMockTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = nil
     }
 }
-
