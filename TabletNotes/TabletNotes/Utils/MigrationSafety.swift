@@ -30,9 +30,13 @@ class MigrationSafety {
             var markedCount = 0
             for sermon in localOnlySermons {
                 // Mark for sync if not already marked
-                if !sermon.needsSync {
-                    sermon.needsSync = true
-                    sermon.syncStatus = "pending"
+                if !sermon.hasPendingSyncWork {
+                    sermon.markPendingSync(
+                        metadata: true,
+                        notes: !sermon.notes.isEmpty,
+                        transcript: sermon.transcript != nil,
+                        summary: sermon.summary != nil
+                    )
                     markedCount += 1
                 }
             }
@@ -80,6 +84,10 @@ class MigrationSafety {
                     "lastSyncedAt": sermon.lastSyncedAt?.timeIntervalSince1970 ?? NSNull(),
                     "updatedAt": sermon.updatedAt?.timeIntervalSince1970 ?? NSNull(),
                     "needsSync": sermon.needsSync,
+                    "metadataNeedsSync": sermon.metadataNeedsSync,
+                    "notesNeedSync": sermon.notesNeedSync,
+                    "transcriptNeedsSync": sermon.transcriptNeedsSync,
+                    "summaryNeedsSync": sermon.summaryNeedsSync,
                     "userId": sermon.userId?.uuidString ?? NSNull()
                 ]
                 
@@ -199,8 +207,24 @@ class MigrationSafety {
             let summaryStatus = sermonData["summaryStatus"] as? String ?? "pending"
             let isArchived = sermonData["isArchived"] as? Bool ?? false
             let remoteId = sermonData["remoteId"] as? String
+            let lastSyncedAt = (sermonData["lastSyncedAt"] as? TimeInterval).map(Date.init(timeIntervalSince1970:))
+            let updatedAt = (sermonData["updatedAt"] as? TimeInterval).map(Date.init(timeIntervalSince1970:))
+            let legacyNeedsSync = sermonData["needsSync"] as? Bool ?? false
+            let notesNeedSync = sermonData["notesNeedSync"] as? Bool ?? false
+            let transcriptNeedsSync = sermonData["transcriptNeedsSync"] as? Bool ?? false
+            let summaryNeedsSync = sermonData["summaryNeedsSync"] as? Bool ?? false
             let userIdString = sermonData["userId"] as? String
             let userId = userIdString != nil ? UUID(uuidString: userIdString!) : nil
+
+            let notesArray = sermonData["notes"] as? [[String: Any]]
+            let transcriptData = sermonData["transcript"] as? [String: Any]
+            let summaryData = sermonData["summary"] as? [String: Any]
+            let restoredChildHasPendingSync =
+                (notesArray?.contains { ($0["needsSync"] as? Bool) == true } ?? false) ||
+                ((transcriptData?["needsSync"] as? Bool) == true) ||
+                ((summaryData?["needsSync"] as? Bool) == true)
+            let metadataNeedsSync = sermonData["metadataNeedsSync"] as? Bool ??
+                (legacyNeedsSync && !restoredChildHasPendingSync && !notesNeedSync && !transcriptNeedsSync && !summaryNeedsSync)
             
             // Check if sermon already exists
             let descriptor = FetchDescriptor<Sermon>(
@@ -225,11 +249,18 @@ class MigrationSafety {
                         summaryStatus: summaryStatus,
                         isArchived: isArchived,
                         userId: userId,
-                        remoteId: remoteId
+                        lastSyncedAt: lastSyncedAt,
+                        remoteId: remoteId,
+                        updatedAt: updatedAt,
+                        needsSync: legacyNeedsSync,
+                        metadataNeedsSync: metadataNeedsSync,
+                        notesNeedSync: notesNeedSync,
+                        transcriptNeedsSync: transcriptNeedsSync,
+                        summaryNeedsSync: summaryNeedsSync
                     )
                     
                     // Restore notes
-                    if let notesArray = sermonData["notes"] as? [[String: Any]] {
+                    if let notesArray {
                         for noteData in notesArray {
                             if let noteIdString = noteData["id"] as? String,
                                let noteId = UUID(uuidString: noteIdString),
@@ -248,7 +279,7 @@ class MigrationSafety {
                     }
                     
                     // Restore transcript
-                    if let transcriptData = sermonData["transcript"] as? [String: Any],
+                    if let transcriptData,
                        let transcriptIdString = transcriptData["id"] as? String,
                        let transcriptId = UUID(uuidString: transcriptIdString),
                        let text = transcriptData["text"] as? String {
@@ -262,7 +293,7 @@ class MigrationSafety {
                     }
                     
                     // Restore summary
-                    if let summaryData = sermonData["summary"] as? [String: Any],
+                    if let summaryData,
                        let summaryIdString = summaryData["id"] as? String,
                        let summaryId = UUID(uuidString: summaryIdString),
                        let text = summaryData["text"] as? String,
@@ -280,6 +311,8 @@ class MigrationSafety {
                         sermon.summary = summary
                         sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: text)
                     }
+
+                    sermon.refreshPendingSyncState()
                     
                     modelContext.insert(sermon)
                     restoredCount += 1
