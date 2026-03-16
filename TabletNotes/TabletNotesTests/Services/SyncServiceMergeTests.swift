@@ -26,6 +26,7 @@ struct SyncServiceMergeTests {
         private let syncDataBySermonId: [UUID: SermonSyncData]
         private(set) var sermonsToSync: [Sermon]
         private(set) var markedRemoteIds: [String] = []
+        private(set) var markedScopes: [SermonSyncScopes] = []
         private var sermonsByRemoteId: [String: Sermon] = [:]
 
         init(
@@ -40,7 +41,7 @@ struct SyncServiceMergeTests {
 
         func sermonsNeedingSync() throws -> [Sermon] {
             recorder.record("local.sermonsNeedingSync")
-            return sermonsToSync.filter(\.needsSync)
+            return sermonsToSync.filter(\.hasPendingSyncWork)
         }
 
         func syncData(for sermon: Sermon) -> SermonSyncData {
@@ -51,10 +52,17 @@ struct SyncServiceMergeTests {
             return syncData
         }
 
-        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date) throws {
+        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws {
             recorder.record("local.markSermonSynced")
-            sermon.needsSync = false
+            markedScopes.append(scopes)
             sermon.lastSyncedAt = syncedAt
+            sermon.clearPendingSync(
+                metadata: scopes.metadata,
+                notes: scopes.notes,
+                transcript: scopes.transcript,
+                summary: scopes.summary
+            )
+            sermon.refreshPendingSyncState()
             if let remoteId {
                 sermon.remoteId = remoteId
                 sermonsByRemoteId[remoteId] = sermon
@@ -195,7 +203,11 @@ struct SyncServiceMergeTests {
         )
     }
 
-    private func makeSyncData(for sermon: Sermon, userId: UUID) -> SermonSyncData {
+    private func makeSyncData(
+        for sermon: Sermon,
+        userId: UUID,
+        scopes: SermonSyncScopes = .all
+    ) -> SermonSyncData {
         SermonSyncData(
             id: sermon.id,
             title: sermon.title,
@@ -208,9 +220,10 @@ struct SyncServiceMergeTests {
             isArchived: sermon.isArchived,
             userId: userId,
             updatedAt: sermon.updatedAt ?? Date(),
-            notes: [],
+            notes: scopes.notes ? [] : nil,
             transcript: nil,
-            summary: nil
+            summary: nil,
+            scopes: scopes
         )
     }
 
@@ -430,6 +443,166 @@ struct SyncServiceMergeTests {
         #expect(sermon.summary?.title == "Local Summary Title")
         #expect(sermon.summary?.text == "Local summary body")
         #expect(sermon.summary?.needsSync == true)
+    }
+
+    @Test func updateLocalSermonPreservesDirtyLocalMetadataWhenRemoteParentIsNewer() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Local Title",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Prayer Night",
+            speaker: "Local Speaker",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            isArchived: false,
+            remoteId: "remote-sermon",
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true
+        )
+        modelContext.insert(sermon)
+
+        let remoteSermon = RemoteSermonData(
+            id: "remote-sermon",
+            localId: sermon.id,
+            title: "Remote Title",
+            audioFileURL: URL(fileURLWithPath: "/tmp/remote.m4a"),
+            audioFilePath: nil,
+            date: sermon.date,
+            serviceType: "Sunday Service",
+            speaker: "Remote Speaker",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            isArchived: true,
+            userId: UUID(),
+            updatedAt: Date().addingTimeInterval(300),
+            notes: nil,
+            transcript: nil,
+            summary: nil
+        )
+
+        repository.updateLocalSermon(sermon, with: remoteSermon)
+
+        #expect(sermon.title == "Local Title")
+        #expect(sermon.serviceType == "Prayer Night")
+        #expect(sermon.speaker == "Local Speaker")
+        #expect(sermon.transcriptionStatus == "pending")
+        #expect(sermon.summaryStatus == "pending")
+        #expect(sermon.isArchived == false)
+    }
+
+    @Test func syncDataIncludesOnlyDirtyChildScopesForExistingRemoteSermon() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Scoped Sermon",
+            audioFileName: "scoped.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-sermon",
+            updatedAt: Date()
+        )
+        modelContext.insert(sermon)
+
+        let note = Note(text: "Synced note", timestamp: 10, remoteId: "remote-note", needsSync: false)
+        note.sermon = sermon
+        modelContext.insert(note)
+        sermon.notes.append(note)
+
+        let summary = Summary(
+            title: "Local Summary",
+            text: "Dirty summary body",
+            type: "Sunday Service",
+            status: "complete",
+            remoteId: "remote-summary",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        modelContext.insert(summary)
+        sermon.summary = summary
+        sermon.refreshPendingSyncState()
+
+        let syncData = repository.syncData(for: sermon)
+
+        #expect(syncData.scopes.metadata == false)
+        #expect(syncData.scopes.notes == false)
+        #expect(syncData.scopes.transcript == false)
+        #expect(syncData.scopes.summary == true)
+        #expect(syncData.notes == nil)
+        #expect(syncData.transcript == nil)
+        #expect(syncData.summary?.title == "Local Summary")
+        #expect(syncData.summary?.text == "Dirty summary body")
+    }
+
+    @Test func markSermonSyncedClearsOnlyAcknowledgedScopes() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let syncedAt = Date().addingTimeInterval(120)
+
+        let sermon = Sermon(
+            title: "Selective Sync Sermon",
+            audioFileName: "selective.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-sermon",
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true,
+            notesNeedSync: true,
+            transcriptNeedsSync: true,
+            summaryNeedsSync: true
+        )
+        modelContext.insert(sermon)
+
+        let note = Note(text: "Dirty note", timestamp: 15, remoteId: "remote-note", updatedAt: Date(), needsSync: true)
+        note.sermon = sermon
+        modelContext.insert(note)
+        sermon.notes.append(note)
+
+        let transcript = Transcript(text: "Dirty transcript", updatedAt: Date(), needsSync: true)
+        modelContext.insert(transcript)
+        sermon.transcript = transcript
+
+        let summary = Summary(
+            title: "Dirty summary",
+            text: "Dirty summary body",
+            type: "Sunday Service",
+            status: "complete",
+            remoteId: "remote-summary",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        modelContext.insert(summary)
+        sermon.summary = summary
+        sermon.refreshPendingSyncState()
+
+        try repository.markSermonSynced(
+            sermon,
+            remoteId: "remote-sermon",
+            syncedAt: syncedAt,
+            scopes: SermonSyncScopes(metadata: false, notes: false, transcript: false, summary: true)
+        )
+
+        #expect(sermon.summaryNeedsSync == false)
+        #expect(sermon.summary?.needsSync == false)
+        #expect(sermon.summary?.updatedAt == syncedAt)
+        #expect(sermon.metadataNeedsSync == true)
+        #expect(sermon.notesNeedSync == true)
+        #expect(sermon.transcriptNeedsSync == true)
+        #expect(sermon.notes.first?.needsSync == true)
+        #expect(sermon.transcript?.needsSync == true)
+        #expect(sermon.hasPendingSyncWork == true)
     }
 
     @Test func syncEnginePushesLocalChangesBeforePullingCloudChanges() async throws {

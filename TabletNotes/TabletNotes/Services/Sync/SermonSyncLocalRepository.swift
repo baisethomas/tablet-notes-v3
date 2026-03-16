@@ -5,7 +5,7 @@ import SwiftData
 protocol SermonSyncLocalRepositoryProtocol: AnyObject {
     func sermonsNeedingSync() throws -> [Sermon]
     func syncData(for sermon: Sermon) -> SermonSyncData
-    func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date) throws
+    func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws
     func findSermon(remoteId: String) throws -> Sermon?
     func refreshSermon(id: UUID) throws -> Sermon?
     func markAudioDownloaded(fileName: String, for sermonId: UUID) throws
@@ -24,15 +24,28 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     func sermonsNeedingSync() throws -> [Sermon] {
-        let descriptor = FetchDescriptor<Sermon>(
-            predicate: #Predicate<Sermon> { sermon in
-                sermon.needsSync == true
-            }
-        )
-        return try modelContext.fetch(descriptor)
+        try modelContext.fetch(FetchDescriptor<Sermon>())
+            .filter(\.hasPendingSyncWork)
     }
 
     func syncData(for sermon: Sermon) -> SermonSyncData {
+        let isCreate = sermon.remoteId?.isEmpty != false
+        let legacyPendingMarker = sermon.needsSync &&
+            !sermon.metadataNeedsSync &&
+            !sermon.notesNeedSync &&
+            !sermon.transcriptNeedsSync &&
+            !sermon.summaryNeedsSync &&
+            !sermon.notes.contains(where: \.needsSync) &&
+            sermon.transcript?.needsSync != true &&
+            sermon.summary?.needsSync != true
+
+        let scopes = SermonSyncScopes(
+            metadata: isCreate || sermon.metadataNeedsSync || legacyPendingMarker,
+            notes: isCreate || sermon.notesNeedSync || sermon.notes.contains(where: \.needsSync),
+            transcript: isCreate || sermon.transcriptNeedsSync || sermon.transcript?.needsSync == true,
+            summary: isCreate || sermon.summaryNeedsSync || sermon.summary?.needsSync == true
+        )
+
         let notesSnapshot = sermon.notes.map { note in
             NoteSyncPayload(id: note.id, text: note.text, timestamp: note.timestamp)
         }
@@ -61,21 +74,33 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             isArchived: sermon.isArchived,
             userId: sermon.userId,
             updatedAt: sermon.updatedAt ?? Date(),
-            notes: notesSnapshot,
-            transcript: transcriptSnapshot,
-            summary: summarySnapshot
+            notes: scopes.notes ? notesSnapshot : nil,
+            transcript: scopes.transcript ? transcriptSnapshot : nil,
+            summary: scopes.summary ? summarySnapshot : nil,
+            scopes: scopes
         )
     }
 
-    func markSermonSynced(_ sermon: Sermon, remoteId: String? = nil, syncedAt: Date = Date()) throws {
+    func markSermonSynced(
+        _ sermon: Sermon,
+        remoteId: String? = nil,
+        syncedAt: Date = Date(),
+        scopes: SermonSyncScopes
+    ) throws {
         if let remoteId, !remoteId.isEmpty {
             sermon.remoteId = remoteId
         }
 
         sermon.lastSyncedAt = syncedAt
-        sermon.needsSync = false
         sermon.syncStatus = "synced"
-        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt)
+        sermon.clearPendingSync(
+            metadata: scopes.metadata,
+            notes: scopes.notes,
+            transcript: scopes.transcript,
+            summary: scopes.summary
+        )
+        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt, scopes: scopes)
+        sermon.refreshPendingSyncState()
         try modelContext.save()
     }
 
@@ -106,12 +131,16 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
         print("[SyncService] 🔄 Updating local sermon: \(remoteData.title)")
 
-        sermon.title = remoteData.title
-        sermon.serviceType = remoteData.serviceType
-        sermon.speaker = remoteData.speaker
-        sermon.isArchived = remoteData.isArchived
-        sermon.transcriptionStatus = remoteData.transcriptionStatus
-        sermon.summaryStatus = remoteData.summaryStatus
+        if sermon.metadataNeedsSync {
+            print("[SyncService] ⚠️ Preserving dirty local sermon metadata")
+        } else {
+            sermon.title = remoteData.title
+            sermon.serviceType = remoteData.serviceType
+            sermon.speaker = remoteData.speaker
+            sermon.isArchived = remoteData.isArchived
+            sermon.transcriptionStatus = remoteData.transcriptionStatus
+            sermon.summaryStatus = remoteData.summaryStatus
+        }
         sermon.updatedAt = remoteData.updatedAt
         sermon.lastSyncedAt = Date()
         sermon.syncStatus = "synced"
@@ -187,6 +216,10 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             sermon.lastSyncedAt = nil
             sermon.syncStatus = "localOnly"
             sermon.needsSync = false
+            sermon.metadataNeedsSync = false
+            sermon.notesNeedSync = false
+            sermon.transcriptNeedsSync = false
+            sermon.summaryNeedsSync = false
         }
         try modelContext.save()
     }
@@ -298,7 +331,7 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     private func shouldPreserveLocalChildData(for sermon: Sermon, childNeedsSync: Bool) -> Bool {
-        sermon.needsSync && childNeedsSync
+        sermon.hasPendingSyncWork && childNeedsSync
     }
 
     private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {
@@ -413,18 +446,20 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         print("[SyncService] ✅ Summary upserted from remote")
     }
 
-    private func markChildEntitiesSynced(for sermon: Sermon, syncedAt: Date) {
-        for note in sermon.notes {
-            note.needsSync = false
-            note.updatedAt = syncedAt
+    private func markChildEntitiesSynced(for sermon: Sermon, syncedAt: Date, scopes: SermonSyncScopes) {
+        if scopes.notes {
+            for note in sermon.notes {
+                note.needsSync = false
+                note.updatedAt = syncedAt
+            }
         }
 
-        if let transcript = sermon.transcript {
+        if scopes.transcript, let transcript = sermon.transcript {
             transcript.needsSync = false
             transcript.updatedAt = syncedAt
         }
 
-        if let summary = sermon.summary {
+        if scopes.summary, let summary = sermon.summary {
             summary.needsSync = false
             summary.updatedAt = syncedAt
         }

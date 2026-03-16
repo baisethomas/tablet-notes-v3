@@ -87,7 +87,12 @@ final class SermonSyncEngine {
 
         if let remoteId = sermon.remoteId, !remoteId.isEmpty {
             try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
-            try localRepository.markSermonSynced(sermon, remoteId: remoteId, syncedAt: syncedAt)
+            try localRepository.markSermonSynced(
+                sermon,
+                remoteId: remoteId,
+                syncedAt: syncedAt,
+                scopes: syncData.scopes
+            )
             return
         }
 
@@ -98,10 +103,20 @@ final class SermonSyncEngine {
                 throw SyncError.conflictResolution
             }
 
-            try localRepository.markSermonSynced(sermon, remoteId: newRemoteId, syncedAt: syncedAt)
+            try localRepository.markSermonSynced(
+                sermon,
+                remoteId: newRemoteId,
+                syncedAt: syncedAt,
+                scopes: .all
+            )
         } catch SyncError.remoteAlreadyExists {
             let resolvedRemoteId = try await resolveExistingRemoteId(for: sermon.id, userId: userId)
-            try localRepository.markSermonSynced(sermon, remoteId: resolvedRemoteId, syncedAt: syncedAt)
+            try localRepository.markSermonSynced(
+                sermon,
+                remoteId: resolvedRemoteId,
+                syncedAt: syncedAt,
+                scopes: syncData.scopes
+            )
         }
     }
 

@@ -55,8 +55,8 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             "isArchived": data.isArchived
         ]
 
-        if !data.notes.isEmpty {
-            payload["notes"] = data.notes.map { note in
+        if let notes = data.notes, !notes.isEmpty {
+            payload["notes"] = notes.map { note in
                 [
                     "id": note.id.uuidString,
                     "text": note.text,
@@ -128,17 +128,22 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
 
         var payload: [String: Any] = [
             "remoteId": remoteId,
-            "title": data.title,
-            "serviceType": data.serviceType,
-            "speaker": data.speaker as Any,
-            "transcriptionStatus": data.transcriptionStatus,
-            "summaryStatus": data.summaryStatus,
-            "isArchived": data.isArchived,
             "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
         ]
 
-        if !data.notes.isEmpty {
-            payload["notes"] = data.notes.map { note in
+        if data.scopes.metadata {
+            payload["title"] = data.title
+            payload["date"] = ISO8601DateFormatter().string(from: data.date)
+            payload["serviceType"] = data.serviceType
+            payload["speaker"] = data.speaker as Any
+            payload["audioFileName"] = data.audioFileURL.lastPathComponent
+            payload["transcriptionStatus"] = data.transcriptionStatus
+            payload["summaryStatus"] = data.summaryStatus
+            payload["isArchived"] = data.isArchived
+        }
+
+        if let notes = data.notes {
+            payload["notes"] = notes.map { note in
                 [
                     "id": note.id.uuidString,
                     "text": note.text,

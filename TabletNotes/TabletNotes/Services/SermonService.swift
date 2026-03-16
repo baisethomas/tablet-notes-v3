@@ -415,7 +415,13 @@ class SermonService {
             // This ensures notes, transcripts, and summaries are synced
             if let currentUser = authManager.currentUser, currentUser.canSync {
                 print("[SermonService] Marking sermon \(sermonID) for sync (isNew: \(isNewSermon))")
-                markSermonForSync(sermonID)
+                markSermonForSync(
+                    sermonID,
+                    metadata: true,
+                    notes: true,
+                    transcript: transcriptSnapshot != nil,
+                    summary: summarySnapshot != nil
+                )
                 triggerSyncIfNeeded()
             }
             
@@ -620,7 +626,7 @@ class SermonService {
     
     func unarchiveSermon(_ sermon: Sermon) {
         sermon.isArchived = false
-        markSermonForSync(sermon.id)
+        markSermonForSync(sermon.id, metadata: true)
         try? modelContext.save()
         
         // Trigger sync if user has sync enabled
@@ -638,7 +644,7 @@ class SermonService {
     }
     
     func updateSermon(_ sermon: Sermon) {
-        markSermonForSync(sermon.id)
+        markSermonForSync(sermon.id, metadata: true)
         try? modelContext.save()
         
         // Trigger sync if user has sync enabled
@@ -663,9 +669,7 @@ class SermonService {
         applyTranscriptSnapshot(transcriptSnapshot, to: sermon)
 
         sermon.transcriptionStatus = "complete"
-        sermon.needsSync = true
-        sermon.updatedAt = Date()
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true, transcript: true)
 
         try? modelContext.save()
 
@@ -683,9 +687,7 @@ class SermonService {
         }
 
         sermon.transcriptionStatus = "failed"
-        sermon.needsSync = true
-        sermon.updatedAt = Date()
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true)
 
         try? modelContext.save()
 
@@ -732,11 +734,20 @@ class SermonService {
     
     // MARK: - Sync Methods
     
-    private func markSermonForSync(_ sermonId: UUID) {
+    private func markSermonForSync(
+        _ sermonId: UUID,
+        metadata: Bool = false,
+        notes: Bool = false,
+        transcript: Bool = false,
+        summary: Bool = false
+    ) {
         guard let sermon = sermons.first(where: { $0.id == sermonId }) else { return }
-        sermon.needsSync = true
-        sermon.updatedAt = Date()
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(
+            metadata: metadata,
+            notes: notes,
+            transcript: transcript,
+            summary: summary
+        )
 
         // CRITICAL: Save the context to persist needsSync flag
         do {
@@ -749,7 +760,7 @@ class SermonService {
     
     private func triggerSyncIfNeeded() {
         // Check if there are any sermons that need syncing
-        let needsSync = sermons.contains { $0.needsSync }
+        let needsSync = sermons.contains { $0.hasPendingSyncWork }
         
         if needsSync {
             Task { @MainActor in

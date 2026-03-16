@@ -108,9 +108,7 @@ class SummaryRetryService: ObservableObject {
 
         upsertJob(for: sermonId, resetAttempts: true)
         sermon.summaryStatus = "processing"
-        sermon.updatedAt = Date()
-        sermon.needsSync = true
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true)
         try? context.save()
 
         if isNetworkAvailable {
@@ -177,9 +175,7 @@ class SummaryRetryService: ObservableObject {
         isProcessingQueue = true
         nextJob.markRunning()
         sermon.summaryStatus = "processing"
-        sermon.updatedAt = Date()
-        sermon.needsSync = true
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true)
         try? context.save()
 
         let sermonId = sermon.id
@@ -223,9 +219,7 @@ class SummaryRetryService: ObservableObject {
                 }
 
                 refreshedSermon.summaryStatus = "complete"
-                refreshedSermon.needsSync = true
-                refreshedSermon.updatedAt = Date()
-                refreshedSermon.syncStatus = "pending"
+                refreshedSermon.markPendingSync(metadata: true, summary: true)
                 refreshedJob.markComplete()
                 try? context.save()
 
@@ -274,9 +268,7 @@ class SummaryRetryService: ObservableObject {
             scheduleQueueProcessing(after: retryDelayMinutes * 60)
         }
 
-        sermon.needsSync = true
-        sermon.updatedAt = sermonSyncDate
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true, updatedAt: sermonSyncDate)
         job.markFailed(error: errorDescription, nextAttemptAt: nextAttemptAt)
         try? context.save()
     }
@@ -312,9 +304,7 @@ class SummaryRetryService: ObservableObject {
         }
 
         sermon.summaryStatus = "complete"
-        sermon.needsSync = true
-        sermon.updatedAt = Date()
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true, summary: true)
         job.markComplete()
         try? context.save()
 

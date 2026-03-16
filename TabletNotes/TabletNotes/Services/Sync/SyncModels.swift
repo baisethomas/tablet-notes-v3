@@ -12,9 +12,28 @@ struct SermonSyncData {
     let isArchived: Bool
     let userId: UUID?
     let updatedAt: Date
-    let notes: [NoteSyncPayload]
+    let notes: [NoteSyncPayload]?
     let transcript: TranscriptSyncPayload?
     let summary: SummarySyncPayload?
+    let scopes: SermonSyncScopes
+}
+
+struct SermonSyncScopes: Equatable {
+    let metadata: Bool
+    let notes: Bool
+    let transcript: Bool
+    let summary: Bool
+
+    var hasWork: Bool {
+        metadata || notes || transcript || summary
+    }
+
+    static let all = SermonSyncScopes(
+        metadata: true,
+        notes: true,
+        transcript: true,
+        summary: true
+    )
 }
 
 struct NoteSyncPayload {

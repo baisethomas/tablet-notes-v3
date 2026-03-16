@@ -118,6 +118,7 @@ class TranscriptionRetryService: ObservableObject {
                     upsertJob(for: sermon.id, resetAttempts: false)
                     if sermon.transcriptionStatus == "processing" {
                         sermon.transcriptionStatus = "pending"
+                        sermon.markPendingSync(metadata: true)
                     }
                 }
             }
@@ -141,9 +142,7 @@ class TranscriptionRetryService: ObservableObject {
 
         upsertJob(for: sermonId, resetAttempts: true)
         sermon.transcriptionStatus = "pending"
-        sermon.updatedAt = Date()
-        sermon.needsSync = true
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true)
         try? context.save()
 
         if isNetworkAvailable {
@@ -171,9 +170,7 @@ class TranscriptionRetryService: ObservableObject {
         isProcessingQueue = true
         nextJob.markRunning()
         sermon.transcriptionStatus = "processing"
-        sermon.updatedAt = Date()
-        sermon.needsSync = true
-        sermon.syncStatus = "pending"
+        sermon.markPendingSync(metadata: true)
         try? context.save()
 
         let runner = transcriptionRunner ?? { url, completion in
@@ -204,9 +201,7 @@ class TranscriptionRetryService: ObservableObject {
                     self.upsertTranscript(on: refreshedSermon, in: context, text: text, segments: transcriptSegments)
                     refreshedSermon.transcriptionStatus = "complete"
                     refreshedSermon.summaryStatus = "processing"
-                    refreshedSermon.needsSync = true
-                    refreshedSermon.updatedAt = Date()
-                    refreshedSermon.syncStatus = "pending"
+                    refreshedSermon.markPendingSync(metadata: true, transcript: true)
                     refreshedJob.markComplete()
                     try? context.save()
 
@@ -233,9 +228,7 @@ class TranscriptionRetryService: ObservableObject {
                         self.scheduleQueueProcessing(after: retryDelayMinutes * 60)
                     }
 
-                    refreshedSermon.needsSync = true
-                    refreshedSermon.updatedAt = Date()
-                    refreshedSermon.syncStatus = "pending"
+                    refreshedSermon.markPendingSync(metadata: true)
                     refreshedJob.markFailed(
                         error: error.localizedDescription,
                         nextAttemptAt: nextAttemptAt

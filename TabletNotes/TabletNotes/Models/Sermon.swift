@@ -24,6 +24,10 @@ final class Sermon {
     var remoteId: String? // Supabase row ID for synced items
     var updatedAt: Date?
     var needsSync: Bool = false // Flag to track if local changes need syncing
+    var metadataNeedsSync: Bool = false
+    var notesNeedSync: Bool = false
+    var transcriptNeedsSync: Bool = false
+    var summaryNeedsSync: Bool = false
     
     // User relationship - each sermon belongs to a user
     var userId: UUID? // Foreign key to User - optional for migration compatibility
@@ -63,6 +67,80 @@ final class Sermon {
         _audioFileExistsCache = nil
     }
 
+    var hasPendingSyncWork: Bool {
+        metadataNeedsSync ||
+        notesNeedSync ||
+        transcriptNeedsSync ||
+        summaryNeedsSync ||
+        notes.contains(where: \.needsSync) ||
+        transcript?.needsSync == true ||
+        summary?.needsSync == true ||
+        needsSync
+    }
+
+    func markPendingSync(
+        metadata: Bool = false,
+        notes: Bool = false,
+        transcript: Bool = false,
+        summary: Bool = false,
+        updatedAt: Date = Date()
+    ) {
+        if metadata {
+            metadataNeedsSync = true
+        }
+
+        if notes {
+            notesNeedSync = true
+        }
+
+        if transcript {
+            transcriptNeedsSync = true
+        }
+
+        if summary {
+            summaryNeedsSync = true
+        }
+
+        self.updatedAt = updatedAt
+        syncStatus = "pending"
+        refreshPendingSyncState()
+    }
+
+    func clearPendingSync(
+        metadata: Bool = false,
+        notes: Bool = false,
+        transcript: Bool = false,
+        summary: Bool = false
+    ) {
+        if metadata {
+            metadataNeedsSync = false
+        }
+
+        if notes {
+            notesNeedSync = false
+        }
+
+        if transcript {
+            transcriptNeedsSync = false
+        }
+
+        if summary {
+            summaryNeedsSync = false
+        }
+
+        refreshPendingSyncState()
+    }
+
+    func refreshPendingSyncState() {
+        needsSync = metadataNeedsSync ||
+            notesNeedSync ||
+            transcriptNeedsSync ||
+            summaryNeedsSync ||
+            notes.contains(where: \.needsSync) ||
+            transcript?.needsSync == true ||
+            summary?.needsSync == true
+    }
+
     // Computed property to count user questions (for usage limit tracking)
     var userQuestionCount: Int {
         return chatMessages.filter { $0.countsTowardLimit }.count
@@ -82,7 +160,7 @@ final class Sermon {
         return String(collapsedWhitespace.prefix(160))
     }
 
-    init(id: UUID = UUID(), title: String, audioFileName: String, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+    init(id: UUID = UUID(), title: String, audioFileName: String, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false, metadataNeedsSync: Bool = false, notesNeedSync: Bool = false, transcriptNeedsSync: Bool = false, summaryNeedsSync: Bool = false) {
         self.id = id
         self.title = title
         self.audioFileName = audioFileName
@@ -102,10 +180,14 @@ final class Sermon {
         self.remoteId = remoteId
         self.updatedAt = updatedAt
         self.needsSync = needsSync
+        self.metadataNeedsSync = metadataNeedsSync
+        self.notesNeedSync = notesNeedSync
+        self.transcriptNeedsSync = transcriptNeedsSync
+        self.summaryNeedsSync = summaryNeedsSync
     }
     
     // Convenience initializer that accepts a URL and extracts the filename
-    convenience init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false) {
+    convenience init(id: UUID = UUID(), title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript? = nil, notes: [Note] = [], summary: Summary? = nil, syncStatus: String = "localOnly", transcriptionStatus: String = "processing", summaryStatus: String = "processing", summaryPreviewText: String? = nil, isArchived: Bool = false, userId: UUID? = nil, lastSyncedAt: Date? = nil, remoteId: String? = nil, updatedAt: Date? = Date(), needsSync: Bool = false, metadataNeedsSync: Bool = false, notesNeedSync: Bool = false, transcriptNeedsSync: Bool = false, summaryNeedsSync: Bool = false) {
         self.init(
             id: id,
             title: title,
@@ -125,7 +207,11 @@ final class Sermon {
             lastSyncedAt: lastSyncedAt,
             remoteId: remoteId,
             updatedAt: updatedAt,
-            needsSync: needsSync
+            needsSync: needsSync,
+            metadataNeedsSync: metadataNeedsSync,
+            notesNeedSync: notesNeedSync,
+            transcriptNeedsSync: transcriptNeedsSync,
+            summaryNeedsSync: summaryNeedsSync
         )
     }
-} 
+}
