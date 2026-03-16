@@ -381,6 +381,157 @@ struct SyncServiceMergeTests {
         #expect(remoteOnlyNote.remoteId == "remote-new-note")
     }
 
+    @Test func updateLocalSermonRemovesCleanLocalNotesMissingFromRemoteSnapshot() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Local Sermon",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "synced",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-sermon",
+            updatedAt: Date()
+        )
+        modelContext.insert(sermon)
+
+        let deletedNoteId = UUID()
+        let survivingNoteId = UUID()
+
+        let deletedNote = Note(
+            id: deletedNoteId,
+            text: "Delete me",
+            timestamp: 12,
+            remoteId: "remote-deleted-note",
+            updatedAt: Date().addingTimeInterval(-300),
+            needsSync: false
+        )
+        deletedNote.sermon = sermon
+        modelContext.insert(deletedNote)
+        sermon.notes.append(deletedNote)
+
+        let survivingNote = Note(
+            id: survivingNoteId,
+            text: "Keep me",
+            timestamp: 18,
+            remoteId: "remote-surviving-note",
+            updatedAt: Date().addingTimeInterval(-300),
+            needsSync: false
+        )
+        survivingNote.sermon = sermon
+        modelContext.insert(survivingNote)
+        sermon.notes.append(survivingNote)
+
+        let remoteSermon = RemoteSermonData(
+            id: "remote-sermon",
+            localId: sermon.id,
+            title: sermon.title,
+            audioFileURL: URL(fileURLWithPath: "/tmp/remote.m4a"),
+            audioFilePath: nil,
+            date: sermon.date,
+            serviceType: sermon.serviceType,
+            speaker: nil,
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            isArchived: false,
+            userId: UUID(),
+            updatedAt: Date().addingTimeInterval(300),
+            notes: [
+                RemoteNoteData(
+                    id: "remote-surviving-note",
+                    localId: survivingNoteId,
+                    text: "Keep me",
+                    timestamp: 18
+                )
+            ],
+            transcript: nil,
+            summary: nil
+        )
+
+        repository.updateLocalSermon(sermon, with: remoteSermon)
+
+        #expect(sermon.notes.count == 1)
+        #expect(sermon.notes.first?.id == survivingNoteId)
+        #expect(sermon.notes.first?.remoteId == "remote-surviving-note")
+        #expect(sermon.notes.contains(where: { $0.id == deletedNoteId }) == false)
+    }
+
+    @Test func updateLocalSermonPreservesDirtyLocalNotesMissingFromRemoteSnapshot() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Local Sermon",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-sermon",
+            updatedAt: Date(),
+            needsSync: true,
+            notesNeedSync: true
+        )
+        modelContext.insert(sermon)
+
+        let dirtyMissingNote = Note(
+            id: UUID(),
+            text: "Keep local change",
+            timestamp: 22,
+            remoteId: "remote-dirty-note",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        dirtyMissingNote.sermon = sermon
+        modelContext.insert(dirtyMissingNote)
+        sermon.notes.append(dirtyMissingNote)
+
+        let localOnlyNote = Note(
+            id: UUID(),
+            text: "Recovered local note",
+            timestamp: 33,
+            remoteId: nil,
+            updatedAt: Date().addingTimeInterval(-120),
+            needsSync: false
+        )
+        localOnlyNote.sermon = sermon
+        modelContext.insert(localOnlyNote)
+        sermon.notes.append(localOnlyNote)
+
+        let remoteSermon = RemoteSermonData(
+            id: "remote-sermon",
+            localId: sermon.id,
+            title: sermon.title,
+            audioFileURL: URL(fileURLWithPath: "/tmp/remote.m4a"),
+            audioFilePath: nil,
+            date: sermon.date,
+            serviceType: sermon.serviceType,
+            speaker: nil,
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            isArchived: false,
+            userId: UUID(),
+            updatedAt: Date().addingTimeInterval(300),
+            notes: [],
+            transcript: nil,
+            summary: nil
+        )
+
+        repository.updateLocalSermon(sermon, with: remoteSermon)
+
+        #expect(sermon.notes.count == 2)
+        #expect(sermon.notes.contains(where: { $0.id == dirtyMissingNote.id }))
+        #expect(sermon.notes.contains(where: { $0.id == localOnlyNote.id }))
+        #expect(sermon.notes.first(where: { $0.id == dirtyMissingNote.id })?.needsSync == true)
+        #expect(sermon.notes.first(where: { $0.id == localOnlyNote.id })?.needsSync == true)
+        #expect(sermon.notesNeedSync == true)
+        #expect(sermon.hasPendingSyncWork == true)
+    }
+
     @Test func updateLocalSermonPreservesDirtyLocalSummaryWhenRemoteParentIsNewer() throws {
         let modelContext = try makeModelContext()
         let syncService = makeSyncService(modelContext: modelContext)

@@ -334,6 +334,10 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         sermon.hasPendingSyncWork && childNeedsSync
     }
 
+    private func shouldPreserveMissingLocalNote(_ note: Note, on sermon: Sermon) -> Bool {
+        note.remoteId == nil || shouldPreserveLocalChildData(for: sermon, childNeedsSync: note.needsSync)
+    }
+
     private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {
         guard let remoteNotes else {
             if !sermon.notes.isEmpty {
@@ -346,15 +350,24 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             if sermon.notes.isEmpty {
                 print("[SyncService] ℹ️ Both local and remote notes are empty")
             } else {
-                print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote note list was empty)")
+                print("[SyncService] Remote note list is empty; reconciling local note removals")
             }
-            return
         }
 
         print("[SyncService] Merging \(remoteNotes.count) remote notes")
 
+        let existingNotesByID = Dictionary(uniqueKeysWithValues: sermon.notes.map { ($0.id, $0) })
+        let existingNotesByRemoteID = Dictionary(
+            uniqueKeysWithValues: sermon.notes.compactMap { note in
+                note.remoteId.map { ($0, note) }
+            }
+        )
+        var matchedLocalNoteIDs = Set<UUID>()
+
         for remoteNote in remoteNotes {
-            if let localNote = sermon.notes.first(where: { $0.id == remoteNote.localId || $0.remoteId == remoteNote.id }) {
+            if let localNote = existingNotesByID[remoteNote.localId] ?? existingNotesByRemoteID[remoteNote.id] {
+                matchedLocalNoteIDs.insert(localNote.id)
+
                 if shouldPreserveLocalChildData(for: sermon, childNeedsSync: localNote.needsSync) {
                     if localNote.remoteId == nil {
                         localNote.remoteId = remoteNote.id
@@ -380,7 +393,25 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
                 note.sermon = sermon
                 modelContext.insert(note)
                 sermon.notes.append(note)
+                matchedLocalNoteIDs.insert(note.id)
             }
+        }
+
+        let missingLocalNotes = sermon.notes.filter { !matchedLocalNoteIDs.contains($0.id) }
+        for note in missingLocalNotes {
+            if shouldPreserveMissingLocalNote(note, on: sermon) {
+                if sermon.remoteId != nil && !note.needsSync {
+                    note.needsSync = true
+                    note.updatedAt = max(note.updatedAt ?? .distantPast, remoteUpdatedAt)
+                    sermon.markPendingSync(notes: true)
+                }
+                print("[SyncService] ⚠️ Preserving local note missing from remote snapshot \(note.id)")
+                continue
+            }
+
+            sermon.notes.removeAll { $0.id == note.id }
+            modelContext.delete(note)
+            print("[SyncService] 🗑️ Removed local note missing from remote snapshot \(note.id)")
         }
 
         print("[SyncService] ✅ Note merge completed. Local sermon now has \(sermon.notes.count) notes")
