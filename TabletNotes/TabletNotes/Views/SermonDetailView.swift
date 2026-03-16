@@ -503,6 +503,11 @@ struct SermonDetailView: View {
                     .onChange(of: sermon.summaryStatus) { _, _ in
                         scheduleSummaryTextSnapshotRefresh()
                     }
+                    .onChange(of: sermon.transcriptionStatus) { _, newStatus in
+                        if newStatus != "pending" {
+                            isRetryingTranscription = false
+                        }
+                    }
                     .onChange(of: sermon.updatedAt ?? Date.distantPast) { _, _ in
                         scheduleSummaryTextSnapshotRefresh()
                     }
@@ -1097,8 +1102,17 @@ struct SermonDetailView: View {
     private func retryTranscription(for sermon: Sermon) {
         isRetryingTranscription = true
 
-        processingCoordinator.retryTranscription(for: sermon.id)
-        isRetryingTranscription = false
+        if !processingCoordinator.retryTranscription(for: sermon.id) {
+            isRetryingTranscription = false
+            return
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if isRetryingTranscription, self.sermon?.transcriptionStatus == "pending" {
+                isRetryingTranscription = false
+            }
+        }
     }
     
     private func generateSummaryForSermon(_ sermon: Sermon) {

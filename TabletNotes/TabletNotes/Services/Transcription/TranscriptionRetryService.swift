@@ -128,16 +128,17 @@ class TranscriptionRetryService: ObservableObject {
         }
     }
 
-    func enqueueTranscription(for sermonId: UUID) {
+    @discardableResult
+    func enqueueTranscription(for sermonId: UUID) -> Bool {
         guard let context = modelContext,
               let sermon = fetchSermon(withId: sermonId, in: context) else {
             print("[TranscriptionRetryService] Cannot enqueue transcription; sermon \(sermonId) not found")
-            return
+            return false
         }
 
         guard sermon.audioFileExists else {
             print("[TranscriptionRetryService] Cannot enqueue transcription; audio file missing for sermon \(sermonId)")
-            return
+            return false
         }
 
         upsertJob(for: sermonId, resetAttempts: true)
@@ -148,6 +149,18 @@ class TranscriptionRetryService: ObservableObject {
         if isNetworkAvailable {
             processQueue()
         }
+
+        return true
+    }
+
+    @discardableResult
+    func retryTranscriptionNow(for sermonId: UUID) -> Bool {
+        guard enqueueTranscription(for: sermonId) else {
+            return false
+        }
+
+        processJob(for: sermonId)
+        return true
     }
 
     func retryTranscriptionIfNeeded(for sermon: Sermon) {
@@ -167,6 +180,22 @@ class TranscriptionRetryService: ObservableObject {
             return
         }
 
+        startProcessing(job: nextJob, sermon: sermon, in: context)
+    }
+
+    private func processJob(for sermonId: UUID) {
+        guard !isProcessingQueue,
+              let context = modelContext,
+              let nextJob = job(for: sermonId),
+              nextJob.isRunnable(),
+              let sermon = fetchSermon(withId: nextJob.sermonId, in: context) else {
+            return
+        }
+
+        startProcessing(job: nextJob, sermon: sermon, in: context)
+    }
+
+    private func startProcessing(job nextJob: ProcessingJob, sermon: Sermon, in context: ModelContext) {
         isProcessingQueue = true
         nextJob.markRunning()
         sermon.transcriptionStatus = "processing"

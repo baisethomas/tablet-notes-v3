@@ -166,16 +166,18 @@ final class SermonProcessingCoordinator {
         TranscriptionRetryService.shared.enqueueTranscription(for: sermonId)
     }
 
-    func retryTranscription(for sermonId: UUID) {
-        enqueueTranscription(for: sermonId)
+    @discardableResult
+    func retryTranscription(for sermonId: UUID) -> Bool {
+        TranscriptionRetryService.shared.retryTranscriptionNow(for: sermonId)
     }
 
     func enqueueSummary(for sermonId: UUID) {
         SummaryRetryService.shared.enqueueSummary(for: sermonId)
     }
 
-    func retrySummary(for sermonId: UUID) {
-        enqueueSummary(for: sermonId)
+    @discardableResult
+    func retrySummary(for sermonId: UUID) -> Bool {
+        SummaryRetryService.shared.retrySummaryNow(for: sermonId)
     }
 
     func resetForTesting() {

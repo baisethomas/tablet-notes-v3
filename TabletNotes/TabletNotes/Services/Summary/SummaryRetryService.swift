@@ -97,13 +97,14 @@ class SummaryRetryService: ObservableObject {
         }
     }
 
-    func enqueueSummary(for sermonId: UUID) {
+    @discardableResult
+    func enqueueSummary(for sermonId: UUID) -> Bool {
         guard let context = modelContext,
               let sermon = fetchSermon(withId: sermonId, in: context),
               let transcript = sermon.transcript,
               !transcript.text.isEmpty else {
             print("[SummaryRetryService] Cannot enqueue summary; transcript unavailable")
-            return
+            return false
         }
 
         upsertJob(for: sermonId, resetAttempts: true)
@@ -114,6 +115,18 @@ class SummaryRetryService: ObservableObject {
         if isNetworkAvailable {
             processQueue()
         }
+
+        return true
+    }
+
+    @discardableResult
+    func retrySummaryNow(for sermonId: UUID) -> Bool {
+        guard enqueueSummary(for: sermonId) else {
+            return false
+        }
+
+        processJob(for: sermonId)
+        return true
     }
 
     func retrySummaryIfNeeded(for sermon: Sermon) {
@@ -172,6 +185,29 @@ class SummaryRetryService: ObservableObject {
             return
         }
 
+        startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
+    }
+
+    private func processJob(for sermonId: UUID) {
+        guard !isProcessingQueue,
+              let context = modelContext,
+              let nextJob = job(for: sermonId),
+              nextJob.isRunnable(),
+              let sermon = fetchSermon(withId: nextJob.sermonId, in: context),
+              let transcript = sermon.transcript,
+              !transcript.text.isEmpty else {
+            return
+        }
+
+        startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
+    }
+
+    private func startProcessing(
+        job nextJob: ProcessingJob,
+        sermon: Sermon,
+        transcript: Transcript,
+        in context: ModelContext
+    ) {
         isProcessingQueue = true
         nextJob.markRunning()
         sermon.summaryStatus = "processing"

@@ -116,4 +116,53 @@ struct SummaryRetryServiceRegressionTests {
         let completedSummaryJobs = jobs.filter { $0.kind == .summary && $0.status == .complete }
         #expect(completedSummaryJobs.count == 2)
     }
+
+    @MainActor
+    @Test func manualSummaryRetryRunsEvenWhenReachabilityStateIsStale() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Gamma message ", count: 8))
+        let sermon = Sermon(
+            title: "Gamma Sermon",
+            audioFileName: "gamma.m4a",
+            date: Date(),
+            serviceType: "Midweek",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "failed",
+            userId: UUID()
+        )
+        context.insert(transcript)
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Gamma Title",
+                summary: "Gamma Summary for \(serviceType) from \(transcript.prefix(5))"
+            )
+        }
+
+        let accepted = retryService.retrySummaryNow(for: sermon.id)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshed = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(accepted)
+        #expect(runnerCallCount == 1)
+        #expect(refreshed?.summaryStatus == "complete")
+        #expect(refreshed?.summary?.title == "Gamma Title")
+        #expect(refreshed?.summary?.text.contains("Gamma Summary for Midweek") == true)
+
+        retryService.summaryRunner = nil
+        retryService.basicSummaryGenerator = nil
+    }
 }
