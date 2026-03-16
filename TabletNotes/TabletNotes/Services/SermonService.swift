@@ -1134,7 +1134,7 @@ class SermonService {
     /// Generate summary for a sermon and handle completion at service level
     /// This ensures summaries are updated even if views are dismissed
     func generateSummaryForSermon(sermonId: UUID, transcript: String, serviceType: String) {
-        print("[SermonService] Queueing summary generation for sermon: \(sermonId)")
+        print("[SermonService] Starting summary generation for sermon: \(sermonId)")
 
         guard let sermon = findSermon(by: sermonId) else {
             print("[SermonService] Could not find sermon \(sermonId) to queue summary generation")
@@ -1147,7 +1147,7 @@ class SermonService {
             return
         }
 
-        SermonProcessingCoordinator.shared.enqueueSummary(for: sermonId)
+        SermonProcessingCoordinator.shared.retrySummary(for: sermonId)
     }
     
     /// Check for sermons with stuck processing status and recover them

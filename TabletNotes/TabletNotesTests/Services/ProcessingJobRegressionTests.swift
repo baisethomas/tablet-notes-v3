@@ -159,4 +159,84 @@ struct ProcessingJobRegressionTests {
         retryService.summaryEnqueuer = nil
         try? FileManager.default.removeItem(at: audioURL)
     }
+
+    @MainActor
+    @Test func transcriptionCompletionStartsSummaryEvenWhenSummaryReachabilityStateIsStale() async throws {
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            Summary.self,
+            ProcessingJob.self,
+            TranscriptSegment.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("summary-handoff-sermon.m4a")
+        let audioData = Data(repeating: 0x03, count: 4096)
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: audioData)
+
+        let sermon = Sermon(
+            title: "Summary Handoff Sermon",
+            audioFileName: audioURL.lastPathComponent,
+            date: Date(),
+            serviceType: "Sermon",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+
+        context.insert(sermon)
+        try context.save()
+
+        let transcriptionRetryService = TranscriptionRetryService()
+        transcriptionRetryService.setModelContext(context)
+        transcriptionRetryService.transcriptionRunner = { _, completion in
+            completion(.success((
+                "Transcript ready for summary",
+                [TranscriptSegment(text: "Transcript ready for summary", startTime: 0, endTime: 2)]
+            )))
+        }
+
+        let summaryRetryService = SummaryRetryService()
+        summaryRetryService.setModelContext(context)
+        summaryRetryService.summaryRunner = { _, serviceType in
+            SummaryGenerationResult(
+                title: "Completed Summary",
+                summary: "Summary created for \(serviceType)"
+            )
+        }
+
+        transcriptionRetryService.summaryEnqueuer = { sermonId in
+            _ = summaryRetryService.retrySummaryNow(for: sermonId)
+        }
+
+        let accepted = transcriptionRetryService.retryTranscriptionNow(for: sermon.id)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let refreshed = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(accepted)
+        #expect(refreshed?.transcriptionStatus == "complete")
+        #expect(refreshed?.summaryStatus == "complete")
+        #expect(refreshed?.summary?.title == "Completed Summary")
+        #expect(refreshed?.summary?.text == "Summary created for Sermon")
+
+        transcriptionRetryService.transcriptionRunner = nil
+        transcriptionRetryService.summaryEnqueuer = nil
+        summaryRetryService.summaryRunner = nil
+        summaryRetryService.basicSummaryGenerator = nil
+        try? FileManager.default.removeItem(at: audioURL)
+    }
 }

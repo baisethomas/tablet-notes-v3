@@ -242,7 +242,7 @@ class TranscriptionRetryService: ObservableObject {
                     if let summaryEnqueuer = self.summaryEnqueuer {
                         summaryEnqueuer(refreshedSermon.id)
                     } else {
-                        SermonProcessingCoordinator.shared.enqueueSummary(for: refreshedSermon.id)
+                        SermonProcessingCoordinator.shared.retrySummary(for: refreshedSermon.id)
                     }
 
                 case .failure(let error):
