@@ -1,300 +1,51 @@
-import Foundation
 import Combine
+import Foundation
 import SwiftData
-import Supabase
 
 @MainActor
 class SyncService: ObservableObject, SyncServiceProtocol {
+    private enum SyncPhase: String, CaseIterable {
+        case pushLocalChanges
+        case pullCloudChanges
 
-    // MARK: - Properties
+        var logMessage: String {
+            switch self {
+            case .pushLocalChanges:
+                return "[SyncService] 📤 Pushing local changes..."
+            case .pullCloudChanges:
+                return "[SyncService] 📥 Pulling cloud changes..."
+            }
+        }
+    }
 
-    private let modelContext: ModelContext
-    private let supabaseService: SupabaseServiceProtocol
     private let authService: AuthenticationManager
+    private let localRepository: SermonSyncLocalRepository
+    private let remoteGateway: SermonSyncRemoteGatewayProtocol
 
     @Published private var syncStatus: String = "idle"
     @Published private var syncError: Error?
     private var isSyncInProgress = false
-    
+
     var syncStatusPublisher: AnyPublisher<String, Never> {
         $syncStatus.eraseToAnyPublisher()
     }
-    
+
     var errorPublisher: AnyPublisher<Error?, Never> {
         $syncError.eraseToAnyPublisher()
     }
-    
-    // MARK: - Initialization
-    
-    init(modelContext: ModelContext, supabaseService: SupabaseServiceProtocol, authService: AuthenticationManager) {
-        self.modelContext = modelContext
-        self.supabaseService = supabaseService
+
+    init(
+        modelContext: ModelContext,
+        supabaseService: SupabaseServiceProtocol,
+        authService: AuthenticationManager,
+        localRepository: SermonSyncLocalRepository? = nil,
+        remoteGateway: SermonSyncRemoteGatewayProtocol? = nil
+    ) {
         self.authService = authService
+        self.localRepository = localRepository ?? SermonSyncLocalRepository(modelContext: modelContext)
+        self.remoteGateway = remoteGateway ?? SermonSyncRemoteGateway(supabaseService: supabaseService)
     }
 
-    private struct TranscriptSegmentSnapshot {
-        let id: UUID
-        let text: String
-        let startTime: TimeInterval
-        let endTime: TimeInterval
-    }
-
-    private struct TranscriptSnapshot {
-        let id: UUID
-        let text: String
-        let segments: [TranscriptSegmentSnapshot]
-        let remoteId: String?
-        let updatedAt: Date?
-    }
-
-    private struct SummarySnapshot {
-        let id: UUID
-        let title: String
-        let text: String
-        let type: String
-        let status: String
-        let remoteId: String?
-        let updatedAt: Date?
-    }
-
-    private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
-        if let existingTranscript = sermon.transcript {
-            // Replace instead of mutating in-place to avoid invalid-backing traps.
-            sermon.transcript = nil
-            modelContext.delete(existingTranscript)
-        }
-
-        guard let snapshot else { return }
-
-        let newSegments = snapshot.segments.map { segment in
-            TranscriptSegment(
-                id: segment.id,
-                text: segment.text,
-                startTime: segment.startTime,
-                endTime: segment.endTime
-            )
-        }
-
-        let transcript = Transcript(
-            id: snapshot.id,
-            text: snapshot.text,
-            segments: newSegments,
-            remoteId: snapshot.remoteId,
-            updatedAt: snapshot.updatedAt,
-            needsSync: false
-        )
-        modelContext.insert(transcript)
-        sermon.transcript = transcript
-    }
-
-    private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
-        if let existingSummary = sermon.summary {
-            // Replace instead of mutating in-place to avoid invalid-backing traps.
-            sermon.summary = nil
-            modelContext.delete(existingSummary)
-        }
-
-        guard let snapshot else {
-            sermon.summaryPreviewText = nil
-            return
-        }
-
-        let summary = Summary(
-            id: snapshot.id,
-            title: snapshot.title,
-            text: snapshot.text,
-            type: snapshot.type,
-            status: snapshot.status,
-            remoteId: snapshot.remoteId,
-            updatedAt: snapshot.updatedAt,
-            needsSync: false
-        )
-        modelContext.insert(summary)
-        sermon.summary = summary
-        sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
-    }
-
-    private func transcriptSnapshot(from remoteData: RemoteTranscriptData, sermonUpdatedAt: Date) -> TranscriptSnapshot {
-        TranscriptSnapshot(
-            id: remoteData.localId,
-            text: remoteData.text,
-            segments: [], // TODO: deserialize remote transcript segments when available
-            remoteId: remoteData.id,
-            updatedAt: sermonUpdatedAt
-        )
-    }
-
-    private func summarySnapshot(from remoteData: RemoteSummaryData, sermonUpdatedAt: Date) -> SummarySnapshot {
-        SummarySnapshot(
-            id: remoteData.localId,
-            title: remoteData.title,
-            text: remoteData.text,
-            type: remoteData.type,
-            status: remoteData.status,
-            remoteId: remoteData.id,
-            updatedAt: sermonUpdatedAt
-        )
-    }
-
-    private func shouldPreserveLocalChildData(for sermon: Sermon, childNeedsSync: Bool) -> Bool {
-        sermon.needsSync && childNeedsSync
-    }
-
-    private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {
-        guard let remoteNotes else {
-            if !sermon.notes.isEmpty {
-                print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote returned no notes)")
-            }
-            return
-        }
-
-        if remoteNotes.isEmpty {
-            if sermon.notes.isEmpty {
-                print("[SyncService] ℹ️ Both local and remote notes are empty")
-            } else {
-                print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote note list was empty)")
-            }
-            return
-        }
-
-        print("[SyncService] Merging \(remoteNotes.count) remote notes")
-
-        for remoteNote in remoteNotes {
-            if let localNote = sermon.notes.first(where: { $0.id == remoteNote.localId || $0.remoteId == remoteNote.id }) {
-                if shouldPreserveLocalChildData(for: sermon, childNeedsSync: localNote.needsSync) {
-                    if localNote.remoteId == nil {
-                        localNote.remoteId = remoteNote.id
-                    }
-                    print("[SyncService] ⚠️ Preserving dirty local note \(localNote.id)")
-                    continue
-                }
-
-                localNote.text = remoteNote.text
-                localNote.timestamp = remoteNote.timestamp
-                localNote.remoteId = remoteNote.id
-                localNote.updatedAt = remoteUpdatedAt
-                localNote.needsSync = false
-            } else {
-                let note = Note(
-                    id: remoteNote.localId,
-                    text: remoteNote.text,
-                    timestamp: remoteNote.timestamp,
-                    remoteId: remoteNote.id,
-                    updatedAt: remoteUpdatedAt,
-                    needsSync: false
-                )
-                note.sermon = sermon
-                modelContext.insert(note)
-                sermon.notes.append(note)
-            }
-        }
-
-        print("[SyncService] ✅ Note merge completed. Local sermon now has \(sermon.notes.count) notes")
-    }
-
-    private func mergeRemoteTranscript(_ remoteTranscript: RemoteTranscriptData?, into sermon: Sermon, remoteUpdatedAt: Date) {
-        guard let remoteTranscript else {
-            if sermon.transcript != nil {
-                print("[SyncService] ⚠️ Preserving local transcript - remote returned no transcript")
-            } else {
-                print("[SyncService] ℹ️ No transcript on local or remote")
-            }
-            return
-        }
-
-        if let localTranscript = sermon.transcript,
-           shouldPreserveLocalChildData(for: sermon, childNeedsSync: localTranscript.needsSync) {
-            if localTranscript.remoteId == nil {
-                localTranscript.remoteId = remoteTranscript.id
-            }
-            print("[SyncService] ⚠️ Preserving dirty local transcript")
-            return
-        }
-
-        print("[SyncService] Updating transcript from remote (length: \(remoteTranscript.text.count) chars)")
-        applyTranscriptSnapshot(
-            transcriptSnapshot(from: remoteTranscript, sermonUpdatedAt: remoteUpdatedAt),
-            to: sermon
-        )
-        print("[SyncService] ✅ Transcript upserted from remote")
-    }
-
-    private func mergeRemoteSummary(_ remoteSummary: RemoteSummaryData?, into sermon: Sermon, remoteUpdatedAt: Date) {
-        guard let remoteSummary else {
-            if sermon.summary != nil {
-                print("[SyncService] ⚠️ Preserving local summary - remote returned no summary")
-            } else {
-                print("[SyncService] ℹ️ No summary on local or remote")
-            }
-            return
-        }
-
-        if let localSummary = sermon.summary,
-           shouldPreserveLocalChildData(for: sermon, childNeedsSync: localSummary.needsSync) {
-            if localSummary.remoteId == nil {
-                localSummary.remoteId = remoteSummary.id
-            }
-            print("[SyncService] ⚠️ Preserving dirty local summary")
-            return
-        }
-
-        print("[SyncService] Updating summary from remote (length: \(remoteSummary.text.count) chars)")
-        applySummarySnapshot(
-            summarySnapshot(from: remoteSummary, sermonUpdatedAt: remoteUpdatedAt),
-            to: sermon
-        )
-
-        if !remoteSummary.title.isEmpty {
-            print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(remoteSummary.title)'")
-            sermon.title = remoteSummary.title
-        }
-
-        print("[SyncService] ✅ Summary upserted from remote")
-    }
-
-    private func markChildEntitiesSynced(for sermon: Sermon, syncedAt: Date) {
-        for note in sermon.notes {
-            note.needsSync = false
-            note.updatedAt = syncedAt
-        }
-
-        if let transcript = sermon.transcript {
-            transcript.needsSync = false
-            transcript.updatedAt = syncedAt
-        }
-
-        if let summary = sermon.summary {
-            summary.needsSync = false
-            summary.updatedAt = syncedAt
-        }
-    }
-    
-    // MARK: - Helper Methods
-    
-    /// Helper method to get auth token with automatic refresh
-    private func getAuthToken() async throws -> String {
-        guard let supabaseService = self.supabaseService as? SupabaseService else {
-            throw SyncError.networkError
-        }
-        
-        do {
-            let session = try await supabaseService.client.auth.session
-            return session.accessToken
-        } catch {
-            print("[SyncService] Session expired, attempting refresh...")
-            do {
-                let refreshedSession = try await supabaseService.client.auth.refreshSession()
-                print("[SyncService] Token refreshed successfully")
-                return refreshedSession.accessToken
-            } catch {
-                print("[SyncService] Token refresh failed: \(error.localizedDescription)")
-                throw SyncError.authenticationFailed
-            }
-        }
-    }
-    
-    // MARK: - Public Methods
-    
     func syncAllData() async {
         guard !isSyncInProgress else {
             print("[SyncService] ⏭️ Sync already in progress, skipping duplicate trigger")
@@ -303,19 +54,28 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
         isSyncInProgress = true
         defer { isSyncInProgress = false }
+
         await performFullSync()
     }
-    
+
     func deleteAllCloudData() async {
-        await performCloudDataDeletion()
+        guard let currentUser = authService.currentUser else { return }
+
+        do {
+            try await remoteGateway.deleteAllRemoteData(for: currentUser.id)
+            try localRepository.resetCloudSyncState()
+        } catch {
+            syncError = error
+        }
     }
-    
-    // MARK: - Sync Operations
-    
+
+    func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
+        localRepository.updateLocalSermon(sermon, with: remoteData)
+    }
+
     private func performFullSync() async {
         print("[SyncService] 🔄 Starting full sync...")
 
-        // Check if user can sync
         guard let currentUser = authService.currentUser else {
             print("[SyncService] ❌ No current user - cannot sync")
             syncError = SyncError.subscriptionRequired
@@ -334,14 +94,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         syncError = nil
 
         do {
-            // 1. Push local changes to cloud
-            print("[SyncService] 📤 Pushing local changes...")
-            try await pushLocalChanges()
-
-            // 2. Pull cloud changes to local
-            print("[SyncService] 📥 Pulling cloud changes...")
-            try await pullCloudChanges()
-
+            try await runSyncPhases()
             syncStatus = "synced"
             print("[SyncService] ✅ Sync completed successfully")
         } catch {
@@ -351,754 +104,108 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
 
-    private func pushLocalChanges() async throws {
-        // Get all local sermons that need syncing
-        // Only sync sermons that are explicitly marked needsSync=true
-        // (Don't sync old sermons that just have remoteId=nil)
-        let descriptor = FetchDescriptor<Sermon>(
-            predicate: #Predicate<Sermon> { sermon in
-                sermon.needsSync == true
-            }
-        )
+    private func runSyncPhases() async throws {
+        for phase in SyncPhase.allCases {
+            print(phase.logMessage)
+            try await run(phase)
+        }
+    }
 
-        let sermonsToSync = try modelContext.fetch(descriptor)
+    private func run(_ phase: SyncPhase) async throws {
+        switch phase {
+        case .pushLocalChanges:
+            try await pushLocalChanges()
+        case .pullCloudChanges:
+            try await pullCloudChanges()
+        }
+    }
+
+    private func pushLocalChanges() async throws {
+        let sermonsToSync = try localRepository.sermonsNeedingSync()
         print("[SyncService] Found \(sermonsToSync.count) sermons marked for sync")
 
         for sermon in sermonsToSync {
             print("[SyncService] Syncing sermon: \(sermon.title)")
-            try await syncSermonToCloud(sermon)
+            try await pushSermonToCloud(sermon)
         }
     }
-    
+
+    private func pushSermonToCloud(_ sermon: Sermon) async throws {
+        let syncData = localRepository.syncData(for: sermon)
+        let syncedAt = Date()
+
+        if let remoteId = sermon.remoteId, !remoteId.isEmpty {
+            try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
+            try localRepository.markSermonSynced(sermon, syncedAt: syncedAt)
+            return
+        }
+
+        let newRemoteId = try await remoteGateway.createRemoteSermon(data: syncData)
+        guard !newRemoteId.isEmpty else {
+            print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
+            throw SyncError.conflictResolution
+        }
+
+        try localRepository.markSermonSynced(sermon, remoteId: newRemoteId, syncedAt: syncedAt)
+    }
+
     private func pullCloudChanges() async throws {
         guard let currentUser = authService.currentUser else { return }
 
-        // Fetch all remote sermons for current user
-        let remoteSermons = try await fetchRemoteSermons(for: currentUser.id)
+        let remoteSermons = try await remoteGateway.fetchRemoteSermons(for: currentUser.id)
         print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
 
         for remoteSermon in remoteSermons {
             print("[SyncService] Syncing remote sermon: \(remoteSermon.title)")
-            try await syncSermonFromCloud(remoteSermon)
+            try await pullSermonFromCloud(remoteSermon)
         }
     }
-    
-    private func syncSermonToCloud(_ sermon: Sermon) async throws {
-        // Snapshot relationship-backed SwiftData objects before crossing async boundaries.
-        // Accessing sermon.transcript/notes/summary after awaits can trap with InvalidFutureBackingData.
-        let notesSnapshot = sermon.notes.map { note in
-            NoteSyncPayload(id: note.id, text: note.text, timestamp: note.timestamp)
-        }
-        let transcriptSnapshot = sermon.transcript.map { transcript in
-            TranscriptSyncPayload(id: transcript.id, text: transcript.text)
-        }
-        let summarySnapshot = sermon.summary.map { summary in
-            SummarySyncPayload(
-                id: summary.id,
-                title: summary.title,
-                text: summary.text,
-                type: summary.type,
-                status: summary.status
-            )
-        }
 
-        let sermonData = SermonSyncData(
-            id: sermon.id,
-            title: sermon.title,
-            audioFileURL: sermon.audioFileURL,
-            date: sermon.date,
-            serviceType: sermon.serviceType,
-            speaker: sermon.speaker,
-            transcriptionStatus: sermon.transcriptionStatus,
-            summaryStatus: sermon.summaryStatus,
-            isArchived: sermon.isArchived,
-            userId: sermon.userId,
-            updatedAt: sermon.updatedAt ?? Date(),
-            notes: notesSnapshot,
-            transcript: transcriptSnapshot,
-            summary: summarySnapshot
-        )
-
-        // Upload to Supabase
-        if let remoteId = sermon.remoteId, !remoteId.isEmpty {
-            // Update existing record - pass full sermon to include notes/transcript/summary
-            try await updateRemoteSermon(remoteId: remoteId, data: sermonData)
-        } else {
-            let newRemoteId = try await createRemoteSermon(data: sermonData)
-            guard !newRemoteId.isEmpty else {
-                print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
-                throw SyncError.conflictResolution
-            }
-            sermon.remoteId = newRemoteId
-        }
-
-        // Update local sync metadata
-        let syncedAt = Date()
-        sermon.lastSyncedAt = syncedAt
-        sermon.needsSync = false
-        sermon.syncStatus = "synced"
-        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt)
-
-        // Related data is now included in create/update payloads
-        // No need to call syncRelatedData separately
-
-        try modelContext.save()
-    }
-    
-    private func syncSermonFromCloud(_ remoteSermon: RemoteSermonData) async throws {
+    private func pullSermonFromCloud(_ remoteSermon: RemoteSermonData) async throws {
         print("[SyncService] 📥 Syncing sermon from cloud: \(remoteSermon.title)")
 
-        // Find existing local sermon by remoteId
-        let remoteId = remoteSermon.id
-        let descriptor = FetchDescriptor<Sermon>(
-            predicate: #Predicate<Sermon> { sermon in
-                sermon.remoteId == remoteId
-            }
-        )
-
-        let existingSermons = try modelContext.fetch(descriptor)
-
-        if let initialSermon = existingSermons.first {
-            print("[SyncService] Found existing local sermon with remoteId: \(remoteId)")
+        if let initialSermon = try localRepository.findSermon(remoteId: remoteSermon.id) {
+            print("[SyncService] Found existing local sermon with remoteId: \(remoteSermon.id)")
             let localSermonId = initialSermon.id
 
-            // Download audio file if it doesn't exist locally
             if !initialSermon.audioFileExists {
                 print("[SyncService] Audio file missing locally, attempting download...")
                 do {
-                    let localAudioURL = try await downloadAudioFile(from: remoteSermon.audioFileURL, remotePath: remoteSermon.audioFilePath)
-                    let localDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
-                        sermon.id == localSermonId
-                    })
-                    if let refreshedSermon = try modelContext.fetch(localDescriptor).first {
-                        refreshedSermon.audioFileName = localAudioURL.lastPathComponent
-                        print("[SyncService] ✅ Audio file downloaded successfully")
-                    }
+                    let localAudioURL = try await remoteGateway.downloadAudioFile(
+                        from: remoteSermon.audioFileURL,
+                        remotePath: remoteSermon.audioFilePath
+                    )
+                    try localRepository.markAudioDownloaded(
+                        fileName: localAudioURL.lastPathComponent,
+                        for: localSermonId
+                    )
+                    print("[SyncService] ✅ Audio file downloaded successfully")
                 } catch {
                     print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
-                    // Continue with sync even if audio download fails
-                    // The sermon metadata will still be synced
                 }
             }
 
-            let localDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
-                sermon.id == localSermonId
-            })
-            guard let existingSermon = try modelContext.fetch(localDescriptor).first else {
+            guard let existingSermon = try localRepository.refreshSermon(id: localSermonId) else {
                 print("[SyncService] ⚠️ Local sermon disappeared during sync, skipping update")
                 return
             }
 
-            // Update existing sermon if remote is newer
             if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
                 print("[SyncService] Remote sermon is newer, updating local copy")
-                updateLocalSermon(existingSermon, with: remoteSermon)
+                localRepository.updateLocalSermon(existingSermon, with: remoteSermon)
+                try localRepository.save()
             } else {
                 print("[SyncService] Local sermon is up to date")
             }
 
-            try modelContext.save()
-        } else {
-            print("[SyncService] No existing local sermon found, creating new one")
-            // Create new local sermon
-            try await createLocalSermon(from: remoteSermon)
-        }
-    }
-    
-    private func syncRelatedData(for sermon: Sermon) async throws {
-        // Sync notes
-        for note in sermon.notes {
-            try await syncNoteToCloud(note, sermonId: sermon.remoteId!)
-        }
-        
-        // Sync transcript
-        if let transcript = sermon.transcript {
-            try await syncTranscriptToCloud(transcript, sermonId: sermon.remoteId!)
-        }
-        
-        // Sync summary
-        if let summary = sermon.summary {
-            try await syncSummaryToCloud(summary, sermonId: sermon.remoteId!)
-        }
-    }
-    
-    private func performCloudDataDeletion() async {
-        guard let currentUser = authService.currentUser else { return }
-        
-        do {
-            try await deleteAllRemoteData(for: currentUser.id)
-            
-            // Reset local sync metadata
-            let descriptor = FetchDescriptor<Sermon>()
-            let allSermons = try modelContext.fetch(descriptor)
-            
-            for sermon in allSermons {
-                sermon.remoteId = nil
-                sermon.lastSyncedAt = nil
-                sermon.syncStatus = "localOnly"
-                sermon.needsSync = false
-            }
-            
-            try modelContext.save()
-        } catch {
-            syncError = error
-        }
-    }
-    
-    // MARK: - Helper Methods
-    
-    func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
-        print("[SyncService] 🔄 Updating local sermon: \(remoteData.title)")
-
-        // Update basic fields
-        sermon.title = remoteData.title
-        sermon.serviceType = remoteData.serviceType
-        sermon.speaker = remoteData.speaker
-        sermon.isArchived = remoteData.isArchived
-        sermon.transcriptionStatus = remoteData.transcriptionStatus
-        sermon.summaryStatus = remoteData.summaryStatus
-        sermon.updatedAt = remoteData.updatedAt
-        sermon.lastSyncedAt = Date()
-        sermon.syncStatus = "synced"
-
-        mergeRemoteNotes(remoteData.notes, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
-        mergeRemoteTranscript(remoteData.transcript, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
-        mergeRemoteSummary(remoteData.summary, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
-    }
-    
-    private func createLocalSermon(from remoteData: RemoteSermonData) async throws {
-        print("[SyncService] 📥 Creating local sermon from remote data: \(remoteData.title)")
-        print("[SyncService] Remote audio URL: \(remoteData.audioFileURL)")
-        if let path = remoteData.audioFilePath {
-            print("[SyncService] Remote audio path: \(path)")
+            return
         }
 
-        // Download audio file if needed
-        do {
-            let localAudioURL = try await downloadAudioFile(from: remoteData.audioFileURL, remotePath: remoteData.audioFilePath)
-            print("[SyncService] ✅ Audio file downloaded to: \(localAudioURL.path)")
-
-            let sermon = Sermon(
-                id: remoteData.localId,
-                title: remoteData.title,
-                audioFileURL: localAudioURL,
-                date: remoteData.date,
-                serviceType: remoteData.serviceType,
-                speaker: remoteData.speaker,
-                syncStatus: "synced",
-                transcriptionStatus: remoteData.transcriptionStatus,
-                summaryStatus: remoteData.summaryStatus,
-                isArchived: remoteData.isArchived,
-                userId: remoteData.userId,
-                lastSyncedAt: Date(),
-                remoteId: remoteData.id,
-                updatedAt: remoteData.updatedAt
-            )
-
-            modelContext.insert(sermon)
-
-            // Create related records
-            if let remoteNotes = remoteData.notes {
-                print("[SyncService] Creating \(remoteNotes.count) notes")
-                for noteData in remoteNotes {
-                    let note = Note(
-                        id: noteData.localId,
-                        text: noteData.text,
-                        timestamp: noteData.timestamp,
-                        remoteId: noteData.id
-                    )
-                    // IMPORTANT: Insert note into ModelContext so SwiftData can track it
-                    note.sermon = sermon
-                    modelContext.insert(note)
-                    sermon.notes.append(note)
-                }
-                print("[SyncService] ✅ \(remoteNotes.count) notes inserted into ModelContext")
-            }
-
-            if let transcriptData = remoteData.transcript {
-                print("[SyncService] Creating transcript")
-                applyTranscriptSnapshot(
-                    transcriptSnapshot(from: transcriptData, sermonUpdatedAt: remoteData.updatedAt),
-                    to: sermon
-                )
-            }
-
-            if let summaryData = remoteData.summary {
-                print("[SyncService] Creating summary: \(summaryData.title)")
-                applySummarySnapshot(
-                    summarySnapshot(from: summaryData, sermonUpdatedAt: remoteData.updatedAt),
-                    to: sermon
-                )
-
-                // Update sermon title with AI-generated title from summary
-                if !summaryData.title.isEmpty {
-                    print("[SyncService] 📝 Setting sermon title to AI-generated title: '\(summaryData.title)'")
-                    sermon.title = summaryData.title
-                }
-            }
-
-            try modelContext.save()
-            print("[SyncService] ✅ Local sermon created and saved: \(sermon.title)")
-        } catch {
-            print("[SyncService] ❌ Failed to create local sermon: \(error.localizedDescription)")
-            throw error
-        }
-    }
-}
-
-// MARK: - Supabase Operations
-
-extension SyncService {
-    
-    private func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
-        // Use SupabaseService to make authenticated request to Netlify endpoint
-        guard let supabaseService = self.supabaseService as? SupabaseService else {
-            throw SyncError.networkError
-        }
-        let sermons = try await supabaseService.fetchRemoteSermons(for: userId)
-        return sermons
-    }
-    
-    private func createRemoteSermon(data: SermonSyncData) async throws -> String {
-        print("[SyncService] Creating remote sermon: \(data.title)")
-
-        guard let supabaseService = self.supabaseService as? SupabaseService else {
-            print("[SyncService] ❌ SupabaseService not available")
-            throw SyncError.networkError
-        }
-
-        // Get auth token with automatic refresh
-        print("[SyncService] Getting auth token...")
-        let token = try await getAuthToken()
-        print("[SyncService] ✅ Got auth token")
-
-        // Upload audio file to Supabase Storage first
-        let audioFileName = data.audioFileURL.lastPathComponent
-        print("[SyncService] Uploading audio file: \(audioFileName)")
-
-        // Get file size
-        let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
-        print("[SyncService] File size: \(fileSize) bytes")
-
-        let audioFileURL: URL
-        let storagePath: String
-        do {
-            // Get signed upload URL
-            print("[SyncService] Getting signed upload URL...")
-
-            let (uploadURL, path) = try await supabaseService.getSignedUploadURL(
-                for: audioFileName,
-                contentType: "audio/m4a",
-                fileSize: fileSize
-            )
-            storagePath = path
-            print("[SyncService] ✅ Got upload URL: \(uploadURL)")
-            print("[SyncService] ✅ Storage path: \(storagePath)")
-
-            // Upload the file
-            print("[SyncService] Uploading file to storage...")
-            try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: uploadURL)
-            print("[SyncService] ✅ Audio file uploaded successfully")
-
-            // Get public URL using the actual storage path
-            print("[SyncService] Getting public URL for path: \(storagePath)")
-            audioFileURL = try supabaseService.client.storage
-                .from("sermon-audio")
-                .getPublicURL(path: storagePath)
-            print("[SyncService] ✅ Public URL: \(audioFileURL)")
-        } catch {
-            print("[SyncService] ❌ Failed to upload audio: \(error.localizedDescription)")
-            throw error
-        }
-
-        // Prepare request payload (using camelCase as expected by API)
-        var payload: [String: Any] = [
-            "localId": data.id.uuidString,
-            "title": data.title,
-            "audioFilePath": storagePath, // Full storage path (e.g., "userId/filename.m4a")
-            "audioFileUrl": audioFileURL.absoluteString,
-            "audioFileName": audioFileName,
-            "audioFileSizeBytes": fileSize,
-            "duration": 0, // Default duration - iOS doesn't track this yet
-            "date": ISO8601DateFormatter().string(from: data.date),
-            "serviceType": data.serviceType,
-            "speaker": data.speaker as Any,
-            "transcriptionStatus": data.transcriptionStatus,
-            "summaryStatus": data.summaryStatus,
-            "isArchived": data.isArchived
-        ]
-
-        // Add notes if present
-        if !data.notes.isEmpty {
-            print("[SyncService] Including \(data.notes.count) notes in payload")
-            let notesArray = data.notes.map { note in
-                return [
-                    "id": note.id.uuidString,
-                    "text": note.text,
-                    "timestamp": note.timestamp
-                ]
-            }
-            payload["notes"] = notesArray
-        }
-
-        // Add transcript if present
-        if let transcript = data.transcript {
-            print("[SyncService] Including transcript in payload (length: \(transcript.text.count) chars)")
-            payload["transcript"] = [
-                "id": transcript.id.uuidString,
-                "text": transcript.text,
-                "segments": NSNull(), // TODO: serialize segments if needed
-                "status": "complete"
-            ]
-        }
-
-        // Add summary if present
-        if let summary = data.summary {
-            print("[SyncService] Including summary in payload: \(summary.title)")
-            payload["summary"] = [
-                "id": summary.id.uuidString,
-                "title": summary.title,
-                "text": summary.text,
-                "type": summary.type,
-                "status": summary.status
-            ]
-        }
-
-        // Call Netlify function
-        print("[SyncService] Calling create-sermon API...")
-        print("[SyncService] Payload: \(payload)")
-
-        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/create-sermon")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-        let jsonData = try JSONSerialization.data(withJSONObject: payload)
-
-        // Log the actual JSON being sent
-        if let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("[SyncService] JSON payload: \(jsonString)")
-        }
-
-        request.httpBody = jsonData
-
-        do {
-            let (responseData, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                print("[SyncService] ❌ No HTTP response")
-                throw SyncError.networkError
-            }
-
-            print("[SyncService] API response status: \(httpResponse.statusCode)")
-
-            // Handle 409 Conflict (sermon already exists) - treat as success
-            if httpResponse.statusCode == 409 {
-                print("[SyncService] ⚠️ Sermon already exists in cloud, treating as success...")
-                // Query the database to get the existing sermon's remote ID
-                // For now, return empty string and let pullCloudChanges handle it
-                return ""
-            }
-
-            guard (200...299).contains(httpResponse.statusCode) else {
-                if let responseString = String(data: responseData, encoding: .utf8) {
-                    print("[SyncService] ❌ API error response: \(responseString)")
-                }
-                throw SyncError.networkError
-            }
-
-            let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-
-            // API returns: { "success": true, "data": { "id": "...", ... } }
-            guard let data = json?["data"] as? [String: Any],
-                  let sermonId = data["id"] as? String else {
-                print("[SyncService] ❌ No sermon ID in response")
-                if let jsonString = String(data: responseData, encoding: .utf8) {
-                    print("[SyncService] Response JSON: \(jsonString)")
-                }
-                throw SyncError.dataCorruption
-            }
-
-            print("[SyncService] ✅ Sermon created with ID: \(sermonId)")
-            return sermonId
-        } catch {
-            print("[SyncService] ❌ create-sermon API call failed: \(error.localizedDescription)")
-            throw error
-        }
-    }
-    
-    private func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
-        print("[SyncService] Updating remote sermon: \(data.title) (remoteId: \(remoteId))")
-
-        guard let supabaseService = self.supabaseService as? SupabaseService else {
-            throw SyncError.networkError
-        }
-
-        // Get auth token with automatic refresh
-        let token = try await getAuthToken()
-
-        // Prepare request payload with basic sermon data
-        var payload: [String: Any] = [
-            "remoteId": remoteId,
-            "title": data.title,
-            "serviceType": data.serviceType,
-            "speaker": data.speaker as Any,
-            "transcriptionStatus": data.transcriptionStatus,
-            "summaryStatus": data.summaryStatus,
-            "isArchived": data.isArchived,
-            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
-        ]
-
-        // Add notes if present
-        if !data.notes.isEmpty {
-            print("[SyncService] Including \(data.notes.count) notes in update payload")
-            let notesArray = data.notes.map { note in
-                return [
-                    "id": note.id.uuidString,
-                    "text": note.text,
-                    "timestamp": note.timestamp
-                ]
-            }
-            payload["notes"] = notesArray
-        }
-
-        // Add transcript if present
-        if let transcript = data.transcript {
-            print("[SyncService] Including transcript in update payload (length: \(transcript.text.count) chars)")
-            payload["transcript"] = [
-                "id": transcript.id.uuidString,
-                "text": transcript.text,
-                "segments": NSNull(),
-                "status": "complete"
-            ]
-        }
-
-        // Add summary if present
-        if let summary = data.summary {
-            print("[SyncService] Including summary in update payload: \(summary.title)")
-            payload["summary"] = [
-                "id": summary.id.uuidString,
-                "title": summary.title,
-                "text": summary.text,
-                "type": summary.type,
-                "status": summary.status
-            ]
-        }
-
-        // Call Netlify function
-        print("[SyncService] Calling update-sermon API...")
-        let url = URL(string: "https://comfy-daffodil-7ecc55.netlify.app/.netlify/functions/update-sermon")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-        let jsonData = try JSONSerialization.data(withJSONObject: payload)
-
-        // Log the actual JSON being sent
-        if let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("[SyncService] Update JSON payload: \(jsonString)")
-        }
-
-        request.httpBody = jsonData
-
-        let (responseData, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            print("[SyncService] ❌ No HTTP response from update-sermon")
-            throw SyncError.networkError
-        }
-
-        print("[SyncService] Update-sermon response status: \(httpResponse.statusCode)")
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if let responseString = String(data: responseData, encoding: .utf8) {
-                print("[SyncService] ❌ Update error response: \(responseString)")
-            }
-            throw SyncError.networkError
-        }
-
-        print("[SyncService] ✅ Remote sermon updated successfully")
-    }
-    
-    private func deleteAllRemoteData(for userId: UUID) async throws {
-        // This would call your Netlify function to delete all user data
-    }
-    
-    private func downloadAudioFile(from url: URL, remotePath: String? = nil) async throws -> URL {
-        print("[SyncService] 📥 Downloading audio file from: \(url)")
-        if let remotePath = remotePath {
-            print("[SyncService] Using storage path: \(remotePath)")
-        }
-
-        guard let supabaseService = self.supabaseService as? SupabaseService else {
-            print("[SyncService] ❌ SupabaseService not available")
-            throw SyncError.networkError
-        }
-
-        // Extract filename from URL
-        let fileName = url.lastPathComponent
-        print("[SyncService] Extracted filename: \(fileName)")
-
-        // Prepare local destination path in AudioRecordings directory
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let audioRecordingsPath = documentsPath.appendingPathComponent("AudioRecordings")
-        let localURL = audioRecordingsPath.appendingPathComponent(fileName)
-
-        print("[SyncService] Target local path: \(localURL.path)")
-
-        do {
-            // Use SupabaseService's downloadAudioFile which handles authentication and tries multiple buckets
-            let downloadedURL = try await supabaseService.downloadAudioFile(
-                filename: fileName,
-                localURL: localURL,
-                remotePath: remotePath // Use provided path if available
-            )
-
-            print("[SyncService] ✅ Audio file downloaded successfully to: \(downloadedURL.path)")
-            return downloadedURL
-        } catch {
-            print("[SyncService] ❌ Audio download failed: \(error.localizedDescription)")
-            throw error
-        }
-    }
-    
-    private func syncNoteToCloud(_ note: Note, sermonId: String) async throws {
-        // Sync note to cloud
-    }
-    
-    private func syncTranscriptToCloud(_ transcript: Transcript, sermonId: String) async throws {
-        // Sync transcript to cloud
-    }
-    
-    private func syncSummaryToCloud(_ summary: Summary, sermonId: String) async throws {
-        // Sync summary to cloud
-    }
-}
-
-// MARK: - Data Models
-
-struct SermonSyncData {
-    let id: UUID
-    let title: String
-    let audioFileURL: URL
-    let date: Date
-    let serviceType: String
-    let speaker: String?
-    let transcriptionStatus: String
-    let summaryStatus: String
-    let isArchived: Bool
-    let userId: UUID?
-    let updatedAt: Date
-    let notes: [NoteSyncPayload]
-    let transcript: TranscriptSyncPayload?
-    let summary: SummarySyncPayload?
-}
-
-struct NoteSyncPayload {
-    let id: UUID
-    let text: String
-    let timestamp: TimeInterval
-}
-
-struct TranscriptSyncPayload {
-    let id: UUID
-    let text: String
-}
-
-struct SummarySyncPayload {
-    let id: UUID
-    let title: String
-    let text: String
-    let type: String
-    let status: String
-}
-
-struct RemoteSermonData: Codable {
-    let id: String // Remote ID
-    let localId: UUID
-    let title: String
-    let audioFileURL: URL
-    let audioFilePath: String? // Storage path (e.g., "userId/filename.m4a")
-    let date: Date
-    let serviceType: String
-    let speaker: String?
-    let transcriptionStatus: String
-    let summaryStatus: String
-    let isArchived: Bool
-    let userId: UUID
-    let updatedAt: Date
-    let notes: [RemoteNoteData]?
-    let transcript: RemoteTranscriptData?
-    let summary: RemoteSummaryData?
-}
-
-struct RemoteNoteData: Codable {
-    let id: String
-    let localId: UUID
-    let text: String
-    let timestamp: TimeInterval
-
-    init(id: String, localId: UUID, text: String, timestamp: TimeInterval) {
-        self.id = id
-        self.localId = localId
-        self.text = text
-        self.timestamp = timestamp
-    }
-    
-    // Custom decoder to handle missing timestamp (defaults to 0 for manual notes)
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.localId = try container.decode(UUID.self, forKey: .localId)
-        self.text = try container.decode(String.self, forKey: .text)
-        self.timestamp = try container.decodeIfPresent(TimeInterval.self, forKey: .timestamp) ?? 0
-    }
-    
-    enum CodingKeys: String, CodingKey {
-        case id, localId, text, timestamp
-    }
-}
-
-struct RemoteTranscriptData: Codable {
-    let id: String
-    let localId: UUID
-    let text: String
-    let segments: String? // JSON string
-    let status: String
-}
-
-struct RemoteSummaryData: Codable {
-    let id: String
-    let localId: UUID
-    let title: String
-    let text: String
-    let type: String
-    let status: String
-}
-
-// MARK: - Sync Errors
-
-enum SyncError: LocalizedError {
-    case subscriptionRequired
-    case networkError
-    case dataCorruption
-    case conflictResolution
-    case authenticationFailed
-    
-    var errorDescription: String? {
-        switch self {
-        case .subscriptionRequired:
-            return "Sync requires a paid subscription"
-        case .authenticationFailed:
-            return "Authentication failed. Please sign in again."
-        case .networkError:
-            return "Network connection error during sync"
-        case .dataCorruption:
-            return "Data corruption detected during sync"
-        case .conflictResolution:
-            return "Unable to resolve sync conflicts"
-        }
+        print("[SyncService] No existing local sermon found, creating new one")
+        let localAudioURL = try await remoteGateway.downloadAudioFile(
+            from: remoteSermon.audioFileURL,
+            remotePath: remoteSermon.audioFilePath
+        )
+        try localRepository.createLocalSermon(from: remoteSermon, audioFileURL: localAudioURL)
     }
 }

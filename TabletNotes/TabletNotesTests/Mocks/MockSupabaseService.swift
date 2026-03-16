@@ -41,6 +41,7 @@ final class MockSupabaseService: SupabaseServiceProtocol {
     private var uploadPathsByURL: [URL: String] = [:]
     private var storedFiles: [String: Data] = [:]
     private var storedUsers: [UUID: TabletNotes.User] = [:]
+    private var remoteSermons: [RemoteSermonData] = []
 
     var client: SupabaseClient {
         fatalError("MockSupabaseService.client is not implemented for tests")
@@ -55,6 +56,7 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         uploadPathsByURL.removeAll()
         storedFiles.removeAll()
         storedUsers.removeAll()
+        remoteSermons.removeAll()
     }
 
     func seedFile(data: Data, at path: String) {
@@ -71,6 +73,10 @@ final class MockSupabaseService: SupabaseServiceProtocol {
 
     func storedUser(id: UUID) -> TabletNotes.User? {
         storedUsers[id]
+    }
+
+    func seedRemoteSermons(_ sermons: [RemoteSermonData]) {
+        remoteSermons = sermons
     }
 
     func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
@@ -100,6 +106,11 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         storedFiles[path] = data
     }
 
+    func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL) async throws {
+        let data = try Data(contentsOf: localUrl)
+        try await uploadFile(data: data, to: signedUploadUrl)
+    }
+
     func getSignedDownloadURL(for path: String) async throws -> URL {
         try throwIfNeeded(for: [.authenticationRequired, .networkError, .downloadURLFailed])
 
@@ -108,6 +119,28 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         }
 
         return URL(string: "\(Constants.baseURL)/download/\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)")!
+    }
+
+    func downloadAudioFile(filename: String, localURL: URL, remotePath: String? = nil) async throws -> URL {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .downloadURLFailed])
+
+        let path = remotePath ?? "\(Constants.defaultPathPrefix)/\(filename)"
+        guard let data = storedFiles[path] else {
+            throw MockSupabaseError.fileNotFound
+        }
+
+        try FileManager.default.createDirectory(
+            at: localURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        try data.write(to: localURL)
+        return localURL
+    }
+
+    func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError])
+        return remoteSermons.filter { $0.userId == userId }
     }
 
     func updateUserProfile(_ user: TabletNotes.User) async throws {
