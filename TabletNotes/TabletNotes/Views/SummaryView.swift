@@ -1,13 +1,6 @@
-import SwiftUI
-import Combine
-import SwiftData
 import Foundation
-// Import models
-// If your project supports module imports, try:
-// import TabletNotes.Models
-// import TabletNotes.Services
-// Otherwise, ensure all these files are in the same target.
-// Import HeaderView if needed
+import SwiftData
+import SwiftUI
 
 struct SummaryView: View {
     let serviceType: String
@@ -16,17 +9,46 @@ struct SummaryView: View {
     let sermonService: SermonService
     let noteService: NoteService
     var onNext: (() -> Void)?
-    @ObservedObject private var summaryService = SummaryService.shared
-    @State private var title: String? = nil
-    @State private var summary: String? = nil
-    @State private var status: String = "idle"
-    @State private var cancellables = Set<AnyCancellable>()
+
+    private let summaryService: any SummaryServiceProtocol
+
+    @State private var title: String?
+    @State private var summary: String?
+    @State private var status = "idle"
+    @State private var summaryTask: Task<Void, Never>?
+
+    init(
+        serviceType: String,
+        transcript: Transcript?,
+        audioFileURL: URL?,
+        sermonService: SermonService,
+        noteService: NoteService,
+        summaryService: any SummaryServiceProtocol = SummaryService(),
+        onNext: (() -> Void)? = nil
+    ) {
+        self.serviceType = serviceType
+        self.transcript = transcript
+        self.audioFileURL = audioFileURL
+        self.sermonService = sermonService
+        self.noteService = noteService
+        self.summaryService = summaryService
+        self.onNext = onNext
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                HeaderView(title: "Summary", showLogo: true, showSearch: false, showSyncStatus: true, showBack: false, syncStatus: HeaderView.SyncStatus.synced)
+                HeaderView(
+                    title: "Summary",
+                    showLogo: true,
+                    showSearch: false,
+                    showSyncStatus: true,
+                    showBack: false,
+                    syncStatus: HeaderView.SyncStatus.synced
+                )
+
                 Spacer(minLength: 0)
+
                 VStack(spacing: 24) {
                     if status == "pending" {
                         ProgressView("Generating summary...")
@@ -44,42 +66,38 @@ struct SummaryView: View {
                     } else if status == "failed" {
                         VStack(spacing: 16) {
                             Text("Failed to generate summary.")
-                                .foregroundColor(.red)
+                                .foregroundStyle(.red)
                                 .multilineTextAlignment(.center)
-                            
+
                             if let errorMessage = summary, errorMessage.hasPrefix("[Error]") {
                                 Text(errorMessage.replacingOccurrences(of: "[Error] ", with: ""))
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal)
                             }
-                            
+
                             HStack(spacing: 12) {
                                 Button("Retry") {
-                                    startSummaryRequest {
-                                        summaryService.retrySummary(for: transcript?.text ?? "", type: serviceType)
-                                    }
+                                    requestSummary()
                                 }
                                 .buttonStyle(.borderedProminent)
-                                
+
                                 Button("Basic Summary") {
-                                    startSummaryRequest {
-                                        summaryService.generateBasicSummary(for: transcript?.text ?? "", type: serviceType)
-                                    }
+                                    requestBasicSummary()
                                 }
                                 .buttonStyle(.bordered)
                             }
                         }
                     }
-                    
+
                     if status == "complete" {
                         HStack(spacing: 12) {
                             Button("Share Summary") {
                                 shareSummary()
                             }
                             .buttonStyle(.bordered)
-                            
+
                             Button("Continue") {
                                 saveSermonAndContinue()
                             }
@@ -92,127 +110,176 @@ struct SummaryView: View {
                         .buttonStyle(.bordered)
                     }
                 }
+
                 Spacer(minLength: 0)
             }
         }
         .ignoresSafeArea(edges: .bottom)
         .onAppear {
-            startSummaryRequest {
-                summaryService.generateSummary(for: transcript?.text ?? "", type: serviceType)
-            }
+            requestSummary()
         }
         .onDisappear {
-            cancellables.removeAll()
+            summaryTask?.cancel()
+            summaryTask = nil
         }
     }
 
-    private func startSummaryRequest(_ trigger: @escaping () -> Void) {
-        cancellables.removeAll()
+    private func requestSummary() {
+        let transcriptText = transcript?.text ?? ""
+        startSummaryTask {
+            try await summaryService.generateSummaryResult(for: transcriptText, type: serviceType)
+        }
+    }
+
+    private func requestBasicSummary() {
+        let transcriptText = transcript?.text ?? ""
+        startSummaryTask {
+            summaryService.generateBasicSummaryResult(for: transcriptText, type: serviceType)
+        }
+    }
+
+    private func startSummaryTask(
+        _ operation: @escaping @Sendable () async throws -> SummaryGenerationResult
+    ) {
+        summaryTask?.cancel()
+        summaryTask = nil
+
         title = nil
         summary = nil
         status = "pending"
 
-        var hasSeenPending = false
+        summaryTask = Task {
+            do {
+                let result = try await operation()
+                guard !Task.isCancelled else { return }
 
-        summaryService.statusPublisher
-            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
-            .dropFirst() // Ignore stale CurrentValueSubject replay from a previous request.
-            .receive(on: RunLoop.main)
-            .sink { statusValue, titleValue, summaryValue in
-                if statusValue == "pending" {
-                    hasSeenPending = true
+                await MainActor.run {
+                    title = result.title
+                    summary = result.summary
+                    status = "complete"
                 }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                let errorMessage = summaryService.userFacingMessage(for: error)
 
-                if (statusValue == "complete" || statusValue == "failed") && !hasSeenPending {
-                    print("[SummaryView] ⚠️ Ignoring stale terminal state '\(statusValue)'")
-                    return
+                await MainActor.run {
+                    title = nil
+                    summary = errorMessage
+                    status = "failed"
                 }
-
-                status = statusValue
-                title = titleValue
-                summary = summaryValue
             }
-            .store(in: &cancellables)
-
-        // Start after the subscription is attached to avoid missing pending/terminal events.
-        trigger()
+        }
     }
 
     private func saveSermonAndContinue() {
-        guard let summaryText = summary else { onNext?(); return }
-        // Use AI-generated title if available, otherwise fall back to date-based title
-        let sermonTitle = title ?? "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        guard status == "complete", let summaryText = summary else {
+            onNext?()
+            return
+        }
+
+        let sermonTitle = title ?? "Sermon on " + DateFormatter.localizedString(
+            from: Date(),
+            dateStyle: .medium,
+            timeStyle: .short
+        )
         let date = Date()
-        let notes = noteService.currentNotes // Use the current notes array from noteService
+        let notes = noteService.currentNotes
         let summaryModel = Summary(title: sermonTitle, text: summaryText, type: serviceType, status: status)
-        guard let audioFileURL = audioFileURL else {
+
+        guard let audioFileURL else {
             print("[SummaryView] No audioFileURL provided!")
             return
         }
+
         print("[SummaryView] Saving sermon with audioFileURL: \(audioFileURL), transcript: \(transcript?.text.prefix(100) ?? "")...")
-        guard let transcript = transcript else {
+
+        guard let transcript else {
             print("[SummaryView] No transcript provided!")
             return
         }
-        sermonService.saveSermon(title: sermonTitle, audioFileURL: audioFileURL, date: date, serviceType: serviceType, speaker: nil, transcript: transcript, notes: notes, summary: summaryModel)
 
-        // Clear the session notes after successfully saving to sermon
+        sermonService.saveSermon(
+            title: sermonTitle,
+            audioFileURL: audioFileURL,
+            date: date,
+            serviceType: serviceType,
+            speaker: nil,
+            transcript: transcript,
+            notes: notes,
+            summary: summaryModel
+        )
+
         noteService.clearSession()
-
         onNext?()
     }
-    
+
     private func shareSummary() {
         guard let summaryText = summary else { return }
-        
+
         let shareText = """
         AI Summary - \(serviceType)
-        
+
         \(summaryText)
-        
+
         Generated by TabletNotes
         """
-        
+
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
            let rootViewController = window.rootViewController {
             let activityVC = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
-            
-            // Configure for iPad with safe bounds checking
+
             if let popover = activityVC.popoverPresentationController {
                 let bounds = window.bounds
-                // Validate bounds to prevent NaN/infinity values
-                let isValidBounds = bounds.width > 0 && bounds.height > 0 && 
-                                   bounds.width.isFinite && bounds.height.isFinite &&
-                                   !bounds.width.isNaN && !bounds.height.isNaN
-                
+                let isValidBounds = bounds.width > 0 && bounds.height > 0 &&
+                    bounds.width.isFinite && bounds.height.isFinite &&
+                    !bounds.width.isNaN && !bounds.height.isNaN
+
                 if isValidBounds {
                     popover.sourceView = window
                     popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 0, height: 0)
                 } else {
-                    // Fallback: use the root view controller's view
                     let viewBounds = rootViewController.view.bounds
-                    let isValidViewBounds = viewBounds.width > 0 && viewBounds.height > 0 && 
-                                          viewBounds.width.isFinite && viewBounds.height.isFinite &&
-                                          !viewBounds.width.isNaN && !viewBounds.height.isNaN
-                    
+                    let isValidViewBounds = viewBounds.width > 0 && viewBounds.height > 0 &&
+                        viewBounds.width.isFinite && viewBounds.height.isFinite &&
+                        !viewBounds.width.isNaN && !viewBounds.height.isNaN
+
                     if isValidViewBounds {
                         popover.sourceView = rootViewController.view
                         popover.sourceRect = CGRect(x: viewBounds.midX, y: viewBounds.midY, width: 0, height: 0)
                     } else {
-                        // Final fallback: use a default center point
                         popover.sourceView = rootViewController.view
                         popover.sourceRect = CGRect(x: 400, y: 400, width: 0, height: 0)
                     }
                 }
+
                 popover.permittedArrowDirections = []
             }
-            
+
             rootViewController.present(activityVC, animated: true)
         }
     }
 }
 
 #Preview {
-    SummaryView(serviceType: "Sermon", transcript: Transcript(text: "Sample transcript text..."), audioFileURL: nil, sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))), noteService: NoteService())
+    SummaryView(
+        serviceType: "Sermon",
+        transcript: Transcript(text: "Sample transcript text..."),
+        audioFileURL: nil,
+        sermonService: SermonService(
+            modelContext: try! ModelContext(
+                ModelContainer(
+                    for: Sermon.self,
+                    Note.self,
+                    Transcript.self,
+                    Summary.self,
+                    ProcessingJob.self,
+                    TranscriptSegment.self
+                )
+            )
+        ),
+        noteService: NoteService()
+    )
 }

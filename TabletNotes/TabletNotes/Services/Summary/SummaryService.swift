@@ -1,31 +1,8 @@
 import Foundation
-import Combine
 import Supabase
 
-class SummaryService: ObservableObject, SummaryServiceProtocol {
-    static let shared = SummaryService()
-
-    struct SummaryGenerationResult {
-        let title: String?
-        let summary: String
-    }
-
-    private let titleSubject = CurrentValueSubject<String?, Never>(nil)
-    private let summarySubject = CurrentValueSubject<String?, Never>(nil)
-    let statusSubject = CurrentValueSubject<String, Never>("idle") // idle, pending, complete, failed
-    var titlePublisher: AnyPublisher<String?, Never> { titleSubject.eraseToAnyPublisher() }
-    var summaryPublisher: AnyPublisher<String?, Never> { summarySubject.eraseToAnyPublisher() }
-    var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
-    private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
-    var errorPublisher: AnyPublisher<Error?, Never> { errorSubject.eraseToAnyPublisher() }
-
-    private var lastTranscript: String?
-    private var lastType: String?
-    private var currentRequestTask: Task<Void, Never>?
-    private var currentRequestId: UUID?
-    private var isRequestInProgress = false
-
-    private enum SummaryError: LocalizedError {
+final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
+    enum SummaryError: LocalizedError {
         case transcriptTooShort(Int)
         case invalidRequest
         case network(String)
@@ -78,8 +55,79 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
     private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
     private let supabase: SupabaseClient
 
-    private init(supabase: SupabaseClient = SupabaseService.shared.client) {
+    init(supabase: SupabaseClient = SupabaseService.shared.client) {
         self.supabase = supabase
+    }
+
+    func generateSummaryResult(for transcript: String, type: String) async throws -> SummaryGenerationResult {
+        let trimmedTranscript = try validateTranscript(transcript)
+        let accessToken = try await getAuthToken()
+        let request = try makeRequest(transcript: trimmedTranscript, type: type, accessToken: accessToken)
+
+        print("[SummaryService] Request details:")
+        print("- Transcript length: \(trimmedTranscript.count) characters")
+        print("- Service type: \(type)")
+        print("- First 200 chars: \(String(trimmedTranscript.prefix(200)))")
+        if trimmedTranscript.count > 200 {
+            print("- Last 200 chars: \(String(trimmedTranscript.suffix(200)))")
+        }
+        print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return try parseSummaryResponse(data: data, response: response)
+        } catch {
+            throw mapRequestError(error)
+        }
+    }
+
+    func generateBasicSummaryResult(for transcript: String, type: String) -> SummaryGenerationResult {
+        let sentences = transcript.components(separatedBy: ". ")
+        let wordCount = transcript.components(separatedBy: " ").count
+
+        let basicTitle: String
+        if let firstSentence = sentences.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firstSentence.isEmpty {
+            let truncated = firstSentence.prefix(60)
+            basicTitle = String(truncated) + (firstSentence.count > 60 ? "..." : "")
+        } else {
+            basicTitle = "\(type) Summary"
+        }
+
+        let basicSummary: String
+        if wordCount < 100 {
+            basicSummary = "Brief \(type.lowercased()): \(transcript)"
+        } else {
+            let firstSentences = Array(sentences.prefix(3)).joined(separator: ". ")
+            let keyPoints = sentences.filter { sentence in
+                let lowercased = sentence.lowercased()
+                return lowercased.contains("god") || lowercased.contains("jesus") ||
+                    lowercased.contains("christ") || lowercased.contains("lord") ||
+                    lowercased.contains("scripture") || lowercased.contains("bible") ||
+                    lowercased.contains("prayer") || lowercased.contains("faith")
+            }
+
+            let keyPointsText = Array(keyPoints.prefix(2)).joined(separator: ". ")
+            basicSummary = """
+            **\(type) Summary**
+
+            **Opening:** \(firstSentences)
+
+            **Key Points:** \(keyPointsText.isEmpty ? "Main themes focus on faith and spiritual growth." : keyPointsText)
+
+            **Note:** This is a basic summary generated offline. For a more detailed AI-powered summary, please try again when the summarization service is available.
+            """
+        }
+
+        return SummaryGenerationResult(title: basicTitle, summary: basicSummary)
+    }
+
+    func userFacingMessage(for error: Error) -> String {
+        if let summaryError = mapRequestError(error) as? SummaryError {
+            return summaryError.userFacingMessage
+        }
+
+        return "[Error] \(error.localizedDescription)"
     }
 
     private func getAuthToken() async throws -> String {
@@ -229,182 +277,5 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         }
 
         return SummaryError.network(error.localizedDescription)
-    }
-
-    private func beginPublishedRequest(
-        transcript: String,
-        type: String,
-        requestId: UUID
-    ) {
-        lastTranscript = transcript
-        lastType = type
-        currentRequestId = requestId
-        isRequestInProgress = true
-        statusSubject.send("pending")
-        titleSubject.send(nil)
-        summarySubject.send(nil)
-        errorSubject.send(nil)
-    }
-
-    private func finishPublishedRequest(requestId: UUID) {
-        guard currentRequestId == requestId else { return }
-        currentRequestTask = nil
-        currentRequestId = nil
-        isRequestInProgress = false
-    }
-
-    private func publishFailure(_ error: Error, requestId: UUID) {
-        guard currentRequestId == requestId else { return }
-
-        let summaryError = (error as? SummaryError) ?? SummaryError.network(error.localizedDescription)
-        statusSubject.send("failed")
-        summarySubject.send(summaryError.userFacingMessage)
-        errorSubject.send(summaryError)
-        finishPublishedRequest(requestId: requestId)
-    }
-
-    func generateSummaryResult(for transcript: String, type: String) async throws -> SummaryGenerationResult {
-        let trimmedTranscript = try validateTranscript(transcript)
-        let accessToken = try await getAuthToken()
-        let request = try makeRequest(transcript: trimmedTranscript, type: type, accessToken: accessToken)
-
-        print("[SummaryService] Request details:")
-        print("- Transcript length: \(trimmedTranscript.count) characters")
-        print("- Service type: \(type)")
-        print("- First 200 chars: \(String(trimmedTranscript.prefix(200)))")
-        if trimmedTranscript.count > 200 {
-            print("- Last 200 chars: \(String(trimmedTranscript.suffix(200)))")
-        }
-        print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            return try parseSummaryResponse(data: data, response: response)
-        } catch {
-            throw mapRequestError(error)
-        }
-    }
-
-    func generateSummary(for transcript: String, type: String) {
-        print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
-
-        if isRequestInProgress {
-            if lastTranscript == transcript && lastType == type {
-                print("[SummaryService] Request already in progress for identical content")
-                return
-            }
-
-            print("[SummaryService] Cancelling previous summary request to start a new one")
-            currentRequestTask?.cancel()
-            currentRequestTask = nil
-            currentRequestId = nil
-            isRequestInProgress = false
-        }
-
-        let requestId = UUID()
-        beginPublishedRequest(transcript: transcript, type: type, requestId: requestId)
-
-        currentRequestTask = Task { [weak self] in
-            guard let self else { return }
-
-            do {
-                let result = try await self.generateSummaryResult(for: transcript, type: type)
-                guard !Task.isCancelled else { return }
-
-                DispatchQueue.main.async {
-                    guard self.currentRequestId == requestId else { return }
-                    self.titleSubject.send(result.title)
-                    self.summarySubject.send(result.summary)
-                    self.statusSubject.send("complete")
-                    self.errorSubject.send(nil)
-                    self.finishPublishedRequest(requestId: requestId)
-                }
-            } catch is CancellationError {
-                DispatchQueue.main.async {
-                    self.finishPublishedRequest(requestId: requestId)
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.publishFailure(error, requestId: requestId)
-                }
-            }
-        }
-    }
-
-    func retrySummary() {
-        guard let transcript = lastTranscript, let type = lastType else {
-            print("[SummaryService] Cannot retry: No previous transcript or type stored")
-            return
-        }
-
-        print("[SummaryService] Retrying summary generation")
-        generateSummary(for: transcript, type: type)
-    }
-
-    func retrySummary(for transcript: String, type: String) {
-        print("[SummaryService] Retrying summary generation with explicit transcript/type")
-        generateSummary(for: transcript, type: type)
-    }
-
-    func generateBasicSummaryResult(for transcript: String, type: String) -> SummaryGenerationResult {
-        let sentences = transcript.components(separatedBy: ". ")
-        let wordCount = transcript.components(separatedBy: " ").count
-
-        let basicTitle: String
-        if let firstSentence = sentences.first?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !firstSentence.isEmpty {
-            let truncated = firstSentence.prefix(60)
-            basicTitle = String(truncated) + (firstSentence.count > 60 ? "..." : "")
-        } else {
-            basicTitle = "\(type) Summary"
-        }
-
-        let basicSummary: String
-        if wordCount < 100 {
-            basicSummary = "Brief \(type.lowercased()): \(transcript)"
-        } else {
-            let firstSentences = Array(sentences.prefix(3)).joined(separator: ". ")
-            let keyPoints = sentences.filter { sentence in
-                let lowercased = sentence.lowercased()
-                return lowercased.contains("god") || lowercased.contains("jesus") ||
-                    lowercased.contains("christ") || lowercased.contains("lord") ||
-                    lowercased.contains("scripture") || lowercased.contains("bible") ||
-                    lowercased.contains("prayer") || lowercased.contains("faith")
-            }
-
-            let keyPointsText = Array(keyPoints.prefix(2)).joined(separator: ". ")
-            basicSummary = """
-            **\(type) Summary**
-
-            **Opening:** \(firstSentences)
-
-            **Key Points:** \(keyPointsText.isEmpty ? "Main themes focus on faith and spiritual growth." : keyPointsText)
-
-            **Note:** This is a basic summary generated offline. For a more detailed AI-powered summary, please try again when the summarization service is available.
-            """
-        }
-
-        return SummaryGenerationResult(title: basicTitle, summary: basicSummary)
-    }
-
-    func generateBasicSummary(for transcript: String, type: String) {
-        print("[SummaryService] Generating basic summary as fallback")
-
-        if isRequestInProgress {
-            currentRequestTask?.cancel()
-            currentRequestTask = nil
-            currentRequestId = nil
-            isRequestInProgress = false
-        }
-
-        let requestId = UUID()
-        beginPublishedRequest(transcript: transcript, type: type, requestId: requestId)
-
-        let result = generateBasicSummaryResult(for: transcript, type: type)
-        titleSubject.send(result.title)
-        summarySubject.send(result.summary)
-        statusSubject.send("complete")
-        errorSubject.send(nil)
-        finishPublishedRequest(requestId: requestId)
     }
 }

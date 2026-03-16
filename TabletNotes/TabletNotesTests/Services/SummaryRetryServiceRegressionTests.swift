@@ -74,13 +74,13 @@ struct SummaryRetryServiceRegressionTests {
             try await Task.sleep(nanoseconds: 50_000_000)
 
             if transcript.contains("Alpha") {
-                return SummaryService.SummaryGenerationResult(
+                return SummaryGenerationResult(
                     title: "Alpha Title",
                     summary: "Alpha Summary for \(serviceType)"
                 )
             }
 
-            return SummaryService.SummaryGenerationResult(
+            return SummaryGenerationResult(
                 title: "Beta Title",
                 summary: "Beta Summary for \(serviceType)"
             )

@@ -26,10 +26,13 @@ class SummaryRetryService: ObservableObject {
     private var modelContext: ModelContext?
     private let maxRetries = 3
     private let processingTimeoutMinutes: TimeInterval = 10
-    var summaryRunner: ((String, String) async throws -> SummaryService.SummaryGenerationResult)?
-    var basicSummaryGenerator: ((String, String) -> SummaryService.SummaryGenerationResult)?
+    private let summaryService: any SummaryServiceProtocol
+    var summaryRunner: ((String, String) async throws -> SummaryGenerationResult)?
+    var basicSummaryGenerator: ((String, String) -> SummaryGenerationResult)?
 
-    init() {}
+    init(summaryService: any SummaryServiceProtocol = SummaryService()) {
+        self.summaryService = summaryService
+    }
 
     private func upsertSummary(
         on sermon: Sermon,
@@ -183,8 +186,9 @@ class SummaryRetryService: ObservableObject {
         let jobId = nextJob.id
         let transcriptText = transcript.text
         let serviceType = sermon.serviceType
+        let summaryService = self.summaryService
         let runner = summaryRunner ?? { transcript, type in
-            try await SummaryService.shared.generateSummaryResult(for: transcript, type: type)
+            try await summaryService.generateSummaryResult(for: transcript, type: type)
         }
 
         Task { @MainActor [weak self] in
@@ -283,8 +287,9 @@ class SummaryRetryService: ObservableObject {
         transcript: String,
         in context: ModelContext
     ) -> Bool {
+        let summaryService = self.summaryService
         let generator = basicSummaryGenerator ?? { transcript, type in
-            SummaryService.shared.generateBasicSummaryResult(for: transcript, type: type)
+            summaryService.generateBasicSummaryResult(for: transcript, type: type)
         }
 
         let fallbackResult = generator(transcript, sermon.serviceType)

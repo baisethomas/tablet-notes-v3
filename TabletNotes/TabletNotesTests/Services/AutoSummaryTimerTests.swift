@@ -125,49 +125,43 @@ struct AutoSummaryTimerTests {
 
     // MARK: - Mock Summary Service for Testing
 
-    class MockSummaryService: SummaryServiceProtocol {
-        private let titleSubject = CurrentValueSubject<String?, Never>(nil)
-        private let summarySubject = CurrentValueSubject<String?, Never>(nil)
-        private let statusSubject = CurrentValueSubject<String, Never>("idle")
-        private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
-
-        var titlePublisher: AnyPublisher<String?, Never> { titleSubject.eraseToAnyPublisher() }
-        var summaryPublisher: AnyPublisher<String?, Never> { summarySubject.eraseToAnyPublisher() }
-        var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
-        var errorPublisher: AnyPublisher<Error?, Never> { errorSubject.eraseToAnyPublisher() }
-
+    final class MockSummaryService: SummaryServiceProtocol, @unchecked Sendable {
         // Track if generateSummary was called
         private(set) var generateSummaryCalled = false
         private(set) var lastTranscript: String?
         private(set) var lastServiceType: String?
 
-        func generateSummary(for transcript: String, type: String) {
+        func generateSummaryResult(for transcript: String, type: String) async throws -> SummaryGenerationResult {
             generateSummaryCalled = true
             lastTranscript = transcript
             lastServiceType = type
 
-            statusSubject.send("pending")
-
-            // Simulate async summary generation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.titleSubject.send("Mock Title")
-                self.summarySubject.send("Mock summary for: \(transcript.prefix(50))...")
-                self.statusSubject.send("complete")
-            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            return SummaryGenerationResult(
+                title: "Mock Title",
+                summary: "Mock summary for: \(transcript.prefix(50))..."
+            )
         }
 
-        func retrySummary() {
-            // Implementation for retry
+        func generateBasicSummaryResult(for transcript: String, type: String) -> SummaryGenerationResult {
+            generateSummaryCalled = true
+            lastTranscript = transcript
+            lastServiceType = type
+
+            return SummaryGenerationResult(
+                title: "Mock Title",
+                summary: "Mock summary for: \(transcript.prefix(50))..."
+            )
+        }
+
+        func userFacingMessage(for error: Error) -> String {
+            "[Error] \(error.localizedDescription)"
         }
 
         func resetState() {
             generateSummaryCalled = false
             lastTranscript = nil
             lastServiceType = nil
-            titleSubject.send(nil)
-            summarySubject.send(nil)
-            statusSubject.send("idle")
-            errorSubject.send(nil)
         }
     }
 
@@ -213,11 +207,8 @@ struct AutoSummaryTimerTests {
         if wasAutoStopped, audioURL != nil {
             // This simulates the processTranscription call that would happen in RecordingView
             let mockTranscript = "This is a mock transcript of the sermon recording."
-            mockSummaryService.generateSummary(for: mockTranscript, type: "Sunday Service")
+            _ = try await mockSummaryService.generateSummaryResult(for: mockTranscript, type: "Sunday Service")
         }
-
-        // Wait for summary to complete
-        try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
 
         // Verify summary was triggered
         #expect(mockSummaryService.generateSummaryCalled == true)
@@ -262,11 +253,8 @@ struct AutoSummaryTimerTests {
         // Simulate RecordingView response to auto-stop
         if wasAutoStopped, audioURL != nil {
             let mockTranscript = "This is a mock transcript of the bible study recording."
-            mockSummaryService.generateSummary(for: mockTranscript, type: "Bible Study")
+            _ = try await mockSummaryService.generateSummaryResult(for: mockTranscript, type: "Bible Study")
         }
-
-        // Wait for summary processing
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         // Verify summary was generated
         #expect(mockSummaryService.generateSummaryCalled == true)
