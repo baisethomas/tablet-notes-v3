@@ -19,8 +19,8 @@
 		BB82C8332F4ABCBF001CD88C /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB82C8322F4ABCBF001CD88C /* FirebaseAnalyticsCore */; };
 		BB82C8352F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = BB82C8342F4ABCBF001CD88C /* FirebaseAnalyticsIdentitySupport */; };
 		BB8DDCAE2F4AE591000ABA54 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = BB8DDCAD2F4AE591000ABA54 /* FirebaseCrashlytics */; };
-		BBF1A0012F6D000100000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BBF1A0022F6D000100000001 /* GoogleSignIn */; };
 		BBA138EC2E2CE80A004EEFEE /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBA138EB2E2CE80A004EEFEE /* StoreKit.framework */; };
+		BBF1A0012F6D000100000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BBF1A0022F6D000100000001 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
