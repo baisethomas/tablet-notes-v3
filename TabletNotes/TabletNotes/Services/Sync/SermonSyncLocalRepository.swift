@@ -2,7 +2,21 @@ import Foundation
 import SwiftData
 
 @MainActor
-final class SermonSyncLocalRepository {
+protocol SermonSyncLocalRepositoryProtocol: AnyObject {
+    func sermonsNeedingSync() throws -> [Sermon]
+    func syncData(for sermon: Sermon) -> SermonSyncData
+    func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date) throws
+    func findSermon(remoteId: String) throws -> Sermon?
+    func refreshSermon(id: UUID) throws -> Sermon?
+    func markAudioDownloaded(fileName: String, for sermonId: UUID) throws
+    func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData)
+    func createLocalSermon(from remoteData: RemoteSermonData, audioFileURL: URL) throws
+    func resetCloudSyncState() throws
+    func save() throws
+}
+
+@MainActor
+final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     private let modelContext: ModelContext
 
     init(modelContext: ModelContext) {

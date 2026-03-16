@@ -100,8 +100,8 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         }
 
         if httpResponse.statusCode == 409 {
-            print("[SyncService] ⚠️ Sermon already exists in cloud, treating as success...")
-            return ""
+            print("[SyncService] ⚠️ Sermon already exists in cloud")
+            throw SyncError.remoteAlreadyExists
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {

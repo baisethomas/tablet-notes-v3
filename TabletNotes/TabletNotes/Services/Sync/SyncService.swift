@@ -3,7 +3,7 @@ import Foundation
 import SwiftData
 
 @MainActor
-class SyncService: ObservableObject, SyncServiceProtocol {
+final class SermonSyncEngine {
     private enum SyncPhase: String, CaseIterable {
         case pushLocalChanges
         case pullCloudChanges
@@ -18,141 +18,106 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
     }
 
-    private let authService: AuthenticationManager
-    private let localRepository: SermonSyncLocalRepository
-    private let remoteGateway: SermonSyncRemoteGatewayProtocol
-
-    @Published private var syncStatus: String = "idle"
-    @Published private var syncError: Error?
-    private var isSyncInProgress = false
-
-    var syncStatusPublisher: AnyPublisher<String, Never> {
-        $syncStatus.eraseToAnyPublisher()
-    }
-
-    var errorPublisher: AnyPublisher<Error?, Never> {
-        $syncError.eraseToAnyPublisher()
-    }
+    private let localRepository: any SermonSyncLocalRepositoryProtocol
+    private let remoteGateway: any SermonSyncRemoteGatewayProtocol
+    private var currentSyncTask: Task<Void, Error>?
 
     init(
-        modelContext: ModelContext,
-        supabaseService: SupabaseServiceProtocol,
-        authService: AuthenticationManager,
-        localRepository: SermonSyncLocalRepository? = nil,
-        remoteGateway: SermonSyncRemoteGatewayProtocol? = nil
+        localRepository: any SermonSyncLocalRepositoryProtocol,
+        remoteGateway: any SermonSyncRemoteGatewayProtocol
     ) {
-        self.authService = authService
-        self.localRepository = localRepository ?? SermonSyncLocalRepository(modelContext: modelContext)
-        self.remoteGateway = remoteGateway ?? SermonSyncRemoteGateway(supabaseService: supabaseService)
+        self.localRepository = localRepository
+        self.remoteGateway = remoteGateway
     }
 
-    func syncAllData() async {
-        guard !isSyncInProgress else {
-            print("[SyncService] ⏭️ Sync already in progress, skipping duplicate trigger")
+    func sync(userId: UUID) async throws {
+        if let currentSyncTask {
+            try await currentSyncTask.value
             return
         }
 
-        isSyncInProgress = true
-        defer { isSyncInProgress = false }
+        let task = Task { @MainActor in
+            try await self.runSyncPhases(userId: userId)
+        }
 
-        await performFullSync()
+        currentSyncTask = task
+        defer { currentSyncTask = nil }
+
+        try await task.value
     }
 
-    func deleteAllCloudData() async {
-        guard let currentUser = authService.currentUser else { return }
-
-        do {
-            try await remoteGateway.deleteAllRemoteData(for: currentUser.id)
-            try localRepository.resetCloudSyncState()
-        } catch {
-            syncError = error
-        }
+    func deleteAllRemoteData(for userId: UUID) async throws {
+        try await remoteGateway.deleteAllRemoteData(for: userId)
+        try localRepository.resetCloudSyncState()
     }
 
     func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
         localRepository.updateLocalSermon(sermon, with: remoteData)
     }
 
-    private func performFullSync() async {
-        print("[SyncService] 🔄 Starting full sync...")
-
-        guard let currentUser = authService.currentUser else {
-            print("[SyncService] ❌ No current user - cannot sync")
-            syncError = SyncError.subscriptionRequired
-            return
-        }
-
-        print("[SyncService] Current user: \(currentUser.email), canSync: \(currentUser.canSync)")
-
-        guard currentUser.canSync else {
-            print("[SyncService] ❌ User cannot sync (requires Premium subscription)")
-            syncError = SyncError.subscriptionRequired
-            return
-        }
-
-        syncStatus = "syncing"
-        syncError = nil
-
-        do {
-            try await runSyncPhases()
-            syncStatus = "synced"
-            print("[SyncService] ✅ Sync completed successfully")
-        } catch {
-            syncStatus = "error"
-            syncError = error
-            print("[SyncService] ❌ Sync failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func runSyncPhases() async throws {
+    private func runSyncPhases(userId: UUID) async throws {
         for phase in SyncPhase.allCases {
             print(phase.logMessage)
-            try await run(phase)
+            try await run(phase, userId: userId)
         }
     }
 
-    private func run(_ phase: SyncPhase) async throws {
+    private func run(_ phase: SyncPhase, userId: UUID) async throws {
         switch phase {
         case .pushLocalChanges:
-            try await pushLocalChanges()
+            try await pushLocalChanges(userId: userId)
         case .pullCloudChanges:
-            try await pullCloudChanges()
+            try await pullCloudChanges(userId: userId)
         }
     }
 
-    private func pushLocalChanges() async throws {
+    private func pushLocalChanges(userId: UUID) async throws {
         let sermonsToSync = try localRepository.sermonsNeedingSync()
         print("[SyncService] Found \(sermonsToSync.count) sermons marked for sync")
 
         for sermon in sermonsToSync {
             print("[SyncService] Syncing sermon: \(sermon.title)")
-            try await pushSermonToCloud(sermon)
+            try await pushSermonToCloud(sermon, userId: userId)
         }
     }
 
-    private func pushSermonToCloud(_ sermon: Sermon) async throws {
+    private func pushSermonToCloud(_ sermon: Sermon, userId: UUID) async throws {
         let syncData = localRepository.syncData(for: sermon)
         let syncedAt = Date()
 
         if let remoteId = sermon.remoteId, !remoteId.isEmpty {
             try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
-            try localRepository.markSermonSynced(sermon, syncedAt: syncedAt)
+            try localRepository.markSermonSynced(sermon, remoteId: remoteId, syncedAt: syncedAt)
             return
         }
 
-        let newRemoteId = try await remoteGateway.createRemoteSermon(data: syncData)
-        guard !newRemoteId.isEmpty else {
-            print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
+        do {
+            let newRemoteId = try await remoteGateway.createRemoteSermon(data: syncData)
+            guard !newRemoteId.isEmpty else {
+                print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
+                throw SyncError.conflictResolution
+            }
+
+            try localRepository.markSermonSynced(sermon, remoteId: newRemoteId, syncedAt: syncedAt)
+        } catch SyncError.remoteAlreadyExists {
+            let resolvedRemoteId = try await resolveExistingRemoteId(for: sermon.id, userId: userId)
+            try localRepository.markSermonSynced(sermon, remoteId: resolvedRemoteId, syncedAt: syncedAt)
+        }
+    }
+
+    private func resolveExistingRemoteId(for localId: UUID, userId: UUID) async throws -> String {
+        let remoteSermons = try await remoteGateway.fetchRemoteSermons(for: userId)
+        guard let existingRemoteId = remoteSermons.first(where: { $0.localId == localId })?.id else {
+            print("[SyncService] ❌ Unable to resolve remote sermon for localId \(localId)")
             throw SyncError.conflictResolution
         }
 
-        try localRepository.markSermonSynced(sermon, remoteId: newRemoteId, syncedAt: syncedAt)
+        print("[SyncService] ✅ Resolved existing remote sermon ID: \(existingRemoteId)")
+        return existingRemoteId
     }
 
-    private func pullCloudChanges() async throws {
-        guard let currentUser = authService.currentUser else { return }
-
-        let remoteSermons = try await remoteGateway.fetchRemoteSermons(for: currentUser.id)
+    private func pullCloudChanges(userId: UUID) async throws {
+        let remoteSermons = try await remoteGateway.fetchRemoteSermons(for: userId)
         print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
 
         for remoteSermon in remoteSermons {
@@ -207,5 +172,84 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             remotePath: remoteSermon.audioFilePath
         )
         try localRepository.createLocalSermon(from: remoteSermon, audioFileURL: localAudioURL)
+    }
+}
+
+@MainActor
+class SyncService: ObservableObject, SyncServiceProtocol {
+    private let authService: any SyncUserProviding
+    private let engine: SermonSyncEngine
+
+    @Published private var syncStatus: String = "idle"
+    @Published private var syncError: Error?
+
+    var syncStatusPublisher: AnyPublisher<String, Never> {
+        $syncStatus.eraseToAnyPublisher()
+    }
+
+    var errorPublisher: AnyPublisher<Error?, Never> {
+        $syncError.eraseToAnyPublisher()
+    }
+
+    init(
+        modelContext: ModelContext,
+        supabaseService: SupabaseServiceProtocol,
+        authService: any SyncUserProviding,
+        localRepository: SermonSyncLocalRepository? = nil,
+        remoteGateway: SermonSyncRemoteGatewayProtocol? = nil,
+        engine: SermonSyncEngine? = nil
+    ) {
+        self.authService = authService
+        let resolvedLocalRepository = localRepository ?? SermonSyncLocalRepository(modelContext: modelContext)
+        let resolvedRemoteGateway = remoteGateway ?? SermonSyncRemoteGateway(supabaseService: supabaseService)
+        self.engine = engine ?? SermonSyncEngine(
+            localRepository: resolvedLocalRepository,
+            remoteGateway: resolvedRemoteGateway
+        )
+    }
+
+    func deleteAllCloudData() async {
+        guard let currentUser = authService.currentUser else { return }
+
+        do {
+            try await engine.deleteAllRemoteData(for: currentUser.id)
+        } catch {
+            syncError = error
+        }
+    }
+
+    func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
+        engine.updateLocalSermon(sermon, with: remoteData)
+    }
+
+    func syncAllData() async {
+        print("[SyncService] 🔄 Starting full sync...")
+
+        guard let currentUser = authService.currentUser else {
+            print("[SyncService] ❌ No current user - cannot sync")
+            syncError = SyncError.subscriptionRequired
+            return
+        }
+
+        print("[SyncService] Current user: \(currentUser.email), canSync: \(currentUser.canSync)")
+
+        guard currentUser.canSync else {
+            print("[SyncService] ❌ User cannot sync (requires Premium subscription)")
+            syncError = SyncError.subscriptionRequired
+            return
+        }
+
+        syncStatus = "syncing"
+        syncError = nil
+
+        do {
+            try await engine.sync(userId: currentUser.id)
+            syncStatus = "synced"
+            print("[SyncService] ✅ Sync completed successfully")
+        } catch {
+            syncStatus = "error"
+            syncError = error
+            print("[SyncService] ❌ Sync failed: \(error.localizedDescription)")
+        }
     }
 }

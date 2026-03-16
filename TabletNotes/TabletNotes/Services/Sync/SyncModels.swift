@@ -103,12 +103,15 @@ enum SyncError: LocalizedError {
     case networkError
     case dataCorruption
     case conflictResolution
+    case remoteAlreadyExists
     case authenticationFailed
 
     var errorDescription: String? {
         switch self {
         case .subscriptionRequired:
             return "Sync requires a paid subscription"
+        case .remoteAlreadyExists:
+            return "Remote sermon already exists"
         case .authenticationFailed:
             return "Authentication failed. Please sign in again."
         case .networkError:

@@ -5,6 +5,167 @@ import Testing
 
 @MainActor
 struct SyncServiceMergeTests {
+    final class MockSyncUserProvider: SyncUserProviding {
+        var currentUser: User?
+
+        init(currentUser: User?) {
+            self.currentUser = currentUser
+        }
+    }
+
+    final class CallRecorder {
+        private(set) var events: [String] = []
+
+        func record(_ event: String) {
+            events.append(event)
+        }
+    }
+
+    final class SyncLocalRepositorySpy: SermonSyncLocalRepositoryProtocol {
+        private let recorder: CallRecorder
+        private let syncDataBySermonId: [UUID: SermonSyncData]
+        private(set) var sermonsToSync: [Sermon]
+        private(set) var markedRemoteIds: [String] = []
+        private var sermonsByRemoteId: [String: Sermon] = [:]
+
+        init(
+            recorder: CallRecorder,
+            sermonsToSync: [Sermon],
+            syncDataBySermonId: [UUID: SermonSyncData]
+        ) {
+            self.recorder = recorder
+            self.sermonsToSync = sermonsToSync
+            self.syncDataBySermonId = syncDataBySermonId
+        }
+
+        func sermonsNeedingSync() throws -> [Sermon] {
+            recorder.record("local.sermonsNeedingSync")
+            return sermonsToSync.filter(\.needsSync)
+        }
+
+        func syncData(for sermon: Sermon) -> SermonSyncData {
+            recorder.record("local.syncData")
+            guard let syncData = syncDataBySermonId[sermon.id] else {
+                fatalError("Missing sync payload for sermon \(sermon.id)")
+            }
+            return syncData
+        }
+
+        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date) throws {
+            recorder.record("local.markSermonSynced")
+            sermon.needsSync = false
+            sermon.lastSyncedAt = syncedAt
+            if let remoteId {
+                sermon.remoteId = remoteId
+                sermonsByRemoteId[remoteId] = sermon
+                markedRemoteIds.append(remoteId)
+            }
+        }
+
+        func findSermon(remoteId: String) throws -> Sermon? {
+            recorder.record("local.findSermon")
+            return sermonsByRemoteId[remoteId]
+        }
+
+        func refreshSermon(id: UUID) throws -> Sermon? {
+            recorder.record("local.refreshSermon")
+            return sermonsToSync.first(where: { $0.id == id }) ?? sermonsByRemoteId.values.first(where: { $0.id == id })
+        }
+
+        func markAudioDownloaded(fileName: String, for sermonId: UUID) throws {
+            _ = fileName
+            _ = sermonId
+            recorder.record("local.markAudioDownloaded")
+        }
+
+        func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
+            _ = sermon
+            _ = remoteData
+            recorder.record("local.updateLocalSermon")
+        }
+
+        func createLocalSermon(from remoteData: RemoteSermonData, audioFileURL: URL) throws {
+            _ = remoteData
+            _ = audioFileURL
+            recorder.record("local.createLocalSermon")
+        }
+
+        func resetCloudSyncState() throws {
+            recorder.record("local.resetCloudSyncState")
+        }
+
+        func save() throws {
+            recorder.record("local.save")
+        }
+    }
+
+    final class SyncRemoteGatewaySpy: SermonSyncRemoteGatewayProtocol {
+        private let recorder: CallRecorder
+        private var fetchedRemoteSermonPages: [[RemoteSermonData]]
+        private let createResult: Result<String, Error>
+        private(set) var createCallCount = 0
+        private(set) var fetchCallCount = 0
+        private var blockedCreateContinuation: CheckedContinuation<Void, Never>?
+
+        var shouldBlockCreate = false
+
+        init(
+            recorder: CallRecorder,
+            createResult: Result<String, Error> = .success("remote-created"),
+            fetchedRemoteSermonPages: [[RemoteSermonData]] = [[]]
+        ) {
+            self.recorder = recorder
+            self.createResult = createResult
+            self.fetchedRemoteSermonPages = fetchedRemoteSermonPages
+        }
+
+        func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
+            _ = userId
+            fetchCallCount += 1
+            recorder.record("remote.fetch")
+
+            guard !fetchedRemoteSermonPages.isEmpty else { return [] }
+            return fetchedRemoteSermonPages.removeFirst()
+        }
+
+        func createRemoteSermon(data: SermonSyncData) async throws -> String {
+            _ = data
+            createCallCount += 1
+            recorder.record("remote.create")
+
+            if shouldBlockCreate {
+                await withCheckedContinuation { continuation in
+                    blockedCreateContinuation = continuation
+                }
+            }
+
+            return try createResult.get()
+        }
+
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+            _ = remoteId
+            _ = data
+            recorder.record("remote.update")
+        }
+
+        func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
+            _ = remotePath
+            recorder.record("remote.download")
+            return url
+        }
+
+        func deleteAllRemoteData(for userId: UUID) async throws {
+            _ = userId
+            recorder.record("remote.deleteAllRemoteData")
+        }
+
+        func releaseBlockedCreate() {
+            blockedCreateContinuation?.resume()
+            blockedCreateContinuation = nil
+            shouldBlockCreate = false
+        }
+    }
+
     private func makeModelContext() throws -> ModelContext {
         let schema = Schema([
             Sermon.self,
@@ -22,13 +183,80 @@ struct SyncServiceMergeTests {
         return ModelContext(container)
     }
 
-    @Test func updateLocalSermonPreservesDirtyLocalNotesWhileMergingRemoteNotes() throws {
-        let modelContext = try makeModelContext()
-        let syncService = SyncService(
+    private func makeSyncUser() -> User {
+        User(email: "sync@example.com", name: "Sync User", subscriptionTier: "premium", subscriptionStatus: "active")
+    }
+
+    private func makeSyncService(modelContext: ModelContext) -> SyncService {
+        SyncService(
             modelContext: modelContext,
             supabaseService: MockSupabaseService(),
-            authService: AuthenticationManager.shared
+            authService: MockSyncUserProvider(currentUser: makeSyncUser())
         )
+    }
+
+    private func makeSyncData(for sermon: Sermon, userId: UUID) -> SermonSyncData {
+        SermonSyncData(
+            id: sermon.id,
+            title: sermon.title,
+            audioFileURL: sermon.audioFileURL,
+            date: sermon.date,
+            serviceType: sermon.serviceType,
+            speaker: sermon.speaker,
+            transcriptionStatus: sermon.transcriptionStatus,
+            summaryStatus: sermon.summaryStatus,
+            isArchived: sermon.isArchived,
+            userId: userId,
+            updatedAt: sermon.updatedAt ?? Date(),
+            notes: [],
+            transcript: nil,
+            summary: nil
+        )
+    }
+
+    private func makeRemoteSermon(id: String, localId: UUID, userId: UUID, title: String = "Remote Sermon") -> RemoteSermonData {
+        RemoteSermonData(
+            id: id,
+            localId: localId,
+            title: title,
+            audioFileURL: URL(fileURLWithPath: "/tmp/\(id).m4a"),
+            audioFilePath: nil,
+            date: Date(),
+            serviceType: "Sunday Service",
+            speaker: nil,
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            isArchived: false,
+            userId: userId,
+            updatedAt: Date(),
+            notes: nil,
+            transcript: nil,
+            summary: nil
+        )
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        pollIntervalNanoseconds: UInt64 = 25_000_000,
+        condition: () -> Bool
+    ) async -> Bool {
+        var waited: UInt64 = 0
+
+        while waited < timeoutNanoseconds {
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            waited += pollIntervalNanoseconds
+        }
+
+        return condition()
+    }
+
+    @Test func updateLocalSermonPreservesDirtyLocalNotesWhileMergingRemoteNotes() throws {
+        let modelContext = try makeModelContext()
+        let syncService = makeSyncService(modelContext: modelContext)
 
         let sermon = Sermon(
             title: "Local Sermon",
@@ -142,11 +370,7 @@ struct SyncServiceMergeTests {
 
     @Test func updateLocalSermonPreservesDirtyLocalSummaryWhenRemoteParentIsNewer() throws {
         let modelContext = try makeModelContext()
-        let syncService = SyncService(
-            modelContext: modelContext,
-            supabaseService: MockSupabaseService(),
-            authService: AuthenticationManager.shared
-        )
+        let syncService = makeSyncService(modelContext: modelContext)
 
         let sermon = Sermon(
             title: "Local Sermon",
@@ -206,5 +430,136 @@ struct SyncServiceMergeTests {
         #expect(sermon.summary?.title == "Local Summary Title")
         #expect(sermon.summary?.text == "Local summary body")
         #expect(sermon.summary?.needsSync == true)
+    }
+
+    @Test func syncEnginePushesLocalChangesBeforePullingCloudChanges() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Local Sermon",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(recorder: recorder)
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        #expect(recorder.events == [
+            "local.sermonsNeedingSync",
+            "local.syncData",
+            "remote.create",
+            "local.markSermonSynced",
+            "remote.fetch"
+        ])
+    }
+
+    @Test func syncEngineResolvesCreateConflictsByMatchingLocalId() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Conflict Sermon",
+            audioFileName: "conflict.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(SyncError.remoteAlreadyExists),
+            fetchedRemoteSermonPages: [[makeRemoteSermon(id: "remote-existing", localId: sermon.id, userId: user.id)], []]
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        #expect(localRepository.markedRemoteIds == ["remote-existing"])
+        #expect(recorder.events == [
+            "local.sermonsNeedingSync",
+            "local.syncData",
+            "remote.create",
+            "remote.fetch",
+            "local.markSermonSynced",
+            "remote.fetch"
+        ])
+    }
+
+    @Test func syncEngineCoalescesOverlappingRuns() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Coalesced Sermon",
+            audioFileName: "coalesced.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(recorder: recorder)
+        remoteGateway.shouldBlockCreate = true
+
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        let firstRun = Task {
+            try await engine.sync(userId: user.id)
+        }
+
+        let firstCreateStarted = await waitUntil {
+            remoteGateway.createCallCount == 1
+        }
+        #expect(firstCreateStarted == true)
+
+        let secondRun = Task {
+            try await engine.sync(userId: user.id)
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(remoteGateway.createCallCount == 1)
+
+        remoteGateway.releaseBlockedCreate()
+
+        try await firstRun.value
+        try await secondRun.value
+
+        #expect(remoteGateway.createCallCount == 1)
+        #expect(remoteGateway.fetchCallCount == 1)
+        #expect(recorder.events == [
+            "local.sermonsNeedingSync",
+            "local.syncData",
+            "remote.create",
+            "local.markSermonSynced",
+            "remote.fetch"
+        ])
     }
 }
