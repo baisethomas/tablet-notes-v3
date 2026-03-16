@@ -85,5 +85,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))))
+    ContentView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))))
 }

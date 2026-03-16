@@ -175,9 +175,7 @@ struct RecordingView: View {
     @State private var audioFileURL: URL? = nil
     @State private var isProcessingTranscript = false
     @State private var transcriptProcessingError: String? = nil
-    @ObservedObject private var summaryService = SummaryService.shared
-    @State private var latestSummaryText: String? = nil
-    @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
+    private let processingCoordinator = SermonProcessingCoordinator.shared
     #endif
     
     // Computed properties for the main button
@@ -342,12 +340,12 @@ struct RecordingView: View {
                                     .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
                                 
                                 VStack(spacing: 4) {
-                                    Text("Processing final transcript...")
+                                    Text("Saving recording...")
                                         .font(.subheadline)
                                         .fontWeight(.medium)
                                         .foregroundColor(.adaptivePrimaryText)
                                     
-                                    Text("This may take a moment")
+                                    Text("Transcription will continue in the background")
                                         .font(.caption)
                                         .foregroundColor(.adaptiveSecondaryText)
                                 }
@@ -866,34 +864,23 @@ struct RecordingView: View {
             isProcessingTranscript = true
             transcriptProcessingError = nil
         }
-        
-        transcriptionService.transcribeAudioFileWithResult(url: url) { result in
+
+        let latestNotes = noteService.currentNotes
+        processingCoordinator.handleCompletedRecording(
+            audioURL: url,
+            title: title,
+            date: date,
+            serviceType: serviceType,
+            notes: latestNotes
+        ) { savedId in
             DispatchQueue.main.async {
                 withAnimation(.easeInOut(duration: 0.5)) {
                     isProcessingTranscript = false
+                    transcriptProcessingError = nil
+                    transcript = ""
+                    detectedReferences = []
                 }
-                
-                switch result {
-                case .success(let (text, segments)):
-                    print("[RecordingView] Transcription succeeded. Text length: \(text.count), Segments count: \(segments.count)")
-                    transcript = text
-                    detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: text)
-                    handleTranscriptionResult(title: title, date: date, url: url)(text, segments)
-                    
-                case .failure(let error):
-                    print("[RecordingView] Transcription failed: \(error.localizedDescription)")
-                    withAnimation(.easeInOut(duration: 0.5)) {
-                        // Show user-friendly error message
-                        let nsError = error as NSError
-                        if nsError.domain == NSURLErrorDomain && 
-                           (nsError.code == NSURLErrorNotConnectedToInternet || 
-                            nsError.code == NSURLErrorNetworkConnectionLost) {
-                            transcriptProcessingError = "No internet connection. You can save this recording and process it later when you're back online."
-                        } else {
-                            transcriptProcessingError = error.localizedDescription
-                        }
-                    }
-                }
+                onNext?(savedId)
             }
         }
     }
@@ -901,92 +888,9 @@ struct RecordingView: View {
     private func saveRecordingForLaterProcessing(audioURL: URL) {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
-        
-        // Create sermon without transcript first
-        let sermonId = UUID()
-        let latestNotes = noteService.currentNotes
-        
-        print("[RecordingView] Saving recording for later processing: \(title)")
-        
-        // Save to local storage using sermonService
-        sermonService.saveSermon(
-            title: title,
-            audioFileURL: audioURL,
-            date: date,
-            serviceType: serviceType,
-            transcript: nil,
-            notes: latestNotes,
-            summary: nil,
-            transcriptionStatus: "pending", // Mark as pending for later processing
-            summaryStatus: "pending",
-            id: sermonId,
-            completion: { savedId in
-                onNext?(savedId)
-            }
-        )
 
-        // Add to retry queue
-        let pendingTranscription = PendingTranscription(
-            audioFileURL: audioURL,
-            sermonTitle: title,
-            sermonDate: date,
-            serviceType: serviceType
-        )
-        transcriptionRetryService.addPendingTranscription(pendingTranscription)
-
-        // Clear the error and reset UI
-        withAnimation(.easeInOut(duration: 0.5)) {
-            transcriptProcessingError = nil
-            isRecordingStarted = false
-            isPaused = false
-            transcript = ""
-        }
-    }
-
-    private func handleTranscriptionResult(title: String, date: Date, url: URL) -> (String?, [TranscriptSegment]) -> Void {
-        return { text, segments in
-            guard let text = text else { return }
-            let transcriptModel = Transcript(text: text, segments: segments)
-            let summaryModel = Summary(text: "", type: serviceType, status: "processing")
-            let sermonId = UUID()
-
-            // Get the latest notes from the service to ensure we have all notes
-            // IMPORTANT: Capture notes snapshot BEFORE any async operations
-            let latestNotes = noteService.currentNotes
-            print("[DEBUG] handleTranscriptionResult: creating sermon with transcriptionStatus = complete")
-            print("[DEBUG] handleTranscriptionResult: Current notes array has \(notes.count) notes")
-            print("[DEBUG] handleTranscriptionResult: NoteService has \(latestNotes.count) notes")
-            print("[DEBUG] handleTranscriptionResult: Using latest notes from service")
-            for (index, note) in latestNotes.enumerated() {
-                print("[DEBUG] RecordingView Note \(index): '\(note.text)' at \(note.timestamp)s")
-            }
-
-            // Save sermon with notes captured above
-            // Completion handler fires AFTER modelContext.save() succeeds
-            print("[RecordingView] Starting summarization for transcript length: \(text.count) via SermonService")
-            sermonService.saveSermon(
-                title: title,
-                audioFileURL: url,
-                date: date,
-                serviceType: serviceType,
-                speaker: nil,
-                transcript: transcriptModel,
-                notes: latestNotes,
-                summary: summaryModel,
-                transcriptionStatus: "complete",
-                summaryStatus: "processing",
-                id: sermonId,
-                completion: { savedId in
-                    // Trigger summarization using sermon ID only — no phantom @Model objects
-                    sermonService.generateSummaryForSermon(
-                        sermonId: savedId,
-                        transcript: text,
-                        serviceType: serviceType
-                    )
-                    onNext?(savedId)
-                }
-            )
-        }
+        print("[RecordingView] Saving recording for background processing: \(title)")
+        processTranscription(title: title, date: date, url: audioURL)
     }
     
     // MARK: - Scripture Insertion
@@ -1023,5 +927,5 @@ struct RecordingView: View {
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService(), transcriptionService: TranscriptionService())
+    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService(), transcriptionService: TranscriptionService())
 }

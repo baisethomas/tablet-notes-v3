@@ -2,11 +2,12 @@ import Foundation
 import UIKit
 import Network
 
+@MainActor
 class BackgroundSyncManager: ObservableObject {
     
     // MARK: - Properties
     
-    private let syncService: SyncServiceProtocol
+    private let processingCoordinator: SermonProcessingCoordinator
     private let networkMonitor = NWPathMonitor()
     private let networkQueue = DispatchQueue(label: "NetworkMonitor")
     
@@ -27,8 +28,9 @@ class BackgroundSyncManager: ObservableObject {
     
     // MARK: - Initialization
     
-    init(syncService: SyncServiceProtocol) {
-        self.syncService = syncService
+    init(processingCoordinator: SermonProcessingCoordinator? = nil) {
+        self.processingCoordinator = processingCoordinator ?? SermonProcessingCoordinator.shared
+        self.processingCoordinator.updateNetworkAvailability(false)
         setupNetworkMonitoring()
         setupAppLifecycleObservers()
         setupPeriodicSync()
@@ -53,8 +55,9 @@ class BackgroundSyncManager: ObservableObject {
     
     private func handleNetworkStatusChange(_ path: NWPath) {
         let newStatus: NetworkStatus
+        let isNetworkAvailable = path.status == .satisfied
         
-        if path.status == .satisfied {
+        if isNetworkAvailable {
             if path.isExpensive {
                 newStatus = .expensive
             } else {
@@ -63,13 +66,17 @@ class BackgroundSyncManager: ObservableObject {
         } else {
             newStatus = .disconnected
         }
+
+        processingCoordinator.updateNetworkAvailability(isNetworkAvailable)
         
         if newStatus != networkStatus {
             networkStatus = newStatus
             
-            // Trigger sync when network becomes available
-            if newStatus == .connected {
-                scheduleImmediateSync()
+            // Trigger processing recovery and sync when network becomes available.
+            if newStatus == .connected || (newStatus == .expensive && shouldSyncOnCellular()) {
+                Task { @MainActor in
+                    await processingCoordinator.handleNetworkBecameAvailable()
+                }
             }
         }
     }
@@ -105,7 +112,9 @@ class BackgroundSyncManager: ObservableObject {
     
     @objc private func appWillEnterForeground() {
         endBackgroundSync()
-        scheduleImmediateSync()
+        Task { @MainActor in
+            await processingCoordinator.handleAppDidBecomeActive()
+        }
     }
     
     @objc private func appWillTerminate() {
@@ -122,7 +131,7 @@ class BackgroundSyncManager: ObservableObject {
         }
         
         // Perform sync if network is available
-        if networkStatus == .connected {
+        if canSyncNow() {
             Task {
                 await performBackgroundSync()
             }
@@ -138,12 +147,8 @@ class BackgroundSyncManager: ObservableObject {
     
     private func performBackgroundSync() async {
         guard isBackgroundSyncEnabled else { return }
-        
-        do {
-            await syncService.syncAllData()
-        } catch {
-            print("[BackgroundSyncManager] Background sync failed: \(error)")
-        }
+
+        await processingCoordinator.handleBackgroundRefresh()
         
         endBackgroundSync()
     }
@@ -153,26 +158,28 @@ class BackgroundSyncManager: ObservableObject {
     private func setupPeriodicSync() {
         // Sync every 1 minute when app is active for more responsive cross-device experience
         syncTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.schedulePeriodicSync()
+            Task { @MainActor [weak self] in
+                self?.schedulePeriodicSync()
+            }
         }
     }
     
     private func schedulePeriodicSync() {
         guard isBackgroundSyncEnabled,
-              networkStatus == .connected else { return }
+              canSyncNow() else { return }
         
-        Task {
-            await syncService.syncAllData()
+        Task { @MainActor in
+            await processingCoordinator.handlePeriodicMaintenance()
         }
     }
     
     // MARK: - Manual Sync Controls
     
     func scheduleImmediateSync() {
-        guard networkStatus == .connected else { return }
+        guard canSyncNow() else { return }
         
-        Task {
-            await syncService.syncAllData()
+        Task { @MainActor in
+            await processingCoordinator.triggerManualSync()
         }
     }
     

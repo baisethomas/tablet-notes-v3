@@ -1,9 +1,7 @@
 import Foundation
 import SwiftData
-import Network
-import Combine
 
-struct PendingTranscription: Codable, Identifiable {
+private struct LegacyPendingTranscription: Codable, Identifiable {
     let id: UUID
     let audioFileURL: URL
     let sermonTitle: String
@@ -11,63 +9,26 @@ struct PendingTranscription: Codable, Identifiable {
     let serviceType: String
     let createdAt: Date
     let retryCount: Int
-    
-    init(audioFileURL: URL, sermonTitle: String, sermonDate: Date, serviceType: String) {
-        self.id = UUID()
-        self.audioFileURL = audioFileURL
-        self.sermonTitle = sermonTitle
-        self.sermonDate = sermonDate
-        self.serviceType = serviceType
-        self.createdAt = Date()
-        self.retryCount = 0
-    }
-    
-    private init(id: UUID, audioFileURL: URL, sermonTitle: String, sermonDate: Date, serviceType: String, createdAt: Date, retryCount: Int) {
-        self.id = id
-        self.audioFileURL = audioFileURL
-        self.sermonTitle = sermonTitle
-        self.sermonDate = sermonDate
-        self.serviceType = serviceType
-        self.createdAt = createdAt
-        self.retryCount = retryCount
-    }
-    
-    func withIncrementedRetryCount() -> PendingTranscription {
-        return PendingTranscription(
-            id: self.id,
-            audioFileURL: self.audioFileURL,
-            sermonTitle: self.sermonTitle,
-            sermonDate: self.sermonDate,
-            serviceType: self.serviceType,
-            createdAt: self.createdAt,
-            retryCount: self.retryCount + 1
-        )
-    }
 }
 
 @MainActor
 class TranscriptionRetryService: ObservableObject {
     static let shared = TranscriptionRetryService()
-    
-    @Published var pendingTranscriptions: [PendingTranscription] = []
+
     @Published var isProcessingQueue = false
-    
-    // Notification for when transcription completes
+
     static let transcriptionCompletedNotification = Notification.Name("TranscriptionCompleted")
-    
-    private let networkMonitor = NWPathMonitor()
-    private let networkQueue = DispatchQueue(label: "NetworkMonitor")
+
     private var isNetworkAvailable = false
-    
+
     private let userDefaults = UserDefaults.standard
     private let pendingTranscriptionsKey = "PendingTranscriptions"
     private var modelContext: ModelContext?
-    private var cancellables = Set<AnyCancellable>()
-    
-    private init() {
-        loadPendingTranscriptions()
-        startNetworkMonitoring()
-    }
+    private let maxRetries = 3
+    var transcriptionRunner: ((URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void)?
+    var summaryEnqueuer: (@MainActor (UUID) -> Void)?
+
+    init() {}
 
     private func upsertTranscript(
         on sermon: Sermon,
@@ -84,211 +45,268 @@ class TranscriptionRetryService: ObservableObject {
 
             existingTranscript.text = text
             existingTranscript.segments = segments
+            existingTranscript.updatedAt = Date()
+            existingTranscript.needsSync = true
             return
         }
 
-        let transcript = Transcript(text: text, segments: segments)
+        let transcript = Transcript(
+            text: text,
+            segments: segments,
+            updatedAt: Date(),
+            needsSync: true
+        )
         context.insert(transcript)
         sermon.transcript = transcript
     }
-    
+
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
     }
-    
-    deinit {
-        networkMonitor.cancel()
+
+    func overrideNetworkAvailability(_ isAvailable: Bool) {
+        let wasAvailable = isNetworkAvailable
+        isNetworkAvailable = isAvailable
+        if !wasAvailable && isAvailable {
+            processQueue()
+        }
     }
-    
-    private func startNetworkMonitoring() {
-        networkMonitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
-                let wasAvailable = self?.isNetworkAvailable ?? false
-                self?.isNetworkAvailable = path.status == .satisfied
-                
-                // If network just became available and we have pending transcriptions, process them
-                if !wasAvailable && path.status == .satisfied && !(self?.pendingTranscriptions.isEmpty ?? true) {
-                    self?.processQueue()
+
+    func migrateLegacyPendingTranscriptionsIfNeeded() {
+        guard let context = modelContext,
+              let data = userDefaults.data(forKey: pendingTranscriptionsKey) else {
+            return
+        }
+
+        do {
+            let legacyItems = try JSONDecoder().decode([LegacyPendingTranscription].self, from: data)
+            guard !legacyItems.isEmpty else {
+                userDefaults.removeObject(forKey: pendingTranscriptionsKey)
+                return
+            }
+
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+
+            for item in legacyItems {
+                guard let sermon = sermons.first(where: {
+                    $0.audioFileName == item.audioFileURL.lastPathComponent &&
+                    $0.serviceType == item.serviceType &&
+                    $0.transcriptionStatus != "complete"
+                }) else {
+                    print("[TranscriptionRetryService] No matching sermon found for legacy pending transcription \(item.audioFileURL.lastPathComponent)")
+                    continue
+                }
+
+                upsertJob(for: sermon.id, resetAttempts: false)
+            }
+
+            try? context.save()
+            userDefaults.removeObject(forKey: pendingTranscriptionsKey)
+            print("[TranscriptionRetryService] Migrated legacy pending transcription queue to ProcessingJob records")
+        } catch {
+            print("[TranscriptionRetryService] Failed to migrate legacy pending transcriptions: \(error)")
+        }
+    }
+
+    func recoverIncompleteTranscriptions() {
+        guard let context = modelContext else { return }
+
+        do {
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            for sermon in sermons where sermon.transcriptionStatus != "complete" && sermon.audioFileExists {
+                if job(for: sermon.id) == nil {
+                    upsertJob(for: sermon.id, resetAttempts: false)
+                    if sermon.transcriptionStatus == "processing" {
+                        sermon.transcriptionStatus = "pending"
+                    }
                 }
             }
+            try? context.save()
+        } catch {
+            print("[TranscriptionRetryService] Failed to recover incomplete transcriptions: \(error)")
         }
-        networkMonitor.start(queue: networkQueue)
     }
-    
-    func addPendingTranscription(_ transcription: PendingTranscription) {
-        pendingTranscriptions.append(transcription)
-        savePendingTranscriptions()
-        
-        // Try to process immediately if network is available
+
+    func enqueueTranscription(for sermonId: UUID) {
+        guard let context = modelContext,
+              let sermon = fetchSermon(withId: sermonId, in: context) else {
+            print("[TranscriptionRetryService] Cannot enqueue transcription; sermon \(sermonId) not found")
+            return
+        }
+
+        guard sermon.audioFileExists else {
+            print("[TranscriptionRetryService] Cannot enqueue transcription; audio file missing for sermon \(sermonId)")
+            return
+        }
+
+        upsertJob(for: sermonId, resetAttempts: true)
+        sermon.transcriptionStatus = "pending"
+        sermon.updatedAt = Date()
+        sermon.needsSync = true
+        sermon.syncStatus = "pending"
+        try? context.save()
+
         if isNetworkAvailable {
             processQueue()
         }
     }
-    
-    func removePendingTranscription(withId id: UUID) {
-        pendingTranscriptions.removeAll { $0.id == id }
-        savePendingTranscriptions()
-    }
-    
+
     func retryTranscriptionIfNeeded(for sermon: Sermon) {
-        // Check if there's a pending transcription for this sermon's audio file
-        let hasPendingTranscription = pendingTranscriptions.contains { pending in
-            pending.audioFileURL == sermon.audioFileURL
+        guard sermon.transcriptionStatus == "failed" || sermon.transcriptionStatus == "pending" else {
+            return
         }
-        
-        // If sermon has failed or pending transcription status and no pending retry, add it to queue
-        if (sermon.transcriptionStatus == "failed" || sermon.transcriptionStatus == "pending") && !hasPendingTranscription && isNetworkAvailable {
-            let pendingTranscription = PendingTranscription(
-                audioFileURL: sermon.audioFileURL,
-                sermonTitle: sermon.title,
-                sermonDate: sermon.date,
-                serviceType: sermon.serviceType
-            )
-            addPendingTranscription(pendingTranscription)
-        }
+        guard job(for: sermon.id) == nil else { return }
+        enqueueTranscription(for: sermon.id)
     }
-    
+
     func processQueue() {
-        guard !isProcessingQueue && !pendingTranscriptions.isEmpty && isNetworkAvailable else { return }
-        
+        guard !isProcessingQueue,
+              isNetworkAvailable,
+              let context = modelContext,
+              let nextJob = nextRunnableJob(in: context),
+              let sermon = fetchSermon(withId: nextJob.sermonId, in: context) else {
+            return
+        }
+
         isProcessingQueue = true
-        
-        let transcriptionService = TranscriptionService()
-        let maxRetries = 3
-        
-        // Process one at a time to avoid overwhelming the service
-        if let nextTranscription = pendingTranscriptions.first {
-            print("[TranscriptionRetryService] Processing pending transcription: \(nextTranscription.sermonTitle)")
-            
-            transcriptionService.transcribeAudioFileWithResult(url: nextTranscription.audioFileURL) { [weak self] result in
-                Task { @MainActor in
-                    switch result {
-                    case .success(let (text, segments)):
-                        print("[TranscriptionRetryService] Successfully processed pending transcription")
-                        
-                        // Create the sermon with transcription
-                        if let context = self?.modelContext {
-                            let sermon = Sermon(
-                                title: nextTranscription.sermonTitle,
-                                audioFileURL: nextTranscription.audioFileURL,
-                                date: nextTranscription.sermonDate,
-                                serviceType: nextTranscription.serviceType,
-                                speaker: "", // Default empty speaker
-                                transcriptionStatus: "complete"
-                            )
-                            
-                            // Set transcription status and create transcript
-                            sermon.transcriptionStatus = "complete"
+        nextJob.markRunning()
+        sermon.transcriptionStatus = "processing"
+        sermon.updatedAt = Date()
+        sermon.needsSync = true
+        sermon.syncStatus = "pending"
+        try? context.save()
 
-                            let transcriptSegments = segments.map { segment in
-                                TranscriptSegment(
-                                    text: segment.text,
-                                    startTime: segment.startTime,
-                                    endTime: segment.endTime
-                                )
-                            }
+        let runner = transcriptionRunner ?? { url, completion in
+            let transcriptionService = TranscriptionService()
+            transcriptionService.transcribeAudioFileWithResult(url: url, completion: completion)
+        }
 
-                            // CRITICAL: Mark sermon for sync so transcript gets pushed to backend
-                            sermon.needsSync = true
-                            sermon.updatedAt = Date()
-                            sermon.syncStatus = "pending"
-
-                            // Save to SwiftData
-                            context.insert(sermon)
-                            self?.upsertTranscript(on: sermon, in: context, text: text, segments: transcriptSegments)
-                            try? context.save()
-
-                            print("[TranscriptionRetryService] ✅ Marked sermon for sync after transcript completion")
-
-                            // Notify UI that transcription completed
-                            NotificationCenter.default.post(
-                                name: TranscriptionRetryService.transcriptionCompletedNotification,
-                                object: sermon.id
-                            )
-
-                            // Generate summary after successful transcription
-                            self?.generateSummaryForSermon(sermon)
-                        }
-                        
-                        self?.removePendingTranscription(withId: nextTranscription.id)
-                        
-                    case .failure(let error):
-                        print("[TranscriptionRetryService] Failed to process pending transcription: \(error.localizedDescription)")
-                        
-                        if nextTranscription.retryCount < maxRetries {
-                            // Update retry count and move to end of queue
-                            self?.removePendingTranscription(withId: nextTranscription.id)
-                            let updatedTranscription = nextTranscription.withIncrementedRetryCount()
-                            self?.pendingTranscriptions.append(updatedTranscription)
-                            self?.savePendingTranscriptions()
-                        } else {
-                            // Max retries reached, remove from queue
-                            print("[TranscriptionRetryService] Max retries reached for transcription, removing from queue")
-                            self?.removePendingTranscription(withId: nextTranscription.id)
-                        }
-                    }
-                    
-                    self?.isProcessingQueue = false
-                    
-                    // Continue processing if there are more items
-                    if !(self?.pendingTranscriptions.isEmpty ?? true) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            Task { @MainActor in
-                                self?.processQueue()
-                            }
-                        }
-                    }
+        runner(sermon.audioFileURL) { [weak self] result in
+            Task { @MainActor in
+                guard let self, let context = self.modelContext else { return }
+                guard let refreshedJob = self.fetchJob(withId: nextJob.id, in: context),
+                      let refreshedSermon = self.fetchSermon(withId: nextJob.sermonId, in: context) else {
+                    self.isProcessingQueue = false
+                    return
                 }
+
+                switch result {
+                case .success(let (text, segments)):
+                    let transcriptSegments = segments.map { segment in
+                        TranscriptSegment(
+                            id: segment.id,
+                            text: segment.text,
+                            startTime: segment.startTime,
+                            endTime: segment.endTime
+                        )
+                    }
+
+                    self.upsertTranscript(on: refreshedSermon, in: context, text: text, segments: transcriptSegments)
+                    refreshedSermon.transcriptionStatus = "complete"
+                    refreshedSermon.summaryStatus = "processing"
+                    refreshedSermon.needsSync = true
+                    refreshedSermon.updatedAt = Date()
+                    refreshedSermon.syncStatus = "pending"
+                    refreshedJob.markComplete()
+                    try? context.save()
+
+                    NotificationCenter.default.post(
+                        name: TranscriptionRetryService.transcriptionCompletedNotification,
+                        object: refreshedSermon.id
+                    )
+
+                    if let summaryEnqueuer = self.summaryEnqueuer {
+                        summaryEnqueuer(refreshedSermon.id)
+                    } else {
+                        SermonProcessingCoordinator.shared.enqueueSummary(for: refreshedSermon.id)
+                    }
+
+                case .failure(let error):
+                    let nextAttemptAt: Date?
+                    if refreshedJob.attemptCount + 1 >= self.maxRetries {
+                        nextAttemptAt = nil
+                        refreshedSermon.transcriptionStatus = "failed"
+                    } else {
+                        let retryDelayMinutes = pow(2.0, Double(refreshedJob.attemptCount + 1))
+                        nextAttemptAt = Date().addingTimeInterval(retryDelayMinutes * 60)
+                        refreshedSermon.transcriptionStatus = "pending"
+                        self.scheduleQueueProcessing(after: retryDelayMinutes * 60)
+                    }
+
+                    refreshedSermon.needsSync = true
+                    refreshedSermon.updatedAt = Date()
+                    refreshedSermon.syncStatus = "pending"
+                    refreshedJob.markFailed(
+                        error: error.localizedDescription,
+                        nextAttemptAt: nextAttemptAt
+                    )
+                    try? context.save()
+                }
+
+                self.isProcessingQueue = false
+                self.processQueue()
             }
         }
     }
-    
-    private func savePendingTranscriptions() {
-        do {
-            let data = try JSONEncoder().encode(pendingTranscriptions)
-            userDefaults.set(data, forKey: pendingTranscriptionsKey)
-        } catch {
-            print("[TranscriptionRetryService] Failed to save pending transcriptions: \(error)")
+
+    private func scheduleQueueProcessing(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            Task { @MainActor in
+                self?.processQueue()
+            }
         }
     }
-    
-    private func loadPendingTranscriptions() {
-        guard let data = userDefaults.data(forKey: pendingTranscriptionsKey) else { return }
-        
-        do {
-            pendingTranscriptions = try JSONDecoder().decode([PendingTranscription].self, from: data)
-            print("[TranscriptionRetryService] Loaded \(pendingTranscriptions.count) pending transcriptions")
-        } catch {
-            print("[TranscriptionRetryService] Failed to load pending transcriptions: \(error)")
-        }
-    }
-    
-    // Clean up old pending transcriptions (older than 7 days)
-    func cleanupOldTranscriptions() {
-        let sevenDaysAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        let originalCount = pendingTranscriptions.count
-        
-        pendingTranscriptions.removeAll { $0.createdAt < sevenDaysAgo }
-        
-        if pendingTranscriptions.count != originalCount {
-            savePendingTranscriptions()
-            print("[TranscriptionRetryService] Cleaned up \(originalCount - pendingTranscriptions.count) old pending transcriptions")
-        }
-    }
-    
-    private func generateSummaryForSermon(_ sermon: Sermon) {
-        guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
-            print("[TranscriptionRetryService] No transcript available for summary generation")
+
+    private func upsertJob(for sermonId: UUID, resetAttempts: Bool) {
+        guard let context = modelContext else { return }
+
+        if let existingJob = job(for: sermonId) {
+            if resetAttempts {
+                existingJob.resetForRetry()
+            } else {
+                existingJob.status = .queued
+                existingJob.nextAttemptAt = nil
+                existingJob.updatedAt = Date()
+            }
             return
         }
-        
-        // Use SummaryRetryService to handle summary generation
-        // This ensures proper retry logic and service-level handling
-        let pendingSummary = PendingSummary(
-            sermonId: sermon.id,
-            transcript: transcript.text,
-            serviceType: sermon.serviceType
+
+        let job = ProcessingJob(sermonId: sermonId, kind: .transcription)
+        context.insert(job)
+    }
+
+    private func job(for sermonId: UUID) -> ProcessingJob? {
+        guard let context = modelContext else { return nil }
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
         )
-        SummaryRetryService.shared.addPendingSummary(pendingSummary)
+        return (try? context.fetch(descriptor))?.first(where: {
+            $0.sermonId == sermonId &&
+            $0.kind == .transcription &&
+            $0.status != .complete
+        })
+    }
+
+    private func nextRunnableJob(in context: ModelContext) -> ProcessingJob? {
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        return (try? context.fetch(descriptor))?.first(where: {
+            $0.kind == .transcription && $0.isRunnable()
+        })
+    }
+
+    private func fetchSermon(withId id: UUID, in context: ModelContext) -> Sermon? {
+        let descriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
+            sermon.id == id
+        })
+        return try? context.fetch(descriptor).first
+    }
+
+    private func fetchJob(withId id: UUID, in context: ModelContext) -> ProcessingJob? {
+        let descriptor = FetchDescriptor<ProcessingJob>(predicate: #Predicate { job in
+            job.id == id
+        })
+        return try? context.fetch(descriptor).first
     }
 }

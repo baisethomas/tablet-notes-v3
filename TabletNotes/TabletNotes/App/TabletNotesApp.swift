@@ -30,6 +30,7 @@ struct TabletNotesApp: App {
                 Note.self, 
                 Transcript.self, 
                 Summary.self, 
+                ProcessingJob.self,
                 TranscriptSegment.self,
                 User.self,
                 UserNotificationSettings.self
@@ -66,6 +67,7 @@ struct TabletNotesApp: App {
                     Note.self, 
                     Transcript.self, 
                     Summary.self, 
+                    ProcessingJob.self,
                     TranscriptSegment.self,
                     User.self,
                     UserNotificationSettings.self

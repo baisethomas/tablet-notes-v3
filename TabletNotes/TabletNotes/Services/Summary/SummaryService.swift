@@ -5,6 +5,11 @@ import Supabase
 class SummaryService: ObservableObject, SummaryServiceProtocol {
     static let shared = SummaryService()
 
+    struct SummaryGenerationResult {
+        let title: String?
+        let summary: String
+    }
+
     private let titleSubject = CurrentValueSubject<String?, Never>(nil)
     private let summarySubject = CurrentValueSubject<String?, Never>(nil)
     let statusSubject = CurrentValueSubject<String, Never>("idle") // idle, pending, complete, failed
@@ -13,10 +18,11 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
     var statusPublisher: AnyPublisher<String, Never> { statusSubject.eraseToAnyPublisher() }
     private let errorSubject = CurrentValueSubject<Error?, Never>(nil)
     var errorPublisher: AnyPublisher<Error?, Never> { errorSubject.eraseToAnyPublisher() }
-    private var cancellables = Set<AnyCancellable>()
+
     private var lastTranscript: String?
     private var lastType: String?
-    private var currentTask: URLSessionDataTask?
+    private var currentRequestTask: Task<Void, Never>?
+    private var currentRequestId: UUID?
     private var isRequestInProgress = false
 
     private enum SummaryError: LocalizedError {
@@ -46,8 +52,29 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
                 return "Authentication failed: \(message)"
             }
         }
+
+        var userFacingMessage: String {
+            switch self {
+            case .transcriptTooShort:
+                return "[Error] Transcript is too short for meaningful summarization. Please ensure the recording captured audio properly."
+            case .invalidRequest:
+                return "[Error] Failed to create summarize request."
+            case .network(let message):
+                return "[Error] \(message)"
+            case .server(let code) where code == 502:
+                return "[Error] The summarization service timed out. This is common with longer transcripts. Please try again with a shorter transcript or contact support."
+            case .server(let code):
+                return "[Error] Server error (\(code)). Please try again later."
+            case .noData:
+                return "[Error] No data received from Netlify summarize endpoint."
+            case .parseFailure:
+                return "[Error] Failed to parse response from summarize endpoint."
+            case .auth(let message):
+                return "[Error] Authentication failed: \(message)"
+            }
+        }
     }
-    
+
     private let endpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/summarize"
     private let supabase: SupabaseClient
 
@@ -55,13 +82,11 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         self.supabase = supabase
     }
 
-    // Helper function to get auth token with automatic refresh
     private func getAuthToken() async throws -> String {
         do {
             let session = try await supabase.auth.session
             return session.accessToken
         } catch {
-            // Token might be expired, try to refresh
             print("[SummaryService] Session expired or invalid, attempting to refresh token...")
             do {
                 let refreshedSession = try await supabase.auth.refreshSession()
@@ -74,287 +99,233 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         }
     }
 
+    private func validateTranscript(_ transcript: String) throws -> String {
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTranscript.count >= 50 else {
+            throw SummaryError.transcriptTooShort(trimmedTranscript.count)
+        }
+        return trimmedTranscript
+    }
+
+    private func makeRequest(
+        transcript: String,
+        type: String,
+        accessToken: String
+    ) throws -> URLRequest {
+        guard let url = URL(string: endpoint) else {
+            throw SummaryError.invalidRequest
+        }
+
+        let requestBody: [String: Any] = [
+            "text": transcript,
+            "serviceType": type
+        ]
+
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            throw SummaryError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = httpBody
+        request.timeoutInterval = 60.0
+        return request
+    }
+
+    private func parseSummaryResponse(data: Data, response: URLResponse?) throws -> SummaryGenerationResult {
+        if let httpResponse = response as? HTTPURLResponse {
+            print("[SummaryService] Netlify summarize HTTP status: \(httpResponse.statusCode)")
+
+            if httpResponse.statusCode == 502 {
+                throw SummaryError.server(502)
+            }
+
+            if httpResponse.statusCode >= 500 {
+                throw SummaryError.server(httpResponse.statusCode)
+            }
+        }
+
+        guard !data.isEmpty else {
+            throw SummaryError.noData
+        }
+
+        if let jsonString = String(data: data, encoding: .utf8) {
+            print("[SummaryService] Netlify summarize response (full): \(jsonString)")
+            print("[SummaryService] Response length: \(jsonString.count) characters")
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SummaryError.parseFailure
+        }
+
+        print("[SummaryService] Successfully parsed JSON response")
+        print("[SummaryService] JSON keys: \(json.keys.joined(separator: ", "))")
+
+        let rawSummary: String
+        let rawTitle: String?
+
+        if let success = json["success"] as? Bool {
+            print("[SummaryService] Found 'success' key: \(success)")
+
+            guard success,
+                  let dataDict = json["data"] as? [String: Any],
+                  let summaryText = dataDict["summary"] as? String else {
+                throw SummaryError.parseFailure
+            }
+
+            print("[SummaryService] Found 'data' key with keys: \(dataDict.keys.joined(separator: ", "))")
+            rawSummary = summaryText
+            rawTitle = dataDict["title"] as? String
+        } else if let summaryText = json["summary"] as? String {
+            print("[SummaryService] Using fallback flat summary structure")
+            rawSummary = summaryText
+            rawTitle = json["title"] as? String
+        } else {
+            throw SummaryError.parseFailure
+        }
+
+        let summary = rawSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else {
+            throw SummaryError.parseFailure
+        }
+
+        let title = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("[SummaryService] Summary length: \(summary.count) characters")
+        if let title, !title.isEmpty {
+            print("[SummaryService] Title: \(title)")
+        } else {
+            print("[SummaryService] No title returned from summarize endpoint")
+        }
+
+        return SummaryGenerationResult(
+            title: title?.isEmpty == true ? nil : title,
+            summary: summary
+        )
+    }
+
+    private func mapRequestError(_ error: Error) -> Error {
+        if error is CancellationError {
+            return error
+        }
+
+        if let urlError = error as? URLError {
+            if urlError.code == .cancelled {
+                return CancellationError()
+            }
+
+            if urlError.code == .timedOut {
+                return SummaryError.network(
+                    "The summarization service is taking longer than expected. This often happens with longer transcripts. Please try again or contact support if the issue persists."
+                )
+            }
+
+            return SummaryError.network(urlError.localizedDescription)
+        }
+
+        if error is SummaryError {
+            return error
+        }
+
+        return SummaryError.network(error.localizedDescription)
+    }
+
+    private func beginPublishedRequest(
+        transcript: String,
+        type: String,
+        requestId: UUID
+    ) {
+        lastTranscript = transcript
+        lastType = type
+        currentRequestId = requestId
+        isRequestInProgress = true
+        statusSubject.send("pending")
+        titleSubject.send(nil)
+        summarySubject.send(nil)
+        errorSubject.send(nil)
+    }
+
+    private func finishPublishedRequest(requestId: UUID) {
+        guard currentRequestId == requestId else { return }
+        currentRequestTask = nil
+        currentRequestId = nil
+        isRequestInProgress = false
+    }
+
+    private func publishFailure(_ error: Error, requestId: UUID) {
+        guard currentRequestId == requestId else { return }
+
+        let summaryError = (error as? SummaryError) ?? SummaryError.network(error.localizedDescription)
+        statusSubject.send("failed")
+        summarySubject.send(summaryError.userFacingMessage)
+        errorSubject.send(summaryError)
+        finishPublishedRequest(requestId: requestId)
+    }
+
+    func generateSummaryResult(for transcript: String, type: String) async throws -> SummaryGenerationResult {
+        let trimmedTranscript = try validateTranscript(transcript)
+        let accessToken = try await getAuthToken()
+        let request = try makeRequest(transcript: trimmedTranscript, type: type, accessToken: accessToken)
+
+        print("[SummaryService] Request details:")
+        print("- Transcript length: \(trimmedTranscript.count) characters")
+        print("- Service type: \(type)")
+        print("- First 200 chars: \(String(trimmedTranscript.prefix(200)))")
+        if trimmedTranscript.count > 200 {
+            print("- Last 200 chars: \(String(trimmedTranscript.suffix(200)))")
+        }
+        print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return try parseSummaryResponse(data: data, response: response)
+        } catch {
+            throw mapRequestError(error)
+        }
+    }
+
     func generateSummary(for transcript: String, type: String) {
         print("[SummaryService] Called generateSummary with transcript length: \(transcript.count), type: \(type)")
 
-        // If a request is in progress, check if it's for the same content
         if isRequestInProgress {
-            // If it's the same transcript, let the current request complete (observers will get the result)
             if lastTranscript == transcript && lastType == type {
-                print("[SummaryService] ℹ️ Request already in progress for same content, continuing...")
+                print("[SummaryService] Request already in progress for identical content")
                 return
             }
 
-            // Different transcript - cancel the old request and start new one
-            print("[SummaryService] ⚠️ Cancelling previous request to process new transcript")
-            currentTask?.cancel()
-            currentTask = nil
+            print("[SummaryService] Cancelling previous summary request to start a new one")
+            currentRequestTask?.cancel()
+            currentRequestTask = nil
+            currentRequestId = nil
             isRequestInProgress = false
         }
 
-        lastTranscript = transcript
-        lastType = type
-        
-        // Validate transcript content
-        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedTranscript.count < 50 {
-            print("[SummaryService] ERROR: Transcript too short (\(trimmedTranscript.count) chars)")
-            DispatchQueue.main.async {
-                self.statusSubject.send("failed")
-                self.summarySubject.send("[Error] Transcript is too short for meaningful summarization. Please ensure the recording captured audio properly.")
-                self.errorSubject.send(SummaryError.transcriptTooShort(trimmedTranscript.count))
-            }
-            return
-        }
-        
-        // Reset state before starting new request
-        DispatchQueue.main.async {
-            self.statusSubject.send("pending")
-            self.titleSubject.send(nil)
-            self.summarySubject.send(nil)
-            self.errorSubject.send(nil)
-        }
+        let requestId = UUID()
+        beginPublishedRequest(transcript: transcript, type: type, requestId: requestId)
 
-        // Mark request as in progress
-        isRequestInProgress = true
+        currentRequestTask = Task { [weak self] in
+            guard let self else { return }
 
-        Task {
             do {
-                // Get authentication token with automatic refresh
-                let accessToken = try await getAuthToken()
+                let result = try await self.generateSummaryResult(for: transcript, type: type)
+                guard !Task.isCancelled else { return }
 
-                let requestBody: [String: Any] = [
-                    "text": transcript,
-                    "serviceType": type
-                ]
-
-                // Debug logging
-                print("[SummaryService] Request details:")
-                print("- Transcript length: \(transcript.count) characters")
-                print("- Service type: \(type)")
-                print("- First 200 chars: \(String(transcript.prefix(200)))")
-                if transcript.count > 200 {
-                    print("- Last 200 chars: \(String(transcript.suffix(200)))")
-                }
-                guard let url = URL(string: endpoint),
-                      let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
-                    print("[SummaryService] ERROR: Failed to create request body or URL")
-                    self.isRequestInProgress = false
-                    DispatchQueue.main.async {
-                        self.statusSubject.send("failed")
-                        self.errorSubject.send(SummaryError.invalidRequest)
-                    }
-                    return
-                }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-                request.httpBody = httpBody
-                request.timeoutInterval = 60.0 // Increase timeout to 60 seconds
-                print("[SummaryService] Sending authenticated request to Netlify summarize endpoint...")
-                let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                    print("[SummaryService] 🎯 Completion handler called! hasData=\(data != nil), hasResponse=\(response != nil), hasError=\(error != nil)")
-                    guard let self = self else {
-                        print("[SummaryService] ⚠️ self is nil in completion handler")
-                        return
-                    }
-
-                    // Ensure request flag is reset when complete
-                    defer { self.isRequestInProgress = false }
-
-                    if let error = error {
-                        print("[SummaryService] ERROR: \(error.localizedDescription)")
-                        let errorMessage: String
-                        if error.localizedDescription.contains("timeout") || error.localizedDescription.contains("timed out") {
-                            errorMessage = "The summarization service is taking longer than expected. This often happens with longer transcripts. Please try again or contact support if the issue persists."
-                        } else {
-                            errorMessage = error.localizedDescription
-                        }
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] \(errorMessage)")
-                            self.errorSubject.send(SummaryError.network(errorMessage))
-                        }
-                        return
-                    }
-                    
-                    if let httpResponse = response as? HTTPURLResponse {
-                        print("[SummaryService] Netlify summarize HTTP status: \(httpResponse.statusCode)")
-                        
-                        // Handle specific HTTP error codes
-                        if httpResponse.statusCode == 502 {
-                            print("[SummaryService] ERROR: 502 Bad Gateway - Function timeout")
-                            DispatchQueue.main.async {
-                                self.statusSubject.send("failed")
-                                self.summarySubject.send("[Error] The summarization service timed out. This is common with longer transcripts. Please try again with a shorter transcript or contact support.")
-                                self.errorSubject.send(SummaryError.server(502))
-                            }
-                            return
-                        } else if httpResponse.statusCode >= 500 {
-                            print("[SummaryService] ERROR: Server error \(httpResponse.statusCode)")
-                            DispatchQueue.main.async {
-                                self.statusSubject.send("failed")
-                                self.summarySubject.send("[Error] Server error (\(httpResponse.statusCode)). Please try again later.")
-                                self.errorSubject.send(SummaryError.server(httpResponse.statusCode))
-                            }
-                            return
-                        }
-                    }
-                    
-                    guard let data = data else {
-                        print("[SummaryService] ERROR: No data received from Netlify summarize endpoint")
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] No data received from Netlify summarize endpoint.")
-                            self.errorSubject.send(SummaryError.noData)
-                        }
-                        return
-                    }
-                    
-                    // Log full response for debugging
-                    if let jsonString = String(data: data, encoding: .utf8) {
-                        print("[SummaryService] Netlify summarize response (full): \(jsonString)")
-                        print("[SummaryService] Response length: \(jsonString.count) characters")
-                    }
-                    
-                    // Parse JSON response
-                    let json: [String: Any]
-                    do {
-                        guard let parsedJson = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                            print("[SummaryService] ERROR: Response is not a dictionary")
-                            DispatchQueue.main.async {
-                                self.statusSubject.send("failed")
-                                self.summarySubject.send("[Error] Invalid response format from summarize endpoint.")
-                                self.errorSubject.send(SummaryError.parseFailure)
-                            }
-                            return
-                        }
-                        json = parsedJson
-                        print("[SummaryService] Successfully parsed JSON response")
-                        print("[SummaryService] JSON keys: \(json.keys.joined(separator: ", "))")
-                    } catch {
-                        print("[SummaryService] ERROR: Failed to parse JSON response: \(error.localizedDescription)")
-                        if let jsonString = String(data: data, encoding: .utf8) {
-                            print("[SummaryService] Raw response: \(jsonString)")
-                        }
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] Failed to parse response from summarize endpoint.")
-                            self.errorSubject.send(SummaryError.parseFailure)
-                        }
-                        return
-                    }
-                    
-                    // Check if response has nested structure with success/data
-                    let summary: String
-                    let title: String?
-                    
-                    // First try: Check for nested structure { success: true, data: { summary, title } }
-                    if let success = json["success"] as? Bool {
-                        print("[SummaryService] Found 'success' key: \(success)")
-                        if success {
-                            if let dataDict = json["data"] as? [String: Any] {
-                                print("[SummaryService] Found 'data' key with keys: \(dataDict.keys.joined(separator: ", "))")
-                                if let summaryText = dataDict["summary"] as? String {
-                                    summary = summaryText
-                                    title = dataDict["title"] as? String
-                                    print("[SummaryService] ✅ Successfully extracted summary from nested structure")
-                                    print("[SummaryService] Summary length: \(summary.count) characters")
-                                    if let extractedTitle = title {
-                                        print("[SummaryService] Title: \(extractedTitle)")
-                                    } else {
-                                        print("[SummaryService] ⚠️ No title found in data object")
-                                    }
-                                } else {
-                                    print("[SummaryService] ERROR: 'data' object exists but 'summary' key is missing or not a string")
-                                    print("[SummaryService] Available keys in 'data': \(dataDict.keys.joined(separator: ", "))")
-                                    DispatchQueue.main.async {
-                                        self.statusSubject.send("failed")
-                                        self.summarySubject.send("[Error] Invalid response format: summary field missing.")
-                                        self.errorSubject.send(SummaryError.parseFailure)
-                                    }
-                                    return
-                                }
-                            } else {
-                                print("[SummaryService] ERROR: 'success' is true but 'data' is missing or not a dictionary")
-                                print("[SummaryService] Available top-level keys: \(json.keys.joined(separator: ", "))")
-                                DispatchQueue.main.async {
-                                    self.statusSubject.send("failed")
-                                    self.summarySubject.send("[Error] Invalid response format: data field missing.")
-                                    self.errorSubject.send(SummaryError.parseFailure)
-                                }
-                                return
-                            }
-                        } else {
-                            print("[SummaryService] ERROR: 'success' key is false")
-                            if let errorMessage = json["message"] as? String {
-                                print("[SummaryService] Error message: \(errorMessage)")
-                            }
-                            DispatchQueue.main.async {
-                                self.statusSubject.send("failed")
-                                self.summarySubject.send("[Error] Summary generation failed on server.")
-                                self.errorSubject.send(SummaryError.parseFailure)
-                            }
-                            return
-                        }
-                    } else if let summaryText = json["summary"] as? String {
-                        // Fallback: Check for flat structure { summary, title }
-                        print("[SummaryService] ⚠️ Using fallback: flat structure detected")
-                        summary = summaryText
-                        title = json["title"] as? String
-                        print("[SummaryService] ✅ Successfully extracted summary from flat structure")
-                    } else {
-                        // No valid structure found
-                        print("[SummaryService] ERROR: No valid response structure found")
-                        print("[SummaryService] Available keys: \(json.keys.joined(separator: ", "))")
-                        if let errorMessage = json["error"] as? String {
-                            print("[SummaryService] Error message: \(errorMessage)")
-                        }
-                        if let message = json["message"] as? String {
-                            print("[SummaryService] Message: \(message)")
-                        }
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] Invalid response format from summarize endpoint.")
-                            self.errorSubject.send(SummaryError.parseFailure)
-                        }
-                        return
-                    }
-                    
-                    // Validate summary content
-                    if summary.isEmpty {
-                        print("[SummaryService] ERROR: Summary is empty")
-                        DispatchQueue.main.async {
-                            self.statusSubject.send("failed")
-                            self.summarySubject.send("[Error] Received empty summary from server.")
-                            self.errorSubject.send(SummaryError.parseFailure)
-                        }
-                        return
-                    }
-                    
-                    print("[SummaryService] ✅ Summary content received (first 200 chars): \(summary.prefix(200))...")
-                    if let extractedTitle = title {
-                        print("[SummaryService] ✅ Title received: \(extractedTitle)")
-                    } else {
-                        print("[SummaryService] ⚠️ No title provided (will use default)")
-                    }
-                    DispatchQueue.main.async {
-                        self.titleSubject.send(title?.trimmingCharacters(in: .whitespacesAndNewlines))
-                        self.summarySubject.send(summary.trimmingCharacters(in: .whitespacesAndNewlines))
-                        self.statusSubject.send("complete")
-                        self.errorSubject.send(nil)
-                    }
-                }
-                self.currentTask = task
-                task.resume()
-            } catch {
-                print("[SummaryService] Authentication error: \(error.localizedDescription)")
-                self.isRequestInProgress = false
                 DispatchQueue.main.async {
-                    self.statusSubject.send("failed")
-                    self.summarySubject.send("[Error] Authentication failed: \(error.localizedDescription)")
-                    self.errorSubject.send(SummaryError.auth(error.localizedDescription))
+                    guard self.currentRequestId == requestId else { return }
+                    self.titleSubject.send(result.title)
+                    self.summarySubject.send(result.summary)
+                    self.statusSubject.send("complete")
+                    self.errorSubject.send(nil)
+                    self.finishPublishedRequest(requestId: requestId)
+                }
+            } catch is CancellationError {
+                DispatchQueue.main.async {
+                    self.finishPublishedRequest(requestId: requestId)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.publishFailure(error, requestId: requestId)
                 }
             }
         }
@@ -365,35 +336,23 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
             print("[SummaryService] Cannot retry: No previous transcript or type stored")
             return
         }
-        print("[SummaryService] Retrying summary generation...")
+
+        print("[SummaryService] Retrying summary generation")
         generateSummary(for: transcript, type: type)
     }
 
-    // Convenience method (not in protocol)
     func retrySummary(for transcript: String, type: String) {
-        print("[SummaryService] Retrying summary generation with provided transcript and type")
-        // Explicitly clear error state before retrying
-        DispatchQueue.main.async {
-            self.errorSubject.send(nil)
-        }
-        lastTranscript = transcript
-        lastType = type
+        print("[SummaryService] Retrying summary generation with explicit transcript/type")
         generateSummary(for: transcript, type: type)
     }
-    
-    // Fallback method for when primary service fails
-    func generateBasicSummary(for transcript: String, type: String) {
-        print("[SummaryService] Generating basic summary as fallback")
-        statusSubject.send("pending")
 
-        // Create a basic extractive summary
+    func generateBasicSummaryResult(for transcript: String, type: String) -> SummaryGenerationResult {
         let sentences = transcript.components(separatedBy: ". ")
         let wordCount = transcript.components(separatedBy: " ").count
 
-        // Generate a basic title
         let basicTitle: String
-        if let firstSentence = sentences.first?.trimmingCharacters(in: .whitespacesAndNewlines), !firstSentence.isEmpty {
-            // Use first sentence, truncated if needed
+        if let firstSentence = sentences.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firstSentence.isEmpty {
             let truncated = firstSentence.prefix(60)
             basicTitle = String(truncated) + (firstSentence.count > 60 ? "..." : "")
         } else {
@@ -404,14 +363,13 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
         if wordCount < 100 {
             basicSummary = "Brief \(type.lowercased()): \(transcript)"
         } else {
-            // Take first few sentences and key phrases
             let firstSentences = Array(sentences.prefix(3)).joined(separator: ". ")
             let keyPoints = sentences.filter { sentence in
                 let lowercased = sentence.lowercased()
                 return lowercased.contains("god") || lowercased.contains("jesus") ||
-                       lowercased.contains("christ") || lowercased.contains("lord") ||
-                       lowercased.contains("scripture") || lowercased.contains("bible") ||
-                       lowercased.contains("prayer") || lowercased.contains("faith")
+                    lowercased.contains("christ") || lowercased.contains("lord") ||
+                    lowercased.contains("scripture") || lowercased.contains("bible") ||
+                    lowercased.contains("prayer") || lowercased.contains("faith")
             }
 
             let keyPointsText = Array(keyPoints.prefix(2)).joined(separator: ". ")
@@ -426,11 +384,27 @@ class SummaryService: ObservableObject, SummaryServiceProtocol {
             """
         }
 
-        DispatchQueue.main.async {
-            self.titleSubject.send(basicTitle)
-            self.summarySubject.send(basicSummary)
-            self.statusSubject.send("complete")
+        return SummaryGenerationResult(title: basicTitle, summary: basicSummary)
+    }
+
+    func generateBasicSummary(for transcript: String, type: String) {
+        print("[SummaryService] Generating basic summary as fallback")
+
+        if isRequestInProgress {
+            currentRequestTask?.cancel()
+            currentRequestTask = nil
+            currentRequestId = nil
+            isRequestInProgress = false
         }
+
+        let requestId = UUID()
+        beginPublishedRequest(transcript: transcript, type: type, requestId: requestId)
+
+        let result = generateBasicSummaryResult(for: transcript, type: type)
+        titleSubject.send(result.title)
+        summarySubject.send(result.summary)
+        statusSubject.send("complete")
+        errorSubject.send(nil)
+        finishPublishedRequest(requestId: requestId)
     }
 }
-

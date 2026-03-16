@@ -39,23 +39,26 @@ struct MainAppView: View {
     @State private var showTrialPrompt = false
     @StateObject private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
+    private let processingCoordinator = SermonProcessingCoordinator.shared
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
-        _sermonService = State(initialValue: SermonService(modelContext: modelContext))
+        let sermonSvc = SermonService(modelContext: modelContext)
+        _sermonService = State(initialValue: sermonSvc)
         let syncSvc = SyncService(
             modelContext: modelContext,
             supabaseService: SupabaseService.shared,
             authService: AuthenticationManager.shared
         )
         _syncService = StateObject(wrappedValue: syncSvc)
-        _backgroundSyncManager = StateObject(wrappedValue: BackgroundSyncManager(syncService: syncSvc))
-
-        // Initialize TranscriptionRetryService with ModelContext
-        TranscriptionRetryService.shared.setModelContext(modelContext)
-        
-        // Initialize SummaryRetryService with ModelContext
-        SummaryRetryService.shared.setModelContext(modelContext)
+        SermonProcessingCoordinator.shared.configure(
+            modelContext: modelContext,
+            sermonService: sermonSvc,
+            syncService: syncSvc
+        )
+        _backgroundSyncManager = StateObject(
+            wrappedValue: BackgroundSyncManager(processingCoordinator: SermonProcessingCoordinator.shared)
+        )
 
         // Check if user has seen onboarding before
         if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
@@ -120,71 +123,7 @@ struct MainAppView: View {
 
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                // Create title and date for processing
-                                                let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-                                                let date = Date()
-
-                                                // Process the recording just like in RecordingView
-                                                transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
-                                                    DispatchQueue.main.async {
-                                                        switch result {
-                                                        case .success(let (text, segments)):
-                                                            guard !text.isEmpty else { return }
-
-                                                            let transcriptModel = Transcript(text: text, segments: segments)
-                                                            let summaryModel = Summary(text: "", type: serviceType, status: "processing")
-                                                            let sermonId = UUID()
-
-                                                            // Get notes from the current session
-                                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                                            let notes = noteService.currentNotes
-
-                                                            // Save sermon with transcript — completion fires after save
-                                                            sermonService.saveSermon(
-                                                                title: title,
-                                                                audioFileURL: audioURL,
-                                                                date: date,
-                                                                serviceType: serviceType,
-                                                                speaker: nil,
-                                                                transcript: transcriptModel,
-                                                                notes: notes,
-                                                                summary: summaryModel,
-                                                                transcriptionStatus: "complete",
-                                                                summaryStatus: "processing",
-                                                                id: sermonId,
-                                                                completion: { savedId in
-                                                                    // Generate summary using sermon ID only — no phantom @Model
-                                                                    sermonService.generateSummaryForSermon(
-                                                                        sermonId: savedId,
-                                                                        transcript: text,
-                                                                        serviceType: serviceType
-                                                                    )
-                                                                    print("[MiniPlayer] Processing complete, refreshing sermon list")
-                                                                    sermonService.fetchSermons()
-                                                                }
-                                                            )
-
-                                                        case .failure(let error):
-                                                            print("[MiniPlayer] Transcription failed: \(error)")
-                                                            // Save recording for later processing
-                                                            let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                                            let notes = noteService.currentNotes
-
-                                                            sermonService.saveSermon(
-                                                                title: title,
-                                                                audioFileURL: audioURL,
-                                                                date: date,
-                                                                serviceType: serviceType,
-                                                                transcript: nil,
-                                                                notes: notes,
-                                                                summary: nil,
-                                                                transcriptionStatus: "pending",
-                                                                summaryStatus: "pending",
-                                                                id: UUID()
-                                                            )
-                                                        }
-                                                    }
-                                                }
+                                                finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
                                             }
 
                                             // Clear recording state
@@ -266,71 +205,7 @@ struct MainAppView: View {
 
                                 await MainActor.run {
                                     if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                        // Create title and date for processing
-                                        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-                                        let date = Date()
-
-                                        // Process the recording just like in RecordingView
-                                        transcriptionService.transcribeAudioFileWithResult(url: audioURL) { result in
-                                            DispatchQueue.main.async {
-                                                switch result {
-                                                case .success(let (text, segments)):
-                                                    guard !text.isEmpty else { return }
-
-                                                    let transcriptModel = Transcript(text: text, segments: segments)
-                                                    let summaryModel = Summary(text: "", type: serviceType, status: "processing")
-                                                    let sermonId = UUID()
-
-                                                    // Get notes from the current session
-                                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                                    let notes = noteService.currentNotes
-
-                                                    // Save sermon with transcript — completion fires after save
-                                                    sermonService.saveSermon(
-                                                        title: title,
-                                                        audioFileURL: audioURL,
-                                                        date: date,
-                                                        serviceType: serviceType,
-                                                        speaker: nil,
-                                                        transcript: transcriptModel,
-                                                        notes: notes,
-                                                        summary: summaryModel,
-                                                        transcriptionStatus: "complete",
-                                                        summaryStatus: "processing",
-                                                        id: sermonId,
-                                                        completion: { savedId in
-                                                            // Generate summary using sermon ID only — no phantom @Model
-                                                            sermonService.generateSummaryForSermon(
-                                                                sermonId: savedId,
-                                                                transcript: text,
-                                                                serviceType: serviceType
-                                                            )
-                                                            print("[MiniPlayer] Processing complete, refreshing sermon list")
-                                                            sermonService.fetchSermons()
-                                                        }
-                                                    )
-
-                                                case .failure(let error):
-                                                    print("[MiniPlayer] Transcription failed: \(error)")
-                                                    // Save recording for later processing
-                                                    let noteService = NoteService(sessionId: currentRecordingSessionId)
-                                                    let notes = noteService.currentNotes
-
-                                                    sermonService.saveSermon(
-                                                        title: title,
-                                                        audioFileURL: audioURL,
-                                                        date: date,
-                                                        serviceType: serviceType,
-                                                        transcript: nil,
-                                                        notes: notes,
-                                                        summary: nil,
-                                                        transcriptionStatus: "pending",
-                                                        summaryStatus: "pending",
-                                                        id: UUID()
-                                                    )
-                                                }
-                                            }
-                                        }
+                                        finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
                                     }
 
                                     // Clear recording state
@@ -380,34 +255,25 @@ struct MainAppView: View {
             .onAppear {
                 // Inject syncService into sermonService
                 sermonService.setSyncService(syncService)
-
-                // Initialize SummaryRetryService with model context
-                SummaryRetryService.shared.setModelContext(modelContext)
-                
-                // Check for stuck processing summaries and recover them
-                sermonService.recoverStuckSummaries()
-                
-                // Process any pending summaries in the queue
-                SummaryRetryService.shared.processQueue()
+                processingCoordinator.configure(
+                    modelContext: modelContext,
+                    sermonService: sermonService,
+                    syncService: syncService
+                )
 
                 checkTrialStatus()
 
-                // Trigger sync when app launches
-                Task {
-                    // Small delay to ensure UI is ready
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-
-                    await syncService.syncAllData()
+                Task { @MainActor in
+                    await processingCoordinator.handleAppLaunch()
                 }
             }
             .onChange(of: authManager.currentUser?.id) { _, newUserId in
                 if newUserId != nil {
                     checkTrialStatus()
+                }
 
-                    // Trigger sync when user changes (login/logout)
-                    Task {
-                        await syncService.syncAllData()
-                    }
+                Task { @MainActor in
+                    await processingCoordinator.handleAuthStateChange(userId: newUserId)
                 }
             }
             .sheet(isPresented: $showServiceTypeModal) {
@@ -545,7 +411,6 @@ struct MainAppView: View {
         case .home:
             SermonListView(
                 sermonService: sermonService,
-                syncService: syncService,
                 onSermonSelected: { sermon in
                     currentScreen = .sermonDetail(id: sermon.id)
                 },
@@ -582,7 +447,6 @@ struct MainAppView: View {
         case .sermons:
             SermonListView(
                 sermonService: sermonService,
-                syncService: syncService,
                 onSermonSelected: { sermon in
                     currentScreen = .sermonDetail(id: sermon.id)
                 },
@@ -617,9 +481,28 @@ struct MainAppView: View {
             )
         }
     }
+
+    private func finishRecordingFromMiniPlayer(audioURL: URL, serviceType: String) {
+        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        let date = Date()
+        let noteService = NoteService(sessionId: currentRecordingSessionId)
+        let notes = noteService.currentNotes
+
+        processingCoordinator.handleCompletedRecording(
+            audioURL: audioURL,
+            title: title,
+            date: date,
+            serviceType: serviceType,
+            notes: notes
+        ) { _ in
+            noteService.clearSession()
+            currentRecordingSessionId = UUID().uuidString
+            sermonService.fetchSermons()
+        }
+    }
 }
 
 #Preview {
-    let container = try! ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, TranscriptSegment.self)
+    let container = try! ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self)
     MainAppView(modelContext: ModelContext(container))
 } 

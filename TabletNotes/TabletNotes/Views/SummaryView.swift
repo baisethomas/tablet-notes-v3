@@ -214,5 +214,5 @@ struct SummaryView: View {
 }
 
 #Preview {
-    SummaryView(serviceType: "Sermon", transcript: Transcript(text: "Sample transcript text..."), audioFileURL: nil, sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))), noteService: NoteService())
+    SummaryView(serviceType: "Sermon", transcript: Transcript(text: "Sample transcript text..."), audioFileURL: nil, sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))), noteService: NoteService())
 }

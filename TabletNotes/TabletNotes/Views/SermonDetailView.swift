@@ -256,7 +256,7 @@ struct SermonDetailView: View {
     @State private var summaryTextSnapshot: String = "No summary available."
 
     // Transcription retry
-    @StateObject private var transcriptionRetryService = TranscriptionRetryService.shared
+    private let processingCoordinator = SermonProcessingCoordinator.shared
     @State private var isRetryingTranscription = false
     @State private var summaryCancellables = Set<AnyCancellable>()
 
@@ -482,8 +482,6 @@ struct SermonDetailView: View {
                             print("[SermonDetailView]   Note \(index): '\(note.text)' at \(note.timestamp)s")
                         }
 
-                        // Retry transcription if needed
-                        transcriptionRetryService.retryTranscriptionIfNeeded(for: sermon)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: TranscriptionRetryService.transcriptionCompletedNotification)) { notification in
                         // Refresh sermon data when transcription completes
@@ -1097,41 +1095,10 @@ struct SermonDetailView: View {
     }
     
     private func retryTranscription(for sermon: Sermon) {
-        // Set retry state
         isRetryingTranscription = true
-        
-        // Update sermon status to processing
-        sermon.transcriptionStatus = "processing"
-        
-        // Create a transcription service to retry the processing
-        let transcriptionService = TranscriptionService()
-        
-        transcriptionService.transcribeAudioFileWithResult(url: sermon.audioFileURL) { result in
-            DispatchQueue.main.async {
-                isRetryingTranscription = false
-                
-                switch result {
-                case .success(let (text, segments)):
-                    sermonService.applyTranscriptionResult(
-                        sermonId: sermon.id,
-                        text: text,
-                        segments: segments
-                    )
-                    
-                    // Generate summary after successful transcription
-                    print("[SermonDetailView] Generating summary via SermonService")
-                    sermonService.generateSummaryForSermon(
-                        sermonId: sermon.id,
-                        transcript: text,
-                        serviceType: sermon.serviceType
-                    )
-                    
-                case .failure(let error):
-                    print("Transcription retry failed: \(error)")
-                    sermonService.markTranscriptionFailed(sermonId: sermon.id)
-                }
-            }
-        }
+
+        processingCoordinator.retryTranscription(for: sermon.id)
+        isRetryingTranscription = false
     }
     
     private func generateSummaryForSermon(_ sermon: Sermon) {
@@ -1142,13 +1109,13 @@ struct SermonDetailView: View {
 
         // Use service layer approach to ensure summary completion is handled
         print("[SermonDetailView] Generating summary via SermonService")
-        sermonService.generateSummaryForSermon(sermonId: sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
+        processingCoordinator.retrySummary(for: sermon.id)
     }
 }
 
 #Preview {
     SermonDetailView(
-        sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))),
+        sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))),
         authManager: AuthenticationManager.shared,
         sermonID: UUID()
     )

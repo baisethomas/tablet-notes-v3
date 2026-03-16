@@ -71,8 +71,6 @@ class SermonService {
     }
     
     private var cancellables = Set<AnyCancellable>()
-    private var summaryServiceCancellables: [UUID: Set<AnyCancellable>] = [:]
-    private let summaryGenerationTimeout: TimeInterval = 90
 
     private struct TranscriptSegmentSnapshot {
         let id: UUID
@@ -293,14 +291,15 @@ class SermonService {
 
             // Create fresh Note instances for SwiftData to avoid issues with detached objects
             // Notes from NoteService are JSON-decoded and may not be properly attached to ModelContext
+            let noteSnapshotDate = Date()
             let freshNotes = notes.map { note in
                 Note(
                     id: note.id,
                     text: note.text,
                     timestamp: note.timestamp,
                     remoteId: note.remoteId,
-                    updatedAt: note.updatedAt,
-                    needsSync: note.needsSync
+                    updatedAt: noteSnapshotDate,
+                    needsSync: true
                 )
             }
             print("[DEBUG] saveSermon: Created \(freshNotes.count) fresh Note objects for SwiftData")
@@ -749,15 +748,12 @@ class SermonService {
     }
     
     private func triggerSyncIfNeeded() {
-        guard let syncService = syncService else { return }
-        
         // Check if there are any sermons that need syncing
         let needsSync = sermons.contains { $0.needsSync }
         
         if needsSync {
-            // Trigger sync in background
-            Task {
-                await syncService.syncAllData()
+            Task { @MainActor in
+                await SermonProcessingCoordinator.shared.syncPendingChanges()
             }
         }
     }
@@ -765,8 +761,8 @@ class SermonService {
     // Public sync methods
     func syncAllData() {
         guard let currentUser = authManager.currentUser, currentUser.canSync else { return }
-        Task {
-            await syncService?.syncAllData()
+        Task { @MainActor in
+            await SermonProcessingCoordinator.shared.triggerManualSync()
         }
     }
     
@@ -1024,188 +1020,26 @@ class SermonService {
     /// Generate summary for a sermon and handle completion at service level
     /// This ensures summaries are updated even if views are dismissed
     func generateSummaryForSermon(sermonId: UUID, transcript: String, serviceType: String) {
-        print("[SermonService] Generating summary for sermon: \(sermonId)")
+        print("[SermonService] Queueing summary generation for sermon: \(sermonId)")
 
-        // Note: We don't update the sermon's status here because:
-        // 1. If this is called right after saveSermon, the sermon isn't in the context yet
-        // 2. The status should already be set to "processing" when saveSermon was called
-        // 3. We'll update the status when the summary completes in the completion handler
-
-        // Use shared summary service instance
-        let summaryService = SummaryService.shared
-
-        // Initialize cancellable storage for this sermon
-        if summaryServiceCancellables[sermonId] == nil {
-            summaryServiceCancellables[sermonId] = Set<AnyCancellable>()
+        guard let sermon = findSermon(by: sermonId) else {
+            print("[SermonService] Could not find sermon \(sermonId) to queue summary generation")
+            return
         }
-        // Replace any previous subscription for the same sermon request.
-        summaryServiceCancellables[sermonId]?.removeAll()
 
-        // Track whether we've seen the request start (pending state)
-        // This helps filter out stale "complete" states from previous summaries
-        var hasSeenPending = false
-
-        // Listen for summary completion - this subscription persists at service level
-        summaryService.statusPublisher
-            .combineLatest(summaryService.titlePublisher, summaryService.summaryPublisher)
-            .dropFirst() // Ignore the CurrentValueSubject replay from a previous request.
-            .sink { [weak self] (status, titleText, summaryText) in
-                guard let self = self else { return }
-
-                print("[SermonService] 📡 Subscription received update for sermon \(sermonId): status=\(status), hasTitle=\(titleText != nil), hasSummary=\(summaryText != nil)")
-
-                // Track when we see the pending state
-                if status == "pending" {
-                    hasSeenPending = true
-                    print("[SermonService] 🔄 Request started for sermon \(sermonId)")
-                }
-
-                // Ignore terminal states if we haven't seen the request start yet.
-                // This filters out stale events from previous requests in the singleton SummaryService.
-                if (status == "complete" || status == "failed") && !hasSeenPending {
-                    print("[SermonService] ⚠️ Ignoring stale terminal state '\(status)' (haven't seen pending yet)")
-                    return
-                }
-
-                Task { @MainActor in
-                    // Fetch the sermon directly from the database instead of relying on the sermons array
-                    // This avoids race conditions where saveSermon hasn't completed yet
-                    let fetchDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
-                        sermon.id == sermonId
-                    })
-
-                    guard let sermon = try? self.modelContext.fetch(fetchDescriptor).first else {
-                        print("[SermonService] ❌ Sermon \(sermonId) not found in database when updating summary")
-                        return
-                    }
-
-                    print("[SermonService] ✓ Found sermon \(sermonId) in database, processing status: \(status)")
-
-                    switch status {
-                    case "complete":
-                        if let summaryText = summaryText {
-                            let summaryTitle = titleText ?? "Sermon Summary"
-                            let summary = Summary(
-                                title: summaryTitle,
-                                text: summaryText,
-                                type: serviceType,
-                                status: "complete"
-                            )
-                            sermon.summary = summary
-                            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: summaryText)
-                            sermon.summaryStatus = "complete"
-
-                            // Update sermon title with AI-generated title if available
-                            if let aiTitle = titleText, !aiTitle.isEmpty {
-                                print("[SermonService] 📝 Updating sermon title from '\(sermon.title)' to '\(aiTitle)'")
-                                sermon.title = aiTitle
-                            }
-
-                            // Mark for sync
-                            sermon.needsSync = true
-                            sermon.updatedAt = Date()
-                            sermon.syncStatus = "pending"
-
-                            try? self.modelContext.save()
-
-                            print("[SermonService] ✅ Summary completed for sermon \(sermonId)")
-
-                            // @Observable handles UI updates automatically
-
-                            // Trigger sync if needed
-                            if let currentUser = self.authManager.currentUser, currentUser.canSync {
-                                self.triggerSyncIfNeeded()
-                            }
-
-                            // Notify UI
-                            NotificationCenter.default.post(
-                                name: SummaryRetryService.summaryCompletedNotification,
-                                object: sermonId
-                            )
-
-                            // Refresh sermon list
-                            self.fetchSermons()
-
-                            // Clean up cancellables after successful completion
-                            self.summaryServiceCancellables.removeValue(forKey: sermonId)
-                        } else {
-                            print("[SermonService] ERROR: Summary status is complete but no summary text received")
-                            sermon.summaryStatus = "failed"
-                            try? self.modelContext.save()
-
-                            // @Observable handles UI updates automatically
-
-                            // Add to retry queue
-                            SummaryRetryService.shared.addPendingSummary(
-                                PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
-                            )
-
-                            // Clean up cancellables after failure
-                            self.summaryServiceCancellables.removeValue(forKey: sermonId)
-                        }
-
-                    case "failed":
-                        print("[SermonService] Summary generation failed for sermon \(sermonId)")
-                        sermon.summaryStatus = "failed"
-                        try? self.modelContext.save()
-
-                        // @Observable handles UI updates automatically
-
-                        // Add to retry queue
-                        SummaryRetryService.shared.addPendingSummary(
-                            PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
-                        )
-
-                        // Clean up cancellables after failure
-                        self.summaryServiceCancellables.removeValue(forKey: sermonId)
-
-                    default:
-                        // Don't clean up for pending or other intermediate states
-                        break
-                    }
-                }
-            }
-            .store(in: &summaryServiceCancellables[sermonId]!)
-
-        // Start summary generation after the subscription is attached.
-        summaryService.generateSummary(for: transcript, type: serviceType)
-
-        // Fail-safe: if no terminal event arrives, move sermon to retry flow instead of staying in processing.
-        DispatchQueue.main.asyncAfter(deadline: .now() + summaryGenerationTimeout) { [weak self] in
-            Task { @MainActor in
-                guard let self = self else { return }
-                guard self.summaryServiceCancellables[sermonId] != nil else { return }
-
-                let fetchDescriptor = FetchDescriptor<Sermon>(predicate: #Predicate { sermon in
-                    sermon.id == sermonId
-                })
-
-                guard let sermon = try? self.modelContext.fetch(fetchDescriptor).first else {
-                    self.summaryServiceCancellables.removeValue(forKey: sermonId)
-                    return
-                }
-
-                guard sermon.summaryStatus == "processing" else {
-                    return
-                }
-
-                print("[SermonService] ⏱️ Summary generation timed out for sermon \(sermonId); moving to retry queue")
-                sermon.summaryStatus = "failed"
-                try? self.modelContext.save()
-
-                SummaryRetryService.shared.addPendingSummary(
-                    PendingSummary(sermonId: sermonId, transcript: transcript, serviceType: serviceType)
-                )
-
-                self.summaryServiceCancellables.removeValue(forKey: sermonId)
-            }
+        let transcriptText = sermon.transcript?.text ?? transcript
+        guard !transcriptText.isEmpty else {
+            print("[SermonService] No transcript available for sermon \(sermonId)")
+            return
         }
+
+        SermonProcessingCoordinator.shared.enqueueSummary(for: sermonId)
     }
     
     /// Check for sermons with stuck processing status and recover them
     func recoverStuckSummaries() {
         Task { @MainActor in
-            SummaryRetryService.shared.checkForStuckProcessingSummaries()
+            SermonProcessingCoordinator.shared.refreshBackgroundProcessing()
         }
     }
-} 
+}

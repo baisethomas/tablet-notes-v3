@@ -337,7 +337,6 @@ struct SectionHeaderView: View {
 
 struct SermonListView: View {
     @Bindable var sermonService: SermonService
-    var syncService: SyncServiceProtocol?
     var onSermonSelected: (Sermon) -> Void
     var onSettings: (() -> Void)? = nil
     var onStartRecording: (() -> Void)? = nil
@@ -703,8 +702,7 @@ struct SermonListView: View {
                             let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                             impactFeedback.impactOccurred()
 
-                            // Trigger sync to fetch latest from cloud
-                            await syncService?.syncAllData()
+                            await SermonProcessingCoordinator.shared.triggerManualSync()
 
                             // Refresh local sermon list
                             sermonService.fetchSermons()
@@ -766,5 +764,5 @@ struct SermonListView: View {
 }
 
 #Preview {
-    SermonListView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self))), onSermonSelected: { _ in }, onStartRecording: { })
+    SermonListView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))), onSermonSelected: { _ in }, onStartRecording: { })
 }
