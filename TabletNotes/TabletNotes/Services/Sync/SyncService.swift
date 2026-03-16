@@ -44,6 +44,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         let text: String
         let segments: [TranscriptSegmentSnapshot]
         let remoteId: String?
+        let updatedAt: Date?
     }
 
     private struct SummarySnapshot {
@@ -53,6 +54,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         let type: String
         let status: String
         let remoteId: String?
+        let updatedAt: Date?
     }
 
     private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
@@ -77,7 +79,9 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             id: snapshot.id,
             text: snapshot.text,
             segments: newSegments,
-            remoteId: snapshot.remoteId
+            remoteId: snapshot.remoteId,
+            updatedAt: snapshot.updatedAt,
+            needsSync: false
         )
         modelContext.insert(transcript)
         sermon.transcript = transcript
@@ -101,31 +105,168 @@ class SyncService: ObservableObject, SyncServiceProtocol {
             text: snapshot.text,
             type: snapshot.type,
             status: snapshot.status,
-            remoteId: snapshot.remoteId
+            remoteId: snapshot.remoteId,
+            updatedAt: snapshot.updatedAt,
+            needsSync: false
         )
         modelContext.insert(summary)
         sermon.summary = summary
         sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
     }
 
-    private func transcriptSnapshot(from remoteData: RemoteTranscriptData) -> TranscriptSnapshot {
+    private func transcriptSnapshot(from remoteData: RemoteTranscriptData, sermonUpdatedAt: Date) -> TranscriptSnapshot {
         TranscriptSnapshot(
             id: remoteData.localId,
             text: remoteData.text,
             segments: [], // TODO: deserialize remote transcript segments when available
-            remoteId: remoteData.id
+            remoteId: remoteData.id,
+            updatedAt: sermonUpdatedAt
         )
     }
 
-    private func summarySnapshot(from remoteData: RemoteSummaryData) -> SummarySnapshot {
+    private func summarySnapshot(from remoteData: RemoteSummaryData, sermonUpdatedAt: Date) -> SummarySnapshot {
         SummarySnapshot(
             id: remoteData.localId,
             title: remoteData.title,
             text: remoteData.text,
             type: remoteData.type,
             status: remoteData.status,
-            remoteId: remoteData.id
+            remoteId: remoteData.id,
+            updatedAt: sermonUpdatedAt
         )
+    }
+
+    private func shouldPreserveLocalChildData(for sermon: Sermon, childNeedsSync: Bool) -> Bool {
+        sermon.needsSync && childNeedsSync
+    }
+
+    private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {
+        guard let remoteNotes else {
+            if !sermon.notes.isEmpty {
+                print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote returned no notes)")
+            }
+            return
+        }
+
+        if remoteNotes.isEmpty {
+            if sermon.notes.isEmpty {
+                print("[SyncService] ℹ️ Both local and remote notes are empty")
+            } else {
+                print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote note list was empty)")
+            }
+            return
+        }
+
+        print("[SyncService] Merging \(remoteNotes.count) remote notes")
+
+        for remoteNote in remoteNotes {
+            if let localNote = sermon.notes.first(where: { $0.id == remoteNote.localId || $0.remoteId == remoteNote.id }) {
+                if shouldPreserveLocalChildData(for: sermon, childNeedsSync: localNote.needsSync) {
+                    if localNote.remoteId == nil {
+                        localNote.remoteId = remoteNote.id
+                    }
+                    print("[SyncService] ⚠️ Preserving dirty local note \(localNote.id)")
+                    continue
+                }
+
+                localNote.text = remoteNote.text
+                localNote.timestamp = remoteNote.timestamp
+                localNote.remoteId = remoteNote.id
+                localNote.updatedAt = remoteUpdatedAt
+                localNote.needsSync = false
+            } else {
+                let note = Note(
+                    id: remoteNote.localId,
+                    text: remoteNote.text,
+                    timestamp: remoteNote.timestamp,
+                    remoteId: remoteNote.id,
+                    updatedAt: remoteUpdatedAt,
+                    needsSync: false
+                )
+                note.sermon = sermon
+                modelContext.insert(note)
+                sermon.notes.append(note)
+            }
+        }
+
+        print("[SyncService] ✅ Note merge completed. Local sermon now has \(sermon.notes.count) notes")
+    }
+
+    private func mergeRemoteTranscript(_ remoteTranscript: RemoteTranscriptData?, into sermon: Sermon, remoteUpdatedAt: Date) {
+        guard let remoteTranscript else {
+            if sermon.transcript != nil {
+                print("[SyncService] ⚠️ Preserving local transcript - remote returned no transcript")
+            } else {
+                print("[SyncService] ℹ️ No transcript on local or remote")
+            }
+            return
+        }
+
+        if let localTranscript = sermon.transcript,
+           shouldPreserveLocalChildData(for: sermon, childNeedsSync: localTranscript.needsSync) {
+            if localTranscript.remoteId == nil {
+                localTranscript.remoteId = remoteTranscript.id
+            }
+            print("[SyncService] ⚠️ Preserving dirty local transcript")
+            return
+        }
+
+        print("[SyncService] Updating transcript from remote (length: \(remoteTranscript.text.count) chars)")
+        applyTranscriptSnapshot(
+            transcriptSnapshot(from: remoteTranscript, sermonUpdatedAt: remoteUpdatedAt),
+            to: sermon
+        )
+        print("[SyncService] ✅ Transcript upserted from remote")
+    }
+
+    private func mergeRemoteSummary(_ remoteSummary: RemoteSummaryData?, into sermon: Sermon, remoteUpdatedAt: Date) {
+        guard let remoteSummary else {
+            if sermon.summary != nil {
+                print("[SyncService] ⚠️ Preserving local summary - remote returned no summary")
+            } else {
+                print("[SyncService] ℹ️ No summary on local or remote")
+            }
+            return
+        }
+
+        if let localSummary = sermon.summary,
+           shouldPreserveLocalChildData(for: sermon, childNeedsSync: localSummary.needsSync) {
+            if localSummary.remoteId == nil {
+                localSummary.remoteId = remoteSummary.id
+            }
+            print("[SyncService] ⚠️ Preserving dirty local summary")
+            return
+        }
+
+        print("[SyncService] Updating summary from remote (length: \(remoteSummary.text.count) chars)")
+        applySummarySnapshot(
+            summarySnapshot(from: remoteSummary, sermonUpdatedAt: remoteUpdatedAt),
+            to: sermon
+        )
+
+        if !remoteSummary.title.isEmpty {
+            print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(remoteSummary.title)'")
+            sermon.title = remoteSummary.title
+        }
+
+        print("[SyncService] ✅ Summary upserted from remote")
+    }
+
+    private func markChildEntitiesSynced(for sermon: Sermon, syncedAt: Date) {
+        for note in sermon.notes {
+            note.needsSync = false
+            note.updatedAt = syncedAt
+        }
+
+        if let transcript = sermon.transcript {
+            transcript.needsSync = false
+            transcript.updatedAt = syncedAt
+        }
+
+        if let summary = sermon.summary {
+            summary.needsSync = false
+            summary.updatedAt = syncedAt
+        }
     }
     
     // MARK: - Helper Methods
@@ -292,9 +433,11 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         }
 
         // Update local sync metadata
-        sermon.lastSyncedAt = Date()
+        let syncedAt = Date()
+        sermon.lastSyncedAt = syncedAt
         sermon.needsSync = false
         sermon.syncStatus = "synced"
+        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt)
 
         // Related data is now included in create/update payloads
         // No need to call syncRelatedData separately
@@ -404,7 +547,7 @@ class SyncService: ObservableObject, SyncServiceProtocol {
     
     // MARK: - Helper Methods
     
-    private func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
+    func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
         print("[SyncService] 🔄 Updating local sermon: \(remoteData.title)")
 
         // Update basic fields
@@ -418,67 +561,9 @@ class SyncService: ObservableObject, SyncServiceProtocol {
         sermon.lastSyncedAt = Date()
         sermon.syncStatus = "synced"
 
-        // Update notes - prefer remote data, but preserve local if remote is unexpectedly empty
-        if let remoteNotes = remoteData.notes, !remoteNotes.isEmpty {
-            print("[SyncService] Updating \(remoteNotes.count) notes from remote")
-
-            // Delete existing notes from ModelContext before replacing with remote ones.
-            // IMPORTANT: We must explicitly delete each Note from the ModelContext,
-            // not just removeAll() from the array. Otherwise orphaned Note objects
-            // with the same @Attribute(.unique) UUIDs cause upsert conflicts.
-            let existingNotes = Array(sermon.notes)
-            sermon.notes.removeAll()
-            for oldNote in existingNotes {
-                modelContext.delete(oldNote)
-            }
-
-            for noteData in remoteNotes {
-                let note = Note(
-                    id: noteData.localId,
-                    text: noteData.text,
-                    timestamp: noteData.timestamp,
-                    remoteId: noteData.id
-                )
-                modelContext.insert(note)
-                sermon.notes.append(note)
-            }
-            print("[SyncService] ✅ Notes updated from remote (\(remoteNotes.count) notes)")
-        } else if sermon.notes.isEmpty && remoteData.notes?.isEmpty == true {
-            print("[SyncService] ℹ️ Both local and remote notes are empty")
-        } else if !sermon.notes.isEmpty && (remoteData.notes == nil || remoteData.notes?.isEmpty == true) {
-            print("[SyncService] ⚠️ Preserving \(sermon.notes.count) local notes (remote returned no notes)")
-        }
-
-        // Update transcript - prefer remote data, but preserve local if remote is unexpectedly empty
-        if let transcriptData = remoteData.transcript {
-            print("[SyncService] Updating transcript from remote (length: \(transcriptData.text.count) chars)")
-
-            applyTranscriptSnapshot(transcriptSnapshot(from: transcriptData), to: sermon)
-            print("[SyncService] ✅ Transcript upserted from remote")
-        } else if sermon.transcript != nil {
-            print("[SyncService] ⚠️ Preserving local transcript - remote returned no transcript")
-        } else {
-            print("[SyncService] ℹ️ No transcript on local or remote")
-        }
-
-        // Update summary - prefer remote data, but preserve local if remote is unexpectedly empty
-        if let summaryData = remoteData.summary {
-            print("[SyncService] Updating summary from remote (length: \(summaryData.text.count) chars)")
-
-            applySummarySnapshot(summarySnapshot(from: summaryData), to: sermon)
-
-            // Update sermon title with AI-generated title from summary
-            if !summaryData.title.isEmpty {
-                print("[SyncService] 📝 Updating sermon title from '\(sermon.title)' to '\(summaryData.title)'")
-                sermon.title = summaryData.title
-            }
-
-            print("[SyncService] ✅ Summary upserted from remote")
-        } else if sermon.summary != nil {
-            print("[SyncService] ⚠️ Preserving local summary - remote returned no summary")
-        } else {
-            print("[SyncService] ℹ️ No summary on local or remote")
-        }
+        mergeRemoteNotes(remoteData.notes, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
+        mergeRemoteTranscript(remoteData.transcript, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
+        mergeRemoteSummary(remoteData.summary, into: sermon, remoteUpdatedAt: remoteData.updatedAt)
     }
     
     private func createLocalSermon(from remoteData: RemoteSermonData) async throws {
@@ -532,12 +617,18 @@ class SyncService: ObservableObject, SyncServiceProtocol {
 
             if let transcriptData = remoteData.transcript {
                 print("[SyncService] Creating transcript")
-                applyTranscriptSnapshot(transcriptSnapshot(from: transcriptData), to: sermon)
+                applyTranscriptSnapshot(
+                    transcriptSnapshot(from: transcriptData, sermonUpdatedAt: remoteData.updatedAt),
+                    to: sermon
+                )
             }
 
             if let summaryData = remoteData.summary {
                 print("[SyncService] Creating summary: \(summaryData.title)")
-                applySummarySnapshot(summarySnapshot(from: summaryData), to: sermon)
+                applySummarySnapshot(
+                    summarySnapshot(from: summaryData, sermonUpdatedAt: remoteData.updatedAt),
+                    to: sermon
+                )
 
                 // Update sermon title with AI-generated title from summary
                 if !summaryData.title.isEmpty {
@@ -948,6 +1039,13 @@ struct RemoteNoteData: Codable {
     let localId: UUID
     let text: String
     let timestamp: TimeInterval
+
+    init(id: String, localId: UUID, text: String, timestamp: TimeInterval) {
+        self.id = id
+        self.localId = localId
+        self.text = text
+        self.timestamp = timestamp
+    }
     
     // Custom decoder to handle missing timestamp (defaults to 0 for manual notes)
     init(from decoder: Decoder) throws {

@@ -131,7 +131,7 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
           sermon_id: body.remoteId,
           user_id: user.id,
           text: note.text,
-          timestamp: 0 // Default value since timestamp is not needed
+          timestamp: note.timestamp ?? 0
         }));
 
         const { data: insertedNotes, error: notesError } = await supabase

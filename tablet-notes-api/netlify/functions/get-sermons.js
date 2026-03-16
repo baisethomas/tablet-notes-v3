@@ -137,11 +137,13 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
         notes: sermon.notes ? (Array.isArray(sermon.notes) ? sermon.notes.map(note => ({
           id: note.id,
           localId: note.local_id,
-          text: note.text
+          text: note.text,
+          timestamp: note.timestamp
         })) : [{
           id: sermon.notes.id,
           localId: sermon.notes.local_id,
-          text: sermon.notes.text
+          text: sermon.notes.text,
+          timestamp: sermon.notes.timestamp
         }]) : [],
         transcript: sermon.transcripts && (Array.isArray(sermon.transcripts) ? sermon.transcripts.length > 0 : typeof sermon.transcripts === 'object') ? {
           id: Array.isArray(sermon.transcripts) ? sermon.transcripts[0].id : sermon.transcripts.id,
@@ -191,4 +193,4 @@ exports.handler = withLogging('get-sermons', async (event, context) => {
     }, error);
     return createErrorResponse(error, 500);
   }
-}); 
+});
