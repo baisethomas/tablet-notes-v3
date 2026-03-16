@@ -13,6 +13,25 @@ import SwiftData
 
 struct AutoSummaryTimerTests {
 
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 2_000_000_000,
+        pollIntervalNanoseconds: UInt64 = 50_000_000,
+        condition: () -> Bool
+    ) async -> Bool {
+        var waited: UInt64 = 0
+
+        while waited < timeoutNanoseconds {
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            waited += pollIntervalNanoseconds
+        }
+
+        return condition()
+    }
+
     // MARK: - Test Helper: Mock Recording Service with Duration Limits
 
     class MockRecordingServiceWithLimits: RecordingServiceProtocol {
@@ -313,10 +332,12 @@ struct AutoSummaryTimerTests {
             return
         }
 
-        // Wait for auto-stop
-        try await Task.sleep(nanoseconds: 800_000_000) // 0.8 more seconds
+        // Wait for auto-stop without depending on exact timer scheduling.
+        let didStop = await waitUntil {
+            mockRecordingService.isRecording == false
+        }
 
-        // Should be stopped now
+        #expect(didStop == true)
         #expect(mockRecordingService.isRecording == false)
         #expect(mockRecordingService.remainingTime == nil) // Reset after stop
     }
