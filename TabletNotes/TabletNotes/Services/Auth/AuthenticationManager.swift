@@ -33,6 +33,16 @@ final class AuthenticationManager {
         print("[AuthenticationManager] Initializing auth state")
         initializeAuth()
     }
+
+    init(authService: any AuthServiceProtocol) {
+        self.authService = authService
+        print("[AuthenticationManager] Initializing AuthenticationManager: \(ObjectIdentifier(self))")
+        print("[AuthenticationManager] Using SupabaseAuthService instance: \(ObjectIdentifier(self.authService))")
+        print("[AuthenticationManager] Setting up bindings")
+        setupBindings()
+        print("[AuthenticationManager] Initializing auth state")
+        initializeAuth()
+    }
     
     // MARK: - Public Methods
     

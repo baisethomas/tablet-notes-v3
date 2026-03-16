@@ -99,6 +99,13 @@ class SermonService {
         let needsSync: Bool
     }
 
+    private struct NoteSnapshot {
+        let id: UUID
+        let text: String
+        let timestamp: TimeInterval
+        let remoteId: String?
+    }
+
     private func makeTranscriptSnapshot(from transcript: Transcript?) -> TranscriptSnapshot? {
         guard let transcript else { return nil }
 
@@ -136,6 +143,17 @@ class SermonService {
         )
     }
 
+    private func makeNoteSnapshots(from notes: [Note]) -> [NoteSnapshot] {
+        notes.map { note in
+            NoteSnapshot(
+                id: note.id,
+                text: note.text,
+                timestamp: note.timestamp,
+                remoteId: note.remoteId
+            )
+        }
+    }
+
     private func makeTranscriptSnapshot(
         text: String,
         segments: [TranscriptSegment],
@@ -171,13 +189,40 @@ class SermonService {
         return try? modelContext.fetch(fetchDescriptor).first
     }
 
-    private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
+    private func transcriptMatches(_ existing: Transcript?, snapshot: TranscriptSnapshot?) -> Bool {
+        switch (existing, snapshot) {
+        case (nil, nil):
+            return true
+        case let (existing?, snapshot?):
+            guard existing.text == snapshot.text,
+                  existing.remoteId == snapshot.remoteId,
+                  existing.segments.count == snapshot.segments.count else {
+                return false
+            }
+
+            return zip(existing.segments, snapshot.segments).allSatisfy { segment, snapshot in
+                segment.id == snapshot.id &&
+                segment.text == snapshot.text &&
+                segment.startTime == snapshot.startTime &&
+                segment.endTime == snapshot.endTime
+            }
+        default:
+            return false
+        }
+    }
+
+    @discardableResult
+    private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) -> Bool {
+        if transcriptMatches(sermon.transcript, snapshot: snapshot) {
+            return false
+        }
+
         guard let snapshot else {
             if let existingTranscript = sermon.transcript {
                 sermon.transcript = nil
                 modelContext.delete(existingTranscript)
             }
-            return
+            return true
         }
 
         let newSegments = snapshot.segments.map { segment in
@@ -201,7 +246,7 @@ class SermonService {
             existingTranscript.remoteId = snapshot.remoteId
             existingTranscript.updatedAt = snapshot.updatedAt
             existingTranscript.needsSync = snapshot.needsSync
-            return
+            return true
         }
 
         let transcript = Transcript(
@@ -214,16 +259,37 @@ class SermonService {
         )
         modelContext.insert(transcript)
         sermon.transcript = transcript
+        return true
     }
 
-    private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
+    private func summaryMatches(_ existing: Summary?, snapshot: SummarySnapshot?) -> Bool {
+        switch (existing, snapshot) {
+        case (nil, nil):
+            return true
+        case let (existing?, snapshot?):
+            return existing.title == snapshot.title &&
+                existing.text == snapshot.text &&
+                existing.type == snapshot.type &&
+                existing.status == snapshot.status &&
+                existing.remoteId == snapshot.remoteId
+        default:
+            return false
+        }
+    }
+
+    @discardableResult
+    private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) -> Bool {
+        if summaryMatches(sermon.summary, snapshot: snapshot) {
+            return false
+        }
+
         guard let snapshot else {
             if let existingSummary = sermon.summary {
                 sermon.summary = nil
                 modelContext.delete(existingSummary)
             }
             sermon.summaryPreviewText = nil
-            return
+            return true
         }
 
         if let existingSummary = sermon.summary {
@@ -235,7 +301,7 @@ class SermonService {
             existingSummary.updatedAt = snapshot.updatedAt
             existingSummary.needsSync = snapshot.needsSync
             sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
-            return
+            return true
         }
 
         let summary = Summary(
@@ -251,6 +317,59 @@ class SermonService {
         modelContext.insert(summary)
         sermon.summary = summary
         sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
+        return true
+    }
+
+    @discardableResult
+    private func applyNoteSnapshots(_ snapshots: [NoteSnapshot], to sermon: Sermon) -> Bool {
+        var notesChanged = false
+        let snapshotIDs = Set(snapshots.map(\.id))
+        let removedNotes = sermon.notes.filter { !snapshotIDs.contains($0.id) }
+
+        if !removedNotes.isEmpty {
+            let removedIDs = Set(removedNotes.map(\.id))
+            sermon.notes.removeAll { removedIDs.contains($0.id) }
+            for note in removedNotes {
+                modelContext.delete(note)
+            }
+            notesChanged = true
+        }
+
+        let existingNotesByID = Dictionary(uniqueKeysWithValues: sermon.notes.map { ($0.id, $0) })
+
+        for snapshot in snapshots {
+            if let existingNote = existingNotesByID[snapshot.id] {
+                let noteChanged =
+                    existingNote.text != snapshot.text ||
+                    existingNote.timestamp != snapshot.timestamp ||
+                    existingNote.remoteId != snapshot.remoteId
+
+                if noteChanged {
+                    existingNote.text = snapshot.text
+                    existingNote.timestamp = snapshot.timestamp
+                    existingNote.remoteId = snapshot.remoteId
+                    existingNote.updatedAt = Date()
+                    existingNote.needsSync = sermon.remoteId != nil
+                    notesChanged = true
+                }
+                continue
+            }
+
+            let note = Note(
+                id: snapshot.id,
+                text: snapshot.text,
+                timestamp: snapshot.timestamp,
+                remoteId: snapshot.remoteId,
+                updatedAt: Date(),
+                needsSync: sermon.remoteId != nil
+            )
+            note.sermon = sermon
+            modelContext.insert(note)
+            sermon.notes.append(note)
+            notesChanged = true
+        }
+
+        return notesChanged
     }
 
     func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil, completion: ((UUID) -> Void)? = nil) {
@@ -289,54 +408,45 @@ class SermonService {
                 print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s, id: \(note.id)")
             }
 
-            // Create fresh Note instances for SwiftData to avoid issues with detached objects
-            // Notes from NoteService are JSON-decoded and may not be properly attached to ModelContext
-            let noteSnapshotDate = Date()
-            let freshNotes = notes.map { note in
-                Note(
-                    id: note.id,
-                    text: note.text,
-                    timestamp: note.timestamp,
-                    remoteId: note.remoteId,
-                    updatedAt: noteSnapshotDate,
-                    needsSync: true
-                )
-            }
-            print("[DEBUG] saveSermon: Created \(freshNotes.count) fresh Note objects for SwiftData")
+            let noteSnapshots = makeNoteSnapshots(from: notes)
             let transcriptSnapshot = makeTranscriptSnapshot(from: transcript)
             let summarySnapshot = makeSummarySnapshot(from: summary)
+            var metadataChangedForSync = isNewSermon
+            var notesChangedForSync = isNewSermon && !noteSnapshots.isEmpty
+            var transcriptChangedForSync = isNewSermon && transcriptSnapshot != nil
+            var summaryChangedForSync = isNewSermon && summarySnapshot != nil
 
             if let existing = sermons.first(where: { $0.id == sermonID }) {
                 // Update existing sermon
+                let metadataChanged =
+                    existing.title != title ||
+                    existing.audioFileName != audioFileURL.lastPathComponent ||
+                    existing.date != date ||
+                    existing.serviceType != serviceType ||
+                    existing.speaker != speaker ||
+                    existing.transcriptionStatus != transcriptionStatus ||
+                    existing.summaryStatus != summaryStatus ||
+                    existing.isArchived != isArchived ||
+                    existing.userId != currentUser.id
+
                 existing.title = title
                 existing.audioFileName = audioFileURL.lastPathComponent
                 existing.date = date
                 existing.serviceType = serviceType
                 existing.speaker = speaker
-                applyTranscriptSnapshot(transcriptSnapshot, to: existing)
-                
-                // For existing sermon, handle notes carefully
-                // First, delete all old notes - SwiftData cascade will handle cleanup
-                let oldNotes = existing.notes
-                for note in oldNotes {
-                    modelContext.delete(note)
-                }
-                
-                // Clear the relationship
-                existing.notes.removeAll()
-                
-                // Add fresh notes - insert them and add to the relationship
-                for note in freshNotes {
-                    modelContext.insert(note)
-                    existing.notes.append(note) // SwiftData will set note.sermon automatically
-                }
-                
-                applySummarySnapshot(summarySnapshot, to: existing)
+                let transcriptChanged = applyTranscriptSnapshot(transcriptSnapshot, to: existing)
+                let notesChanged = applyNoteSnapshots(noteSnapshots, to: existing)
+                let summaryChanged = applySummarySnapshot(summarySnapshot, to: existing)
                 existing.transcriptionStatus = transcriptionStatus
                 existing.summaryStatus = summaryStatus
                 existing.isArchived = isArchived
                 existing.userId = currentUser.id
                 print("[DEBUG] saveSermon: updated existing sermon \(existing.id) with \(existing.notes.count) notes for user \(currentUser.id)")
+
+                metadataChangedForSync = metadataChanged
+                notesChangedForSync = notesChanged
+                transcriptChangedForSync = transcriptChanged
+                summaryChangedForSync = summaryChanged
             } else {
                 // For new sermons: Create sermon, insert it, then add notes with explicit relationship
                 let sermon = Sermon(
@@ -360,16 +470,9 @@ class SermonService {
                 modelContext.insert(sermon)
 
                 // Create related models inside this ModelContext to avoid detached @Model relationships.
-                applyTranscriptSnapshot(transcriptSnapshot, to: sermon)
-                applySummarySnapshot(summarySnapshot, to: sermon)
-                
-                // Now add notes with explicit relationship setting
-                for note in freshNotes {
-                    // Set the inverse relationship BEFORE inserting
-                    note.sermon = sermon
-                    modelContext.insert(note)
-                    sermon.notes.append(note)
-                }
+                transcriptChangedForSync = applyTranscriptSnapshot(transcriptSnapshot, to: sermon)
+                summaryChangedForSync = applySummarySnapshot(summarySnapshot, to: sermon)
+                notesChangedForSync = applyNoteSnapshots(noteSnapshots, to: sermon)
                 
                 // Verify relationship is set up correctly
                 print("[DEBUG] saveSermon: inserted new sermon \(sermon.id) with \(sermon.notes.count) notes for user \(currentUser.id)")
@@ -417,10 +520,10 @@ class SermonService {
                 print("[SermonService] Marking sermon \(sermonID) for sync (isNew: \(isNewSermon))")
                 markSermonForSync(
                     sermonID,
-                    metadata: true,
-                    notes: true,
-                    transcript: transcriptSnapshot != nil,
-                    summary: summarySnapshot != nil
+                    metadata: metadataChangedForSync,
+                    notes: notesChangedForSync,
+                    transcript: transcriptChangedForSync,
+                    summary: summaryChangedForSync
                 )
                 triggerSyncIfNeeded()
             }
