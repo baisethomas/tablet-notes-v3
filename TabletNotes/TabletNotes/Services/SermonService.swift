@@ -1014,10 +1014,6 @@ class SermonService {
             try modelContext.save()
             InterruptedRecordingRecoveryStore.clear()
             noteService.clearSession()
-            limitReachedMessage = "Recovered an interrupted recording."
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                self.limitReachedMessage = nil
-            }
             print("[SermonService] Recovered interrupted recording \(manifest.audioFileName)")
         } catch {
             print("[SermonService] Failed to recover interrupted recording: \(error)")
@@ -1171,15 +1167,6 @@ class SermonService {
                 
                 // Refresh sermon list
                 fetchSermons()
-                
-                // Show user notification about recovery
-                limitReachedMessage = "Recovered \(recoveredCount) recordings from previous version!"
-                
-                // Clear the message after a delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                    self.limitReachedMessage = nil
-                }
-                
             } catch {
                 print("[SermonService] Failed to save recovered sermons: \(error)")
             }
@@ -1189,19 +1176,13 @@ class SermonService {
     private func generateTitleFromFilename(_ filename: String, date: Date) -> String {
         // Extract UUID from filename if possible, otherwise use date
         if filename.hasPrefix("sermon_") {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            formatter.timeStyle = .short
-            return "Recovered Recording from \(formatter.string(from: date))"
+            return "Sermon on " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
         }
-        return "Recovered Recording"
+        return "Sermon"
     }
 
     private func generateInterruptedRecordingTitle(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return "Recovered Recording from \(formatter.string(from: date))"
+        "Sermon on " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
     }
 
     private func findSermon(withAudioFileName audioFileName: String) -> Sermon? {
