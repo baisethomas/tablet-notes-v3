@@ -306,6 +306,62 @@ struct SummaryRetryServiceRegressionTests {
     }
 
     @MainActor
+    @Test func recoverIncompleteSummariesCreatesJobsForPendingSummariesWithoutExistingJobs() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Pending summary transcript ", count: 16))
+        let sermon = Sermon(
+            title: "Pending Summary Sermon",
+            audioFileName: "pending-summary.m4a",
+            date: Date(),
+            serviceType: "Sermon",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+
+        context.insert(transcript)
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Pending Recovery Title",
+                summary: "Pending recovery summary for \(serviceType) from \(transcript.prefix(12))"
+            )
+        }
+
+        retryService.recoverIncompleteSummaries()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let refreshedJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.kind == .summary })
+
+        #expect(runnerCallCount == 1)
+        #expect(refreshedSermon?.summaryStatus == "complete")
+        #expect(refreshedSermon?.summary?.title == "Pending Recovery Title")
+        #expect(refreshedJob?.status == .complete)
+    }
+
+    @MainActor
     @Test func nonRetryableSummaryFailuresFallBackImmediately() async throws {
         let context = try makeModelContext()
 

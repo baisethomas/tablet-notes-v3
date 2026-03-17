@@ -131,7 +131,7 @@ class SummaryRetryService: ObservableObject {
     }
 
     func retrySummaryIfNeeded(for sermon: Sermon) {
-        guard sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" else {
+        guard shouldRecoverSummary(for: sermon) else {
             return
         }
         guard job(for: sermon.id) == nil else { return }
@@ -143,13 +143,17 @@ class SummaryRetryService: ObservableObject {
 
         do {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            print("[SummaryRetryService] Recovering incomplete summaries from \(sermons.count) sermons")
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
                 guard let transcript = sermon.transcript, !transcript.text.isEmpty else { continue }
-                guard sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" else { continue }
+                guard shouldRecoverSummary(for: sermon) else { continue }
+                print("[SummaryRetryService] Inspecting sermon \(sermon.id) with summaryStatus=\(sermon.summaryStatus)")
                 if let existingJob = job(for: sermon.id) {
-                    if sermon.summaryStatus == "processing" {
+                    if sermon.summaryStatus == "processing" || sermon.summaryStatus == "pending" || sermon.summary == nil {
                         if reactivateStaleProcessingJob(existingJob, for: sermon) {
                             print("[SummaryRetryService] Reactivated stale summary job for sermon \(sermon.id)")
+                        } else if existingJob.isRunnable() {
+                            print("[SummaryRetryService] Summary job is already runnable for sermon \(sermon.id)")
                         }
                     } else if existingJob.status == .running && !isProcessingQueue {
                         existingJob.status = .queued
@@ -413,6 +417,16 @@ class SummaryRetryService: ObservableObject {
 
         let job = ProcessingJob(sermonId: sermonId, kind: .summary)
         context.insert(job)
+    }
+
+    private func shouldRecoverSummary(for sermon: Sermon) -> Bool {
+        guard sermon.transcriptionStatus == "complete" else { return false }
+        guard sermon.summaryStatus != "complete" || sermon.summary == nil else { return false }
+
+        return sermon.summaryStatus == "failed" ||
+            sermon.summaryStatus == "processing" ||
+            sermon.summaryStatus == "pending" ||
+            sermon.summary == nil
     }
 
     @discardableResult
