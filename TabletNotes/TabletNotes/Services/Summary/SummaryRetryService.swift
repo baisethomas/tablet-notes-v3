@@ -107,6 +107,7 @@ class SummaryRetryService: ObservableObject {
             return false
         }
 
+        print("[SummaryRetryService] Enqueuing summary for sermon \(sermonId) with transcript length \(transcript.text.count)")
         upsertJob(for: sermonId, resetAttempts: true)
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
@@ -146,15 +147,19 @@ class SummaryRetryService: ObservableObject {
                 guard let transcript = sermon.transcript, !transcript.text.isEmpty else { continue }
                 guard sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" else { continue }
                 if let existingJob = job(for: sermon.id) {
-                    if existingJob.status == .running && !isProcessingQueue {
+                    if sermon.summaryStatus == "processing" {
+                        if reactivateStaleProcessingJob(existingJob, for: sermon) {
+                            print("[SummaryRetryService] Reactivated stale summary job for sermon \(sermon.id)")
+                        }
+                    } else if existingJob.status == .running && !isProcessingQueue {
                         existingJob.status = .queued
                         existingJob.nextAttemptAt = nil
                         existingJob.updatedAt = Date()
                         existingJob.lastError = nil
-                        sermon.summaryStatus = "processing"
                         sermon.markPendingSync(metadata: true)
                     }
                 } else {
+                    print("[SummaryRetryService] Recreated missing summary job for sermon \(sermon.id)")
                     upsertJob(for: sermon.id, resetAttempts: false)
                 }
             }
@@ -194,6 +199,7 @@ class SummaryRetryService: ObservableObject {
             return
         }
 
+        print("[SummaryRetryService] Starting queued summary job for sermon \(nextJob.sermonId)")
         startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
     }
 
@@ -208,6 +214,7 @@ class SummaryRetryService: ObservableObject {
             return
         }
 
+        print("[SummaryRetryService] Starting manual summary job for sermon \(sermonId)")
         startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
     }
 
@@ -273,6 +280,7 @@ class SummaryRetryService: ObservableObject {
                     object: refreshedSermon.id
                 )
             } catch {
+                print("[SummaryRetryService] Summary generation failed for sermon \(sermonId): \(error.localizedDescription)")
                 guard let context = self.modelContext,
                       let refreshedJob = self.fetchJob(withId: jobId, in: context),
                       let refreshedSermon = self.fetchSermon(withId: sermonId, in: context) else {
@@ -405,6 +413,32 @@ class SummaryRetryService: ObservableObject {
 
         let job = ProcessingJob(sermonId: sermonId, kind: .summary)
         context.insert(job)
+    }
+
+    @discardableResult
+    private func reactivateStaleProcessingJob(_ job: ProcessingJob, for sermon: Sermon) -> Bool {
+        guard !isProcessingQueue else { return false }
+
+        switch job.status {
+        case .running, .failed:
+            job.status = .queued
+            job.nextAttemptAt = nil
+            job.updatedAt = Date()
+            job.lastError = nil
+            sermon.summaryStatus = "processing"
+            sermon.markPendingSync(metadata: true)
+            return true
+        case .queued:
+            guard job.nextAttemptAt != nil else { return false }
+            job.nextAttemptAt = nil
+            job.updatedAt = Date()
+            job.lastError = nil
+            sermon.summaryStatus = "processing"
+            sermon.markPendingSync(metadata: true)
+            return true
+        case .complete:
+            return false
+        }
     }
 
     private func job(for sermonId: UUID) -> ProcessingJob? {

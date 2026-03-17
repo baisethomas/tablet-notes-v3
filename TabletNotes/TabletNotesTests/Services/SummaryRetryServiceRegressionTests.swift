@@ -237,6 +237,75 @@ struct SummaryRetryServiceRegressionTests {
     }
 
     @MainActor
+    @Test func recoverIncompleteSummariesRequeuesFailedBackoffJobsForProcessingSermons() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Queued recovery summary text ", count: 16))
+        let sermon = Sermon(
+            title: "Queued Recovery Sermon",
+            audioFileName: "queued-recovery-summary.m4a",
+            date: Date(),
+            serviceType: "Bible Study",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "processing",
+            userId: UUID()
+        )
+        let delayedJob = ProcessingJob(
+            sermonId: sermon.id,
+            kind: .summary,
+            status: .failed,
+            attemptCount: 1,
+            createdAt: Date().addingTimeInterval(-300),
+            updatedAt: Date().addingTimeInterval(-300),
+            nextAttemptAt: Date().addingTimeInterval(600),
+            lastAttemptAt: Date().addingTimeInterval(-300),
+            lastError: "Timed out"
+        )
+
+        context.insert(transcript)
+        context.insert(sermon)
+        context.insert(delayedJob)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Recovered Backoff Title",
+                summary: "Recovered backoff summary for \(serviceType) from \(transcript.prefix(12))"
+            )
+        }
+
+        retryService.recoverIncompleteSummaries()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let refreshedJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.kind == .summary })
+
+        #expect(runnerCallCount == 1)
+        #expect(refreshedSermon?.summaryStatus == "complete")
+        #expect(refreshedSermon?.summary?.title == "Recovered Backoff Title")
+        #expect(refreshedJob?.status == .complete)
+        #expect(refreshedJob?.attemptCount == 1)
+    }
+
+    @MainActor
     @Test func nonRetryableSummaryFailuresFallBackImmediately() async throws {
         let context = try makeModelContext()
 
