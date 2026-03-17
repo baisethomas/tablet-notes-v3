@@ -362,6 +362,77 @@ struct SummaryRetryServiceRegressionTests {
     }
 
     @MainActor
+    @Test func processQueueSkipsOrphanedSummaryJobsAndRunsNextValidJob() async throws {
+        let context = try makeModelContext()
+
+        let orphanedJob = ProcessingJob(
+            sermonId: UUID(),
+            kind: .summary,
+            status: .queued,
+            createdAt: Date().addingTimeInterval(-600),
+            updatedAt: Date().addingTimeInterval(-600)
+        )
+
+        let transcript = Transcript(text: String(repeating: "Queue recovery transcript ", count: 12))
+        let sermon = Sermon(
+            title: "Queue Recovery Sermon",
+            audioFileName: "queue-recovery.m4a",
+            date: Date(),
+            serviceType: "Sermon",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        let validJob = ProcessingJob(
+            sermonId: sermon.id,
+            kind: .summary,
+            status: .queued,
+            createdAt: Date().addingTimeInterval(-300),
+            updatedAt: Date().addingTimeInterval(-300)
+        )
+
+        context.insert(orphanedJob)
+        context.insert(transcript)
+        context.insert(sermon)
+        context.insert(validJob)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Recovered Queue Title",
+                summary: "Recovered queue summary for \(serviceType) from \(transcript.prefix(12))"
+            )
+        }
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+
+        #expect(runnerCallCount == 1)
+        #expect(refreshedSermon?.summaryStatus == "complete")
+        #expect(refreshedSermon?.summary?.title == "Recovered Queue Title")
+        #expect(jobs.contains(where: { $0.id == orphanedJob.id }) == false)
+        #expect(jobs.first(where: { $0.id == validJob.id })?.status == .complete)
+    }
+
+    @MainActor
     @Test func nonRetryableSummaryFailuresFallBackImmediately() async throws {
         let context = try makeModelContext()
 

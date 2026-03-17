@@ -196,13 +196,13 @@ class SummaryRetryService: ObservableObject {
         guard !isProcessingQueue,
               isNetworkAvailable,
               let context = modelContext,
-              let nextJob = nextRunnableJob(in: context),
-              let sermon = fetchSermon(withId: nextJob.sermonId, in: context),
-              let transcript = sermon.transcript,
-              !transcript.text.isEmpty else {
+              let nextCandidate = nextProcessableJob(in: context) else {
             return
         }
 
+        let nextJob = nextCandidate.job
+        let sermon = nextCandidate.sermon
+        let transcript = nextCandidate.transcript
         print("[SummaryRetryService] Starting queued summary job for sermon \(nextJob.sermonId)")
         startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
     }
@@ -467,13 +467,52 @@ class SummaryRetryService: ObservableObject {
         })
     }
 
-    private func nextRunnableJob(in context: ModelContext) -> ProcessingJob? {
+    private func nextProcessableJob(in context: ModelContext) -> (
+        job: ProcessingJob,
+        sermon: Sermon,
+        transcript: Transcript
+    )? {
         let descriptor = FetchDescriptor<ProcessingJob>(
             sortBy: [SortDescriptor(\.createdAt)]
         )
-        return (try? context.fetch(descriptor))?.first(where: {
-            $0.kind == .summary && $0.isRunnable()
-        })
+        guard let jobs = try? context.fetch(descriptor) else { return nil }
+
+        var mutatedQueue = false
+
+        for job in jobs where job.kind == .summary && job.isRunnable() {
+            guard let sermon = fetchSermon(withId: job.sermonId, in: context) else {
+                print("[SummaryRetryService] Removing orphaned summary job for sermon \(job.sermonId)")
+                context.delete(job)
+                mutatedQueue = true
+                continue
+            }
+
+            if sermon.summaryStatus == "complete", sermon.summary != nil {
+                print("[SummaryRetryService] Completing stale summary job for sermon \(sermon.id)")
+                job.markComplete()
+                mutatedQueue = true
+                continue
+            }
+
+            guard sermon.transcriptionStatus == "complete",
+                  let transcript = sermon.transcript,
+                  !transcript.text.isEmpty else {
+                print("[SummaryRetryService] Skipping summary job for sermon \(sermon.id); transcript unavailable")
+                continue
+            }
+
+            if mutatedQueue {
+                try? context.save()
+            }
+
+            return (job, sermon, transcript)
+        }
+
+        if mutatedQueue {
+            try? context.save()
+        }
+
+        return nil
     }
 
     private func fetchSermon(withId id: UUID, in context: ModelContext) -> Sermon? {
