@@ -3,6 +3,7 @@ import SwiftData
 import Testing
 @testable import TabletNotes
 
+@Suite(.serialized)
 struct SermonProcessingCoordinatorTests {
 
     @MainActor
@@ -91,5 +92,76 @@ struct SermonProcessingCoordinatorTests {
         #expect(bootstrapCount == 1)
         #expect(refreshCount == 0)
         #expect(syncCount == 2)
+    }
+
+    @MainActor
+    @Test func handleAppLaunchImmediatelyProcessesRecoveredInterruptedRecordings() async throws {
+        InterruptedRecordingRecoveryStore.clear()
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("launch-recovery-\(UUID().uuidString).m4a")
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x09, count: 4096))
+
+        let noteService = NoteService(sessionId: "launch-recovery-session")
+        noteService.addNote(text: "Recovered launch note", timestamp: 3)
+        InterruptedRecordingRecoveryStore.save(
+            InterruptedRecordingManifest(
+                sessionId: "launch-recovery-session",
+                serviceType: "Sermon",
+                audioFileName: audioURL.lastPathComponent,
+                startedAt: Date().addingTimeInterval(-90)
+            )
+        )
+
+        let context = try makeModelContext()
+        let sermonService = SermonService(modelContext: context)
+        let coordinator = SermonProcessingCoordinator.shared
+        let retryService = TranscriptionRetryService.shared
+
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.summaryEnqueuer = nil
+            retryService.overrideNetworkAvailability(false)
+            coordinator.resetForTesting()
+            InterruptedRecordingRecoveryStore.clear()
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        coordinator.resetForTesting()
+        coordinator.syncRunner = {}
+        coordinator.configure(modelContext: context, sermonService: sermonService)
+
+        var runnerCallCount = 0
+        retryService.transcriptionRunner = { _, completion in
+            runnerCallCount += 1
+            completion(.success((
+                "Recovered on launch",
+                [TranscriptSegment(text: "Recovered on launch", startTime: 0, endTime: 2)]
+            )))
+        }
+        retryService.summaryEnqueuer = { _ in }
+
+        await coordinator.handleAppLaunch(syncDelayNanoseconds: 0)
+
+        var recoveredSermon: Sermon?
+        for _ in 0..<20 {
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            #expect(sermons.count == 1)
+
+            if let sermon = sermons.first,
+               sermon.transcriptionStatus == "complete",
+               sermon.transcript?.text == "Recovered on launch" {
+                recoveredSermon = sermon
+                break
+            }
+
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(runnerCallCount == 1)
+        #expect(recoveredSermon?.transcriptionStatus == "complete")
+        #expect(recoveredSermon?.transcript?.text == "Recovered on launch")
     }
 }

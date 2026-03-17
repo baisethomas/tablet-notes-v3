@@ -52,6 +52,7 @@ final class SermonProcessingCoordinator {
 
     func handleAppLaunch(syncDelayNanoseconds: UInt64 = 500_000_000) async {
         bootstrapBackgroundProcessingIfNeeded()
+        startRecoveredInterruptedProcessingIfNeeded()
 
         if syncDelayNanoseconds > 0 {
             try? await Task.sleep(nanoseconds: syncDelayNanoseconds)
@@ -119,6 +120,14 @@ final class SermonProcessingCoordinator {
         SummaryRetryService.shared.checkForStuckProcessingSummaries()
         TranscriptionRetryService.shared.processQueue()
         SummaryRetryService.shared.processQueue()
+    }
+
+    private func startRecoveredInterruptedProcessingIfNeeded() {
+        guard let sermonService else { return }
+
+        for sermonID in sermonService.consumeRecoveredInterruptedSermonIDs() {
+            retryTranscription(for: sermonID)
+        }
     }
 
     private func triggerSync() async {

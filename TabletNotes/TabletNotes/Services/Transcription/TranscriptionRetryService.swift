@@ -113,13 +113,34 @@ class TranscriptionRetryService: ObservableObject {
 
         do {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            let jobs = try context.fetch(
+                FetchDescriptor<ProcessingJob>(
+                    sortBy: [SortDescriptor(\.createdAt)]
+                )
+            )
+
             for sermon in sermons where sermon.transcriptionStatus != "complete" && sermon.audioFileExists {
-                if job(for: sermon.id) == nil {
-                    upsertJob(for: sermon.id, resetAttempts: false)
-                    if sermon.transcriptionStatus == "processing" {
+                if let existingJob = jobs.first(where: {
+                    $0.sermonId == sermon.id &&
+                    $0.kind == .transcription &&
+                    $0.status != .complete
+                }) {
+                    // A persisted running job cannot still be active after app relaunch.
+                    if existingJob.status == .running && !isProcessingQueue {
+                        existingJob.status = .queued
+                        existingJob.nextAttemptAt = nil
+                        existingJob.updatedAt = Date()
+                        existingJob.lastError = nil
                         sermon.transcriptionStatus = "pending"
                         sermon.markPendingSync(metadata: true)
                     }
+                    continue
+                }
+
+                upsertJob(for: sermon.id, resetAttempts: false)
+                if sermon.transcriptionStatus == "processing" {
+                    sermon.transcriptionStatus = "pending"
+                    sermon.markPendingSync(metadata: true)
                 }
             }
             try? context.save()

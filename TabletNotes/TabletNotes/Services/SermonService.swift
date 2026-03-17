@@ -21,6 +21,7 @@ class SermonService {
     private var syncService: (any SyncServiceProtocol)?
     private var subscriptionService: (any SubscriptionServiceProtocol)?
     private var hasAttemptedInterruptedRecordingRecovery = false
+    private var recoveredInterruptedSermonIDs: [UUID] = []
     private(set) var sermons: [Sermon] = []
     private(set) var filteredSermons: [Sermon] = []
     var limitReachedMessage: String?
@@ -386,9 +387,11 @@ class SermonService {
                 return
             }
             
-            // Check if this is a new sermon (not an update)
-            let sermonID = id ?? UUID()
-            let isNewSermon = !sermons.contains { $0.id == sermonID }
+            // Treat the audio file as the durable identity for interrupted recording recovery.
+            let requestedSermonID = id ?? UUID()
+            let existingSermon = findSermon(by: requestedSermonID) ?? findSermon(withAudioFileName: audioFileURL.lastPathComponent)
+            let sermonID = existingSermon?.id ?? requestedSermonID
+            let isNewSermon = existingSermon == nil
             
             // Check usage limits for new sermons
             if isNewSermon && !currentUser.canCreateNewRecording() {
@@ -419,7 +422,7 @@ class SermonService {
             var transcriptChangedForSync = isNewSermon && transcriptSnapshot != nil
             var summaryChangedForSync = isNewSermon && summarySnapshot != nil
 
-            if let existing = sermons.first(where: { $0.id == sermonID }) {
+            if let existing = existingSermon {
                 // Update existing sermon
                 let metadataChanged =
                     existing.title != title ||
@@ -935,6 +938,12 @@ class SermonService {
     func clearLimitMessage() {
         limitReachedMessage = nil
     }
+
+    func consumeRecoveredInterruptedSermonIDs() -> [UUID] {
+        let sermonIDs = recoveredInterruptedSermonIDs
+        recoveredInterruptedSermonIDs.removeAll()
+        return sermonIDs
+    }
     
     // MARK: - Manual Recovery
     
@@ -1002,6 +1011,7 @@ class SermonService {
             isArchived: false,
             userId: authManager.currentUser?.id
         )
+        sermon.markPendingSync(metadata: true, notes: !recoveredNotes.isEmpty)
 
         for note in recoveredNotes {
             note.sermon = sermon
@@ -1012,6 +1022,7 @@ class SermonService {
 
         do {
             try modelContext.save()
+            recoveredInterruptedSermonIDs.append(sermon.id)
             InterruptedRecordingRecoveryStore.clear()
             noteService.clearSession()
             print("[SermonService] Recovered interrupted recording \(manifest.audioFileName)")
@@ -1099,6 +1110,11 @@ class SermonService {
         for fileInfo in recoverableFiles {
             // Check if audio file still exists
             if FileManager.default.fileExists(atPath: fileInfo.path) {
+                if findSermon(withAudioFileName: fileInfo.filename) != nil {
+                    print("[SermonService] Skipping recovery for \(fileInfo.filename); sermon already exists")
+                    continue
+                }
+
                 // Create a new sermon record for this audio file
                 let title = generateTitleFromFilename(fileInfo.filename, date: fileInfo.creationDate)
                 
@@ -1147,6 +1163,11 @@ class SermonService {
                     isArchived: false,
                     userId: authManager.currentUser?.id
                 )
+                sermon.markPendingSync(metadata: true, notes: !recoveredNotes.isEmpty)
+
+                for note in recoveredNotes {
+                    note.sermon = sermon
+                }
                 
                 modelContext.insert(sermon)
                 recoveredCount += 1

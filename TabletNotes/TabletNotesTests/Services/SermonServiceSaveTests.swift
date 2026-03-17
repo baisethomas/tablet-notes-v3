@@ -208,10 +208,71 @@ struct SermonServiceSaveTests {
         #expect(recoveredSermon.summaryStatus == "pending")
         #expect(recoveredSermon.notes.count == 1)
         #expect(recoveredSermon.notes.first?.text == "Recovered note")
+        #expect(recoveredSermon.hasPendingSyncWork == true)
         #expect(InterruptedRecordingRecoveryStore.load() == nil)
         #expect(NoteService(sessionId: "interrupted-session").currentNotes.isEmpty)
 
         try? FileManager.default.removeItem(at: audioURL)
         InterruptedRecordingRecoveryStore.clear()
+    }
+
+    @Test func saveSermonReusesRecoveredDraftWhenAudioFileAlreadyExists() async throws {
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let currentUser = MockAuthService.createMockUser()
+        mockAuthService.setAuthState(.authenticated(currentUser))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("recovered-\(UUID().uuidString).m4a")
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x07, count: 4096))
+
+        let existingSermon = Sermon(
+            title: "Recovered Draft",
+            audioFileName: audioURL.lastPathComponent,
+            date: Date().addingTimeInterval(-120),
+            serviceType: "Bible Study",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            userId: currentUser.id
+        )
+        modelContext.insert(existingSermon)
+        try modelContext.save()
+        sermonService.fetchSermons()
+
+        let note = Note(text: "Recovered note", timestamp: 5)
+        sermonService.saveSermon(
+            title: "Recovered Draft",
+            audioFileURL: audioURL,
+            date: existingSermon.date,
+            serviceType: existingSermon.serviceType,
+            transcript: nil,
+            notes: [note],
+            summary: nil,
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            id: UUID()
+        )
+
+        let saveFinished = await waitUntil {
+            let sermons = try? modelContext.fetch(FetchDescriptor<Sermon>())
+            return sermons?.count == 1 && sermons?.first?.notes.count == 1
+        }
+        #expect(saveFinished == true)
+
+        let sermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(sermons.count == 1)
+        #expect(sermons.first?.id == existingSermon.id)
+        #expect(sermons.first?.notes.count == 1)
+        #expect(sermons.first?.notes.first?.text == "Recovered note")
+
+        try? FileManager.default.removeItem(at: audioURL)
     }
 }

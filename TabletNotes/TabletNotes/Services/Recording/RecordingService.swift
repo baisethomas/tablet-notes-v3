@@ -96,6 +96,13 @@ class RecordingService: NSObject {
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: UIApplication.willTerminateNotification,
+            object: nil
+        )
+
         // Handle audio session interruptions
         NotificationCenter.default.addObserver(
             self,
@@ -141,6 +148,10 @@ class RecordingService: NSObject {
                 print("[RecordingService] Failed to reactivate audio session: \(error)")
             }
         }
+    }
+
+    @objc private func appWillTerminate() {
+        finalizeRecordingForRecovery()
     }
 
     @objc private func handleAudioSessionInterruption(notification: Notification) {
@@ -300,32 +311,11 @@ class RecordingService: NSObject {
             throw RecordingError.recordingFailed
         }
         recordingURL = url
-        if let activeRecoverySessionId {
-            InterruptedRecordingRecoveryStore.save(
-                InterruptedRecordingManifest(
-                    sessionId: activeRecoverySessionId,
-                    serviceType: serviceType,
-                    audioFileName: filename,
-                    startedAt: recordingStartTime ?? Date()
-                )
-            )
-        } else {
-            print("[RecordingService] No recovery session ID was set before recording started")
-        }
 
         // Start duration tracking
         recordingDuration = 0
         recordingStartTime = Date()
-        if let activeRecoverySessionId {
-            InterruptedRecordingRecoveryStore.save(
-                InterruptedRecordingManifest(
-                    sessionId: activeRecoverySessionId,
-                    serviceType: serviceType,
-                    audioFileName: filename,
-                    startedAt: recordingStartTime ?? Date()
-                )
-            )
-        }
+        saveRecoveryManifest(serviceType: serviceType, audioFileName: filename)
         startDurationTimer()
 
         isRecording = true
@@ -372,6 +362,32 @@ class RecordingService: NSObject {
 
     func prepareRecoverySession(sessionId: String) {
         activeRecoverySessionId = sessionId
+    }
+
+    private func saveRecoveryManifest(serviceType: String, audioFileName: String) {
+        guard let activeRecoverySessionId else {
+            print("[RecordingService] No recovery session ID was set before recording started")
+            return
+        }
+
+        InterruptedRecordingRecoveryStore.save(
+            InterruptedRecordingManifest(
+                sessionId: activeRecoverySessionId,
+                serviceType: serviceType,
+                audioFileName: audioFileName,
+                startedAt: recordingStartTime ?? Date()
+            )
+        )
+    }
+
+    private func finalizeRecordingForRecovery() {
+        guard isRecording else { return }
+
+        print("[RecordingService] Finalizing active recording for recovery before termination")
+        stopDurationTimer()
+        audioRecorder?.stop()
+        isPaused = false
+        isPausedSubject.send(false)
     }
     
     func pauseRecording() throws {

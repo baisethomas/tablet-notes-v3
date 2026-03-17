@@ -239,4 +239,86 @@ struct ProcessingJobRegressionTests {
         summaryRetryService.basicSummaryGenerator = nil
         try? FileManager.default.removeItem(at: audioURL)
     }
+
+    @MainActor
+    @Test func recoverIncompleteTranscriptionsRequeuesStaleRunningJobsAfterRelaunch() async throws {
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            Summary.self,
+            ProcessingJob.self,
+            TranscriptSegment.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("stale-running-job-sermon.m4a")
+        let audioData = Data(repeating: 0x04, count: 4096)
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: audioData)
+
+        let sermon = Sermon(
+            title: "Recovered Relaunch Sermon",
+            audioFileName: audioURL.lastPathComponent,
+            date: Date(),
+            serviceType: "Sermon",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "processing",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        let staleJob = ProcessingJob(
+            sermonId: sermon.id,
+            kind: .transcription,
+            status: .running,
+            attemptCount: 1,
+            createdAt: Date().addingTimeInterval(-120),
+            updatedAt: Date().addingTimeInterval(-120),
+            lastAttemptAt: Date().addingTimeInterval(-120)
+        )
+
+        context.insert(sermon)
+        context.insert(staleJob)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        retryService.transcriptionRunner = { _, completion in
+            completion(.success((
+                "Recovered after relaunch",
+                [TranscriptSegment(text: "Recovered after relaunch", startTime: 0, endTime: 2)]
+            )))
+        }
+        retryService.summaryEnqueuer = { _ in }
+
+        retryService.recoverIncompleteTranscriptions()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshed = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        let transcriptionJobs = jobs.filter { $0.kind == .transcription && $0.sermonId == sermon.id }
+
+        #expect(refreshed?.transcriptionStatus == "complete")
+        #expect(refreshed?.transcript?.text == "Recovered after relaunch")
+        #expect(transcriptionJobs.count == 1)
+        #expect(transcriptionJobs.first?.status == .complete)
+        #expect(transcriptionJobs.first?.attemptCount == 1)
+
+        retryService.transcriptionRunner = nil
+        retryService.summaryEnqueuer = nil
+        retryService.overrideNetworkAvailability(false)
+        try? FileManager.default.removeItem(at: audioURL)
+    }
 }
