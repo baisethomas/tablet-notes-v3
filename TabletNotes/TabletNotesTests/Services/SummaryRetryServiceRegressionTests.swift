@@ -362,6 +362,67 @@ struct SummaryRetryServiceRegressionTests {
     }
 
     @MainActor
+    @Test func recoverIncompleteSummariesLeavesOldPendingSummariesManualOnly() async throws {
+        let context = try makeModelContext()
+        let oldDate = Date().addingTimeInterval(-(9 * 24 * 60 * 60))
+
+        let transcript = Transcript(
+            text: String(repeating: "Old pending summary transcript ", count: 16),
+            updatedAt: oldDate
+        )
+        let sermon = Sermon(
+            title: "Old Pending Summary Sermon",
+            audioFileName: "old-pending-summary.m4a",
+            date: oldDate,
+            serviceType: "Sermon",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID(),
+            updatedAt: oldDate
+        )
+
+        context.insert(transcript)
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { _, _ in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Should Not Run",
+                summary: "Should not auto-recover old summaries"
+            )
+        }
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        retryService.recoverIncompleteSummaries()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let refreshedJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.kind == .summary })
+
+        #expect(runnerCallCount == 0)
+        #expect(refreshedSermon?.summaryStatus == "pending")
+        #expect(refreshedSermon?.summary == nil)
+        #expect(refreshedJob == nil)
+    }
+
+    @MainActor
     @Test func processQueueSkipsOrphanedSummaryJobsAndRunsNextValidJob() async throws {
         let context = try makeModelContext()
 

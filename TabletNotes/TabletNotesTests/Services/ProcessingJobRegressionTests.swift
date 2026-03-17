@@ -321,4 +321,81 @@ struct ProcessingJobRegressionTests {
         retryService.overrideNetworkAvailability(false)
         try? FileManager.default.removeItem(at: audioURL)
     }
+
+    @MainActor
+    @Test func recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly() async throws {
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            Summary.self,
+            ProcessingJob.self,
+            TranscriptSegment.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+        let oldDate = Date().addingTimeInterval(-(9 * 24 * 60 * 60))
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("old-pending-transcription-\(UUID().uuidString).m4a")
+        let audioData = Data(repeating: 0x05, count: 4096)
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: audioData)
+
+        let sermon = Sermon(
+            title: "Old Pending Transcription Sermon",
+            audioFileName: audioURL.lastPathComponent,
+            date: oldDate,
+            serviceType: "Sermon",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            userId: UUID(),
+            updatedAt: oldDate
+        )
+
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.summaryEnqueuer = nil
+            retryService.overrideNetworkAvailability(false)
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        var runnerCallCount = 0
+        retryService.transcriptionRunner = { _, completion in
+            runnerCallCount += 1
+            completion(.success((
+                "Should not auto-recover old transcription",
+                [TranscriptSegment(text: "Should not auto-recover old transcription", startTime: 0, endTime: 2)]
+            )))
+        }
+        retryService.summaryEnqueuer = { _ in }
+
+        retryService.recoverIncompleteTranscriptions()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshed = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        let transcriptionJobs = jobs.filter { $0.kind == .transcription && $0.sermonId == sermon.id }
+
+        #expect(runnerCallCount == 0)
+        #expect(refreshed?.transcriptionStatus == "pending")
+        #expect(refreshed?.transcript == nil)
+        #expect(transcriptionJobs.isEmpty)
+    }
 }

@@ -111,12 +111,12 @@ final class SermonProcessingCoordinator {
 
         TranscriptionRetryService.shared.migrateLegacyPendingTranscriptionsIfNeeded()
         SummaryRetryService.shared.migrateLegacyPendingSummariesIfNeeded()
+        TranscriptionRetryService.shared.recoverIncompleteTranscriptions()
+        SummaryRetryService.shared.recoverIncompleteSummaries()
         runDefaultBackgroundRefresh()
     }
 
     private func runDefaultBackgroundRefresh() {
-        TranscriptionRetryService.shared.recoverIncompleteTranscriptions()
-        SummaryRetryService.shared.recoverIncompleteSummaries()
         SummaryRetryService.shared.checkForStuckProcessingSummaries()
         TranscriptionRetryService.shared.processQueue()
         SummaryRetryService.shared.processQueue()

@@ -26,6 +26,7 @@ class SummaryRetryService: ObservableObject {
     private var modelContext: ModelContext?
     private let maxRetries = 3
     private let processingTimeoutMinutes: TimeInterval = 10
+    private let automaticRecoveryWindow: TimeInterval = 7 * 24 * 60 * 60
     private let summaryService: any SummaryServiceProtocol
     var summaryRunner: ((String, String) async throws -> SummaryGenerationResult)?
     var basicSummaryGenerator: ((String, String) -> SummaryGenerationResult)?
@@ -131,7 +132,7 @@ class SummaryRetryService: ObservableObject {
     }
 
     func retrySummaryIfNeeded(for sermon: Sermon) {
-        guard shouldRecoverSummary(for: sermon) else {
+        guard shouldAutomaticallyRecoverSummary(for: sermon) else {
             return
         }
         guard job(for: sermon.id) == nil else { return }
@@ -146,9 +147,10 @@ class SummaryRetryService: ObservableObject {
             print("[SummaryRetryService] Recovering incomplete summaries from \(sermons.count) sermons")
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
                 guard let transcript = sermon.transcript, !transcript.text.isEmpty else { continue }
-                guard shouldRecoverSummary(for: sermon) else { continue }
+                let existingJob = job(for: sermon.id)
+                guard shouldAutomaticallyRecoverSummary(for: sermon, job: existingJob) else { continue }
                 print("[SummaryRetryService] Inspecting sermon \(sermon.id) with summaryStatus=\(sermon.summaryStatus)")
-                if let existingJob = job(for: sermon.id) {
+                if let existingJob {
                     if sermon.summaryStatus == "processing" || sermon.summaryStatus == "pending" || sermon.summary == nil {
                         if reactivateStaleProcessingJob(existingJob, for: sermon) {
                             print("[SummaryRetryService] Reactivated stale summary job for sermon \(sermon.id)")
@@ -182,6 +184,7 @@ class SummaryRetryService: ObservableObject {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             for sermon in sermons where sermon.summaryStatus == "processing" {
                 guard let updatedAt = sermon.updatedAt, updatedAt < timeoutThreshold else { continue }
+                guard isWithinAutomaticRecoveryWindow(for: sermon, job: job(for: sermon.id)) else { continue }
                 if job(for: sermon.id) == nil {
                     upsertJob(for: sermon.id, resetAttempts: false)
                 }
@@ -419,14 +422,37 @@ class SummaryRetryService: ObservableObject {
         context.insert(job)
     }
 
-    private func shouldRecoverSummary(for sermon: Sermon) -> Bool {
+    private func shouldAutomaticallyRecoverSummary(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Bool {
         guard sermon.transcriptionStatus == "complete" else { return false }
-        guard sermon.summaryStatus != "complete" || sermon.summary == nil else { return false }
+        guard sermon.summaryStatus == "pending" || sermon.summaryStatus == "processing" else { return false }
+        guard isWithinAutomaticRecoveryWindow(for: sermon, job: job) else { return false }
 
-        return sermon.summaryStatus == "failed" ||
-            sermon.summaryStatus == "processing" ||
-            sermon.summaryStatus == "pending" ||
-            sermon.summary == nil
+        return sermon.summaryStatus != "complete" || sermon.summary == nil
+    }
+
+    private func isWithinAutomaticRecoveryWindow(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Bool {
+        automaticRecoveryAnchorDate(for: sermon, job: job) >= Date().addingTimeInterval(-automaticRecoveryWindow)
+    }
+
+    private func automaticRecoveryAnchorDate(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Date {
+        [
+            job?.updatedAt,
+            job?.lastAttemptAt,
+            sermon.updatedAt,
+            sermon.transcript?.updatedAt,
+            sermon.date
+        ]
+        .compactMap { $0 }
+        .max() ?? sermon.date
     }
 
     @discardableResult

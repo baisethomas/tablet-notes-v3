@@ -25,6 +25,7 @@ class TranscriptionRetryService: ObservableObject {
     private let pendingTranscriptionsKey = "PendingTranscriptions"
     private var modelContext: ModelContext?
     private let maxRetries = 3
+    private let automaticRecoveryWindow: TimeInterval = 7 * 24 * 60 * 60
     var transcriptionRunner: ((URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void)?
     var summaryEnqueuer: (@MainActor (UUID) -> Void)?
 
@@ -119,12 +120,15 @@ class TranscriptionRetryService: ObservableObject {
                 )
             )
 
-            for sermon in sermons where sermon.transcriptionStatus != "complete" && sermon.audioFileExists {
-                if let existingJob = jobs.first(where: {
+            for sermon in sermons where shouldAutomaticallyRecoverTranscription(for: sermon) {
+                let existingJob = jobs.first(where: {
                     $0.sermonId == sermon.id &&
                     $0.kind == .transcription &&
                     $0.status != .complete
-                }) {
+                })
+                guard isWithinAutomaticRecoveryWindow(for: sermon, job: existingJob) else { continue }
+
+                if let existingJob {
                     // A persisted running job cannot still be active after app relaunch.
                     if existingJob.status == .running && !isProcessingQueue {
                         existingJob.status = .queued
@@ -316,6 +320,32 @@ class TranscriptionRetryService: ObservableObject {
 
         let job = ProcessingJob(sermonId: sermonId, kind: .transcription)
         context.insert(job)
+    }
+
+    private func shouldAutomaticallyRecoverTranscription(for sermon: Sermon) -> Bool {
+        guard sermon.audioFileExists else { return false }
+        return sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "processing"
+    }
+
+    private func isWithinAutomaticRecoveryWindow(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Bool {
+        automaticRecoveryAnchorDate(for: sermon, job: job) >= Date().addingTimeInterval(-automaticRecoveryWindow)
+    }
+
+    private func automaticRecoveryAnchorDate(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Date {
+        [
+            job?.updatedAt,
+            job?.lastAttemptAt,
+            sermon.updatedAt,
+            sermon.date
+        ]
+        .compactMap { $0 }
+        .max() ?? sermon.date
     }
 
     private func job(for sermonId: UUID) -> ProcessingJob? {
