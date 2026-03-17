@@ -145,7 +145,16 @@ class SummaryRetryService: ObservableObject {
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
                 guard let transcript = sermon.transcript, !transcript.text.isEmpty else { continue }
                 guard sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" else { continue }
-                if job(for: sermon.id) == nil {
+                if let existingJob = job(for: sermon.id) {
+                    if existingJob.status == .running && !isProcessingQueue {
+                        existingJob.status = .queued
+                        existingJob.nextAttemptAt = nil
+                        existingJob.updatedAt = Date()
+                        existingJob.lastError = nil
+                        sermon.summaryStatus = "processing"
+                        sermon.markPendingSync(metadata: true)
+                    }
+                } else {
                     upsertJob(for: sermon.id, resetAttempts: false)
                 }
             }
@@ -274,7 +283,7 @@ class SummaryRetryService: ObservableObject {
                     job: refreshedJob,
                     sermon: refreshedSermon,
                     transcript: transcriptText,
-                    errorDescription: error.localizedDescription,
+                    error: error,
                     in: context
                 )
             }
@@ -285,13 +294,25 @@ class SummaryRetryService: ObservableObject {
         job: ProcessingJob,
         sermon: Sermon,
         transcript: String,
-        errorDescription: String,
+        error: Error,
         in context: ModelContext
     ) {
         let sermonSyncDate = Date()
+        let errorDescription: String
+        if let summaryError = error as? SummaryService.SummaryError {
+            errorDescription = summaryError.userFacingMessage
+        } else {
+            errorDescription = error.localizedDescription
+        }
 
         let nextAttemptAt: Date?
-        if job.attemptCount + 1 >= maxRetries {
+        if !shouldRetry(error) {
+            nextAttemptAt = nil
+            if attemptBasicSummaryFallback(for: sermon, job: job, transcript: transcript, in: context) {
+                return
+            }
+            sermon.summaryStatus = "failed"
+        } else if job.attemptCount + 1 >= maxRetries {
             nextAttemptAt = nil
             if attemptBasicSummaryFallback(for: sermon, job: job, transcript: transcript, in: context) {
                 return
@@ -307,6 +328,14 @@ class SummaryRetryService: ObservableObject {
         sermon.markPendingSync(metadata: true, updatedAt: sermonSyncDate)
         job.markFailed(error: errorDescription, nextAttemptAt: nextAttemptAt)
         try? context.save()
+    }
+
+    private func shouldRetry(_ error: Error) -> Bool {
+        if let summaryError = error as? SummaryService.SummaryError {
+            return summaryError.isRetryable
+        }
+
+        return true
     }
 
     private func attemptBasicSummaryFallback(

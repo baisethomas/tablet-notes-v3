@@ -15,7 +15,7 @@ const LIMITS = {
   AUDIO_FILE_SIZE: 500 * 1024 * 1024, // 500MB
   TEXT_LENGTH: 100000, // 100k characters
   FILENAME_LENGTH: 255,
-  SUMMARY_TEXT_LENGTH: 50000, // 50k characters for summarization
+  SUMMARY_TEXT_LENGTH: 150000, // Supports long-form pro transcripts up to the 90-minute recording limit
   API_REQUEST_SIZE: 10 * 1024 * 1024 // 10MB general request size
 };
 

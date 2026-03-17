@@ -165,4 +165,128 @@ struct SummaryRetryServiceRegressionTests {
         retryService.summaryRunner = nil
         retryService.basicSummaryGenerator = nil
     }
+
+    @MainActor
+    @Test func recoverIncompleteSummariesRequeuesStaleRunningJobsAfterRelaunch() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Recovered long-form summary text ", count: 16))
+        let sermon = Sermon(
+            title: "Recovered Sermon",
+            audioFileName: "recovered-summary.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "processing",
+            userId: UUID()
+        )
+        let staleJob = ProcessingJob(
+            sermonId: sermon.id,
+            kind: .summary,
+            status: .running,
+            attemptCount: 1,
+            createdAt: Date().addingTimeInterval(-900),
+            updatedAt: Date().addingTimeInterval(-900),
+            nextAttemptAt: nil,
+            lastAttemptAt: Date().addingTimeInterval(-900),
+            lastError: "App terminated mid-summary"
+        )
+
+        context.insert(transcript)
+        context.insert(sermon)
+        context.insert(staleJob)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Recovered Summary Title",
+                summary: "Recovered summary for \(serviceType) from \(transcript.prefix(12))"
+            )
+        }
+
+        retryService.recoverIncompleteSummaries()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let refreshedJobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .filter { $0.sermonId == sermon.id && $0.kind == .summary }
+
+        #expect(runnerCallCount == 1)
+        #expect(refreshedSermon?.summaryStatus == "complete")
+        #expect(refreshedSermon?.summary?.title == "Recovered Summary Title")
+        #expect(refreshedJobs.count == 1)
+        #expect(refreshedJobs.first?.status == .complete)
+        #expect(refreshedJobs.first?.attemptCount == 1)
+    }
+
+    @MainActor
+    @Test func nonRetryableSummaryFailuresFallBackImmediately() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Long transcript content ", count: 40))
+        let sermon = Sermon(
+            title: "Fallback Sermon",
+            audioFileName: "fallback-summary.m4a",
+            date: Date(),
+            serviceType: "Conference",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "failed",
+            userId: UUID()
+        )
+        context.insert(transcript)
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { _, _ in
+            runnerCallCount += 1
+            throw SummaryService.SummaryError.requestRejected(
+                413,
+                "Text must be less than 150000 characters."
+            )
+        }
+
+        let accepted = retryService.retrySummaryNow(for: sermon.id)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let refreshedSermon = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        let refreshedJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.kind == .summary })
+
+        #expect(accepted)
+        #expect(runnerCallCount == 1)
+        #expect(refreshedSermon?.summaryStatus == "complete")
+        #expect(refreshedSermon?.summary?.text.isEmpty == false)
+        #expect(refreshedJob?.status == .complete)
+        #expect(refreshedJob?.attemptCount == 0)
+    }
 }

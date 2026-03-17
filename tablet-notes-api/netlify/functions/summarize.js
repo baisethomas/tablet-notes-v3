@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const { createRateLimitMiddleware } = require('./utils/rateLimiter');
-const { Validator } = require('./utils/validator');
+const { Validator, LIMITS } = require('./utils/validator');
 const { 
   handleCORS, 
   createAuthMiddleware, 
@@ -89,7 +89,7 @@ exports.handler = withLogging('summarize', async (event, context) => {
     
     // Sanitize input text
     const sanitizedText = Validator.sanitizeText(text, {
-      maxLength: 50000,
+      maxLength: LIMITS.SUMMARY_TEXT_LENGTH,
       allowHtml: false,
       allowNewlines: true
     });

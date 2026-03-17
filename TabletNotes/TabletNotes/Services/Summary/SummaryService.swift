@@ -7,6 +7,8 @@ final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
         case invalidRequest
         case network(String)
         case server(Int)
+        case rateLimited(Int?)
+        case requestRejected(Int, String)
         case noData
         case parseFailure
         case auth(String)
@@ -21,6 +23,13 @@ final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
                 return message
             case .server(let code):
                 return "Server error (\(code))"
+            case .rateLimited(let retryAfterSeconds):
+                if let retryAfterSeconds {
+                    return "Rate limit exceeded. Retry after \(retryAfterSeconds) seconds."
+                }
+                return "Rate limit exceeded."
+            case .requestRejected(let code, let message):
+                return "Request rejected (\(code)): \(message)"
             case .noData:
                 return "No data received from summarize endpoint"
             case .parseFailure:
@@ -42,12 +51,35 @@ final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
                 return "[Error] The summarization service timed out. This is common with longer transcripts. Please try again with a shorter transcript or contact support."
             case .server(let code):
                 return "[Error] Server error (\(code)). Please try again later."
+            case .rateLimited(let retryAfterSeconds):
+                if let retryAfterSeconds {
+                    return "[Error] The summarization service is rate limited. Please try again in \(retryAfterSeconds) seconds."
+                }
+                return "[Error] The summarization service is rate limited. Please try again in a moment."
+            case .requestRejected(let code, let message) where code == 413:
+                return "[Error] The transcript is too long for the current summary request. Please try again after updating the app or contact support."
+            case .requestRejected(_, let message):
+                return "[Error] \(message)"
             case .noData:
                 return "[Error] No data received from Netlify summarize endpoint."
             case .parseFailure:
                 return "[Error] Failed to parse response from summarize endpoint."
             case .auth(let message):
                 return "[Error] Authentication failed: \(message)"
+            }
+        }
+
+        var isRetryable: Bool {
+            switch self {
+            case .network, .server, .rateLimited:
+                return true
+            case .transcriptTooShort,
+                    .invalidRequest,
+                    .requestRejected,
+                    .noData,
+                    .parseFailure,
+                    .auth:
+                return false
             }
         }
     }
@@ -178,13 +210,28 @@ final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = httpBody
-        request.timeoutInterval = 60.0
+        request.timeoutInterval = 130.0
         return request
     }
 
     private func parseSummaryResponse(data: Data, response: URLResponse?) throws -> SummaryGenerationResult {
         if let httpResponse = response as? HTTPURLResponse {
             print("[SummaryService] Netlify summarize HTTP status: \(httpResponse.statusCode)")
+
+            if httpResponse.statusCode == 429 {
+                let retryAfterHeader = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                let retryAfterSeconds = retryAfterHeader.flatMap(Int.init)
+                throw SummaryError.rateLimited(retryAfterSeconds)
+            }
+
+            if httpResponse.statusCode == 408 {
+                throw SummaryError.network(parseErrorMessage(from: data) ?? "The summarization request timed out. Please try again.")
+            }
+
+            if (400...499).contains(httpResponse.statusCode) {
+                let message = parseErrorMessage(from: data) ?? "The summarization request was rejected."
+                throw SummaryError.requestRejected(httpResponse.statusCode, message)
+            }
 
             if httpResponse.statusCode == 502 {
                 throw SummaryError.server(502)
@@ -251,6 +298,29 @@ final class SummaryService: SummaryServiceProtocol, @unchecked Sendable {
             title: title?.isEmpty == true ? nil : title,
             summary: summary
         )
+    }
+
+    private func parseErrorMessage(from data: Data) -> String? {
+        guard !data.isEmpty,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        if let message = json["message"] as? String, !message.isEmpty {
+            return message
+        }
+
+        if let error = json["error"] as? String, !error.isEmpty {
+            return error
+        }
+
+        if let details = json["details"] as? [[String: Any]],
+           let firstMessage = details.first?["message"] as? String,
+           !firstMessage.isEmpty {
+            return firstMessage
+        }
+
+        return nil
     }
 
     private func mapRequestError(_ error: Error) -> Error {
