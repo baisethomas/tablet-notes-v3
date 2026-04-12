@@ -254,12 +254,23 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     private func applyTranscriptSnapshot(_ snapshot: TranscriptSnapshot?, to sermon: Sermon) {
-        if let existingTranscript = sermon.transcript {
-            sermon.transcript = nil
-            modelContext.delete(existingTranscript)
+        guard let snapshot else {
+            if let existingTranscript = sermon.transcript {
+                sermon.transcript = nil
+                modelContext.delete(existingTranscript)
+            }
+            return
         }
 
-        guard let snapshot else { return }
+        if let existingTranscript = sermon.transcript {
+            // Update in-place to preserve in-memory references — prevents invalidation crashes
+            // when other services hold a reference to the same Transcript object
+            existingTranscript.text = snapshot.text
+            existingTranscript.remoteId = snapshot.remoteId ?? existingTranscript.remoteId
+            existingTranscript.updatedAt = snapshot.updatedAt
+            existingTranscript.needsSync = false
+            return
+        }
 
         let newSegments = snapshot.segments.map { segment in
             TranscriptSegment(
@@ -283,13 +294,26 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
-        if let existingSummary = sermon.summary {
-            sermon.summary = nil
-            modelContext.delete(existingSummary)
+        guard let snapshot else {
+            if let existingSummary = sermon.summary {
+                sermon.summary = nil
+                modelContext.delete(existingSummary)
+            }
+            sermon.summaryPreviewText = nil
+            return
         }
 
-        guard let snapshot else {
-            sermon.summaryPreviewText = nil
+        if let existingSummary = sermon.summary {
+            // Update in-place to preserve in-memory references — prevents invalidation crashes
+            // when other services hold a reference to the same Summary object
+            existingSummary.title = snapshot.title
+            existingSummary.text = snapshot.text
+            existingSummary.type = snapshot.type
+            existingSummary.status = snapshot.status
+            existingSummary.remoteId = snapshot.remoteId ?? existingSummary.remoteId
+            existingSummary.updatedAt = snapshot.updatedAt
+            existingSummary.needsSync = false
+            sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
             return
         }
 
