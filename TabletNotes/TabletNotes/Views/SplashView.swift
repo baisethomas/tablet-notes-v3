@@ -152,100 +152,83 @@ struct MinimalSplashView: View {
     }
 }
 
-// MARK: - Brand-Focused Splash View (Smaller Logo)
+// MARK: - Brand-Focused Splash View
 struct BrandSplashView: View {
-    @State private var logoOffset: CGFloat = -50
     @State private var logoOpacity: Double = 0.0
-    @State private var textOffset: CGFloat = 30
+    @State private var logoScale: CGFloat = 0.93
     @State private var textOpacity: Double = 0.0
-    @State private var backgroundOpacity: Double = 0.0
-    
+    @State private var bottomOpacity: Double = 0.0
+
     let onComplete: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ZStack {
-            // Adaptive radial gradient for dark/light mode
-            RadialGradient(
-                gradient: Gradient(colors: colorScheme == .dark ? [Color.navyDarkPrimary.opacity(0.9), Color.navyDarkSecondary.opacity(0.7), Color.navyDarkPrimary] : [Color.adaptiveBackground, Color.adaptiveSecondaryBackground, Color.adaptiveBackground]),
-                center: .center,
-                startRadius: 50,
-                endRadius: 300
-            )
-            .opacity(backgroundOpacity)
-            .ignoresSafeArea()
-            
-            VStack(spacing: 24) {
-                // Logo with slide-in animation - Much smaller and proportional
-                ZStack {
-                    // Subtle background circle if image doesn't load
-                    Circle()
-                        .fill(Color.adaptiveCardBackground)
-                        .frame(width: 70, height: 70)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.adaptiveAccent.opacity(0.2), lineWidth: 1)
-                        )
-                    
-                    // App Logo - Reduced from 100x100 to 60x60
+            Color.SV.surface.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                // Logo + name, slightly above center
+                VStack(spacing: 24) {
                     Image("AppLogo")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 60, height: 60)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .frame(maxWidth: 70, maxHeight: 70) // Prevent stretching
-                .offset(y: logoOffset)
-                .opacity(logoOpacity)
-                .shadow(color: .adaptiveAccent.opacity(0.2), radius: 8, x: 0, y: 4)
-                
-                // Brand text
-                VStack(spacing: 8) {
-                    Text("TabletNotes")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundColor(.adaptivePrimaryText)
-                        .offset(y: textOffset)
-                        .opacity(textOpacity)
-                    
-                    Rectangle()
-                        .fill(Color.adaptiveAccent)
-                        .frame(width: 40, height: 2)
-                        .cornerRadius(1)
-                        .opacity(textOpacity)
-                    
-                    Text("Record • Transcribe • Summarize")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.adaptiveSecondaryText)
-                        .tracking(1)
-                        .offset(y: textOffset)
+                        .frame(width: 220, height: 220)
+                        .scaleEffect(logoScale)
+                        .opacity(logoOpacity)
+
+                    Text("Tablet Notes")
+                        .font(.system(size: 36, weight: .bold, design: .serif))
+                        .foregroundStyle(Color.SV.onSurface)
                         .opacity(textOpacity)
                 }
+
+                Spacer()
+                Spacer()
+
+                // Dots + loading label
+                VStack(spacing: 14) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.SV.onSurface.opacity(0.2))
+                            .frame(width: 6, height: 6)
+                        Circle()
+                            .fill(Color.SV.onSurface.opacity(0.45))
+                            .frame(width: 6, height: 6)
+                        Circle()
+                            .fill(Color.SV.onSurface.opacity(0.2))
+                            .frame(width: 6, height: 6)
+                    }
+
+                    Text("PREPARING YOUR ARCHIVES")
+                        .font(.system(size: 11, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                }
+                .opacity(bottomOpacity)
+                .padding(.bottom, 48)
             }
         }
         .onAppear {
             startBrandAnimations()
         }
     }
-    
+
     private func startBrandAnimations() {
-        // Background fade in
-        withAnimation(.easeIn(duration: 0.5)) {
-            backgroundOpacity = 1.0
-        }
-        
-        // Logo slide in from top
-        withAnimation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.2)) {
-            logoOffset = 0
+        withAnimation(.easeOut(duration: 0.7)) {
+            logoScale = 1.0
             logoOpacity = 1.0
         }
-        
-        // Text slide up from bottom
-        withAnimation(.easeOut(duration: 0.7).delay(0.5)) {
-            textOffset = 0
+
+        withAnimation(.easeIn(duration: 0.5).delay(0.3)) {
             textOpacity = 1.0
         }
-        
-        // Complete after animations
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+
+        withAnimation(.easeIn(duration: 0.4).delay(0.6)) {
+            bottomOpacity = 1.0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
             onComplete()
         }
     }
