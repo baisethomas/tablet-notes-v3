@@ -4,336 +4,94 @@ import Foundation
 import Combine
 import UIKit
 
-// MARK: - Empty State Component
+// MARK: - Empty State
+
 struct EmptyStateView: View {
     let title: String
     let subtitle: String
     let systemImage: String
     let actionTitle: String?
     let action: (() -> Void)?
-    
+
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 32) {
             VStack(spacing: 16) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 64))
-                    .foregroundColor(.adaptiveSecondaryText)
-                    .opacity(0.6)
-                
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.22))
+
                 VStack(spacing: 8) {
                     Text(title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.adaptivePrimaryText)
-                    
+                        .font(.system(size: 20, weight: .semibold, design: .serif))
+                        .foregroundStyle(Color.SV.onSurface)
+
                     Text(subtitle)
-                        .font(.body)
-                        .foregroundColor(.adaptiveSecondaryText)
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
             }
-            
-            if let actionTitle = actionTitle, let action = action {
+
+            if let actionTitle, let action {
                 Button(action: action) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                        Text(actionTitle)
-                    }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(Color.adaptiveAccent)
-                    .cornerRadius(25)
+                    Text(actionTitle)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Color.SV.primary)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                        .background(Color.SV.primary.opacity(0.08))
+                        .clipShape(.rect(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.adaptiveBackground)
+        .background(Color.SV.surface)
     }
 }
 
-// MARK: - Sermon Row Component
+// MARK: - Sermon Row
+
 struct SermonRowView: View {
     let sermon: Sermon
     let onTap: () -> Void
-    
-    @State private var isPressed = false
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Main content area
-            VStack(alignment: .leading, spacing: 12) {
-                // Title and date row
-                HStack(alignment: .top) {
-                    Text(sermon.title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.adaptivePrimaryText)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    
-                    Spacer()
-                    
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(sermon.date, style: .date)
-                            .font(.caption)
-                            .foregroundColor(.adaptiveSecondaryText)
-                        
-                        // Chevron moved to top right
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.adaptiveSecondaryText)
-                    }
-                }
-                
-                // Service type badge
-                HStack {
-                    Image(systemName: serviceTypeIcon)
-                        .font(.caption)
-                        .foregroundColor(.adaptiveAccent)
-                    
-                    Text(sermon.serviceType)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.adaptiveAccent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.adaptiveAccent.opacity(0.1))
-                        .cornerRadius(8)
-                    
-                    Spacer()
-                }
-                
-                // Avoid dereferencing relationship-backed Summary in this hot list row.
-                // Summary objects may be invalidated during sync updates and can trap in SwiftData.
-                if sermon.summaryStatus == "complete" {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "lightbulb")
-                                .font(.caption2)
-                                .foregroundColor(.adaptiveAccent)
-                            Text("Key Points")
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .foregroundColor(.adaptiveAccent)
-                        }
 
-                        Text(sermon.summaryPreviewText ?? "Summary available")
-                            .font(.subheadline)
-                            .foregroundColor(.adaptiveSecondaryText)
-                            .lineLimit(1)
-                            .multilineTextAlignment(.leading)
-                    }
-                } else if !sermon.notes.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "note.text")
-                            .font(.caption2)
-                            .foregroundColor(.adaptiveSecondaryText)
-                        
-                        Text("\(sermon.notes.count) note\(sermon.notes.count == 1 ? "" : "s")")
-                            .font(.caption2)
-                            .foregroundColor(.adaptiveSecondaryText)
-                    }
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(sermon.date.formatted(.dateTime.month(.abbreviated).day()))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.45))
+
+                Text(sermon.title)
+                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if let preview = previewText {
+                    Text(preview)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                        .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-            
-            // Status badges at bottom right
-            HStack {
-                Spacer()
-                
-                HStack(spacing: 8) {
-                    StatusBadge(
-                        title: "Transcript",
-                        status: sermon.transcriptionStatus,
-                        icon: "text.bubble"
-                    )
-                    
-                    StatusBadge(
-                        title: "Summary",
-                        status: sermon.summaryStatus,
-                        icon: "doc.text"
-                    )
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
-        .background(Color.sermonCardBackground)
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.adaptiveBorder, lineWidth: 1)
-        )
-        .scaleEffect(isPressed ? 0.98 : 1.0)
-        .animation(.easeInOut(duration: 0.1), value: isPressed)
-        .onTapGesture {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-            onTap()
-        }
-        .onLongPressGesture(minimumDuration: 0) {
-            // Handle press state for visual feedback
-        } onPressingChanged: { pressing in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isPressed = pressing
-            }
-        }
+        .buttonStyle(.plain)
     }
-    
-    private var serviceTypeIcon: String {
-        switch sermon.serviceType.lowercased() {
-        case "sermon", "service":
-            return "church.fill"
-        case "bible study":
-            return "book.closed"
-        case "prayer":
-            return "hands.sparkles"
-        case "worship":
-            return "music.note"
-        default:
-            return "mic"
+
+    private var previewText: String? {
+        if let preview = sermon.summaryPreviewText, !preview.isEmpty {
+            return preview
         }
-    }
-    
-    private func extractKeyPoints(from summary: String) -> String {
-        // Remove all markdown formatting first
-        let cleanedSummary = removeMarkdownFormatting(from: summary)
-        
-        // Extract bullet points or key sentences
-        let lines = cleanedSummary.components(separatedBy: .newlines)
-        var keyPoints: [String] = []
-        
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Skip empty lines
-            if trimmed.isEmpty { continue }
-            
-            // Look for bullet points or numbered items
-            if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*") || 
-               trimmed.hasPrefix("1.") || trimmed.hasPrefix("2.") || trimmed.hasPrefix("3.") {
-                var point = trimmed
-                // Remove bullet/number prefix
-                if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*") {
-                    point = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
-                } else if trimmed.contains(".") {
-                    let components = trimmed.components(separatedBy: ".")
-                    if components.count > 1 {
-                        point = components.dropFirst().joined(separator: ".").trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                }
-                
-                if !point.isEmpty && point.count > 10 {
-                    keyPoints.append(point)
-                }
-            } else if trimmed.count > 20 && trimmed.count < 200 {
-                // Include substantial lines that might be key points
-                keyPoints.append(trimmed)
-            }
-        }
-        
-        // If no structured bullet points found, extract key sentences
-        if keyPoints.isEmpty {
-            let sentences = cleanedSummary.components(separatedBy: ". ")
-            keyPoints = sentences
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { $0.count > 20 && $0.count < 200 }
-                .prefix(4)
-                .map { $0 }
-        }
-        
-        // Return first 4 key points, formatted with bullets
-        return keyPoints.prefix(4).map { "• \($0)" }.joined(separator: "\n")
-    }
-    
-    /// Removes markdown formatting using optimized cached regex patterns
-    private func removeMarkdownFormatting(from text: String) -> String {
-        return MarkdownCleaner.clean(text)
+        return sermon.notes.first?.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
-// MARK: - Status Badge Component
-struct StatusBadge: View {
-    let title: String
-    let status: String
-    let icon: String
-    
-    var body: some View {
-        HStack(spacing: 2) {
-            Image(systemName: icon)
-                .font(.caption2)
-                .foregroundColor(statusColor)
-            
-            if status == "processing" {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .progressViewStyle(CircularProgressViewStyle(tint: statusColor))
-            } else {
-                Image(systemName: statusIcon)
-                    .font(.caption2)
-                    .foregroundColor(statusColor)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(statusColor.opacity(0.1))
-        .cornerRadius(6)
-    }
-    
-    private var statusColor: Color {
-        switch status {
-        case "complete":
-            return .green
-        case "processing":
-            return .orange
-        case "failed":
-            return .red
-        default:
-            return .gray
-        }
-    }
-    
-    private var statusIcon: String {
-        switch status {
-        case "complete":
-            return "checkmark.circle.fill"
-        case "failed":
-            return "exclamationmark.triangle.fill"
-        default:
-            return "circle"
-        }
-    }
-}
-
-// MARK: - Section Header Component
-struct SectionHeaderView: View {
-    let title: String
-    let count: Int
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-            
-            Text("(\(count))")
-                .font(.title2)
-                .fontWeight(.medium)
-                .foregroundColor(.secondary)
-            
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-}
+// MARK: - Sermon List View
 
 struct SermonListView: View {
     @Bindable var sermonService: SermonService
@@ -347,422 +105,369 @@ struct SermonListView: View {
     @State private var sortOrder: SortOrder = .newestFirst
     @State private var showingSortOptions = false
     @State private var showingSearch = false
-    @State private var isRefreshing = false
-    
+    @State private var cancellables = Set<AnyCancellable>()
+
     enum SortOrder: String, CaseIterable {
         case newestFirst = "Newest First"
         case oldestFirst = "Oldest First"
-        case titleAZ = "Title A-Z"
-        case titleZA = "Title Z-A"
+        case titleAZ = "Title A–Z"
+        case titleZA = "Title Z–A"
     }
-    
+
+    // MARK: - Computed Data
+
     private var sortedSermons: [Sermon] {
-        // Use filtered sermons from SermonService if search is active, otherwise use all sermons
-        let sermonsToSort = sermonService.searchText.isEmpty ? sermonService.sermons : sermonService.filteredSermons
-        
+        let base = sermonService.searchText.isEmpty
+            ? sermonService.sermons
+            : sermonService.filteredSermons
         switch sortOrder {
-        case .newestFirst:
-            return sermonsToSort.sorted(by: { $0.date > $1.date })
-        case .oldestFirst:
-            return sermonsToSort.sorted(by: { $0.date < $1.date })
-        case .titleAZ:
-            return sermonsToSort.sorted(by: { $0.title < $1.title })
-        case .titleZA:
-            return sermonsToSort.sorted(by: { $0.title > $1.title })
+        case .newestFirst: return base.sorted { $0.date > $1.date }
+        case .oldestFirst: return base.sorted { $0.date < $1.date }
+        case .titleAZ:     return base.sorted { $0.title < $1.title }
+        case .titleZA:     return base.sorted { $0.title > $1.title }
         }
     }
-    
+
+    /// Groups sermons by "MONTH YEAR" (e.g. "FEBRUARY 2026").
     private var groupedSermons: [(String, [Sermon])] {
         let grouped = Dictionary(grouping: sortedSermons) { sermon in
-            DateFormatter.localizedString(from: sermon.date, dateStyle: .medium, timeStyle: .none)
+            sermon.date.formatted(.dateTime.month(.wide).year()).uppercased()
         }
-        
-        return grouped.sorted { first, second in
+        return grouped.sorted { a, b in
+            let aDate = a.value.first?.date ?? .distantPast
+            let bDate = b.value.first?.date ?? .distantPast
             switch sortOrder {
-            case .newestFirst:
-                return first.value.first?.date ?? Date() > second.value.first?.date ?? Date()
-            case .oldestFirst:
-                return first.value.first?.date ?? Date() < second.value.first?.date ?? Date()
-            case .titleAZ, .titleZA:
-                return first.key < second.key
+            case .newestFirst, .titleZA: return aDate > bDate
+            case .oldestFirst, .titleAZ: return aDate < bDate
             }
         }
     }
+
+    // MARK: - Body
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Custom header with left-aligned title and filter button
-                HStack {
-                    HStack(spacing: 8) {
-                        Image("AppLogo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 48, height: 48)
-                        
-                        Text("Sermons")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                    }
-                    
-                    Spacer()
-                    
+        VStack(spacing: 0) {
+            svListHeader
 
-                    
-                    // Search button
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            showingSearch.toggle()
-                        }
-                    }) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.title3)
-                            .foregroundColor(.accentColor)
-                    }
-                    
-                    // Sync status indicator
-                    Button(action: {
-                        // Show sync status or trigger manual sync
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                        impactFeedback.impactOccurred()
-                    }) {
-                        Image(systemName: "checkmark.icloud")
-                            .font(.title3)
-                            .foregroundColor(.green)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color.adaptiveBackground)
-                
-                // Search bar (when visible)
-                if showingSearch {
-                    VStack(spacing: 12) {
-                        HStack {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(.secondary)
-                            
-                            TextField("Search sermons, speakers, content...", text: $sermonService.searchText)
-                                .textFieldStyle(PlainTextFieldStyle())
-                            
-                            if !sermonService.searchText.isEmpty {
-                                Button("Clear") {
-                                    sermonService.clearSearch()
-                                }
-                                .font(.caption)
-                                .foregroundColor(.accentColor)
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.adaptiveSecondaryBackground)
-                        .cornerRadius(10)
-                        
-                        // Search results summary
-                        if !sermonService.searchText.isEmpty {
-                            HStack {
-                                Text("\(sermonService.filteredSermons.count) result(s) found")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-                    .background(Color.adaptiveBackground)
+            if showingSearch {
+                svSearchBar
                     .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                
+            }
+
+            Group {
                 if isLoading {
-                    // Loading state
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                            .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
-                        
-                        VStack(spacing: 4) {
-                            Text("Loading sermons...")
-                                .font(.headline)
-                                .foregroundColor(.adaptivePrimaryText)
-                            
-                            Text("Please wait while we fetch your sermons")
-                                .font(.subheadline)
-                                .foregroundColor(.adaptiveSecondaryText)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onAppear {
-                        // Simulate loading delay for smooth UX
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                isLoading = false
-                            }
-                        }
-                    }
+                    svLoadingState
                 } else if sermonService.sermons.isEmpty {
-                    // Empty state when no sermons exist
-                    VStack(spacing: 16) {
-                        EmptyStateView(
-                            title: "No Sermons Yet",
-                            subtitle: "Start recording your first sermon to see it here. Your recordings will be automatically transcribed and summarized.",
-                            systemImage: "mic.circle",
-                            actionTitle: "Start Recording",
-                            action: {
-                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                impactFeedback.impactOccurred()
-                                onStartRecording?()
-                            }
-                        )
-                        
-                        #if DEBUG
-                        // Recovery button for debugging (only in debug builds)
-                        Button(action: {
-                            sermonService.checkForRecoverableRecordings()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.clockwise.circle.fill")
-                                Text("DEBUG: Recover Previous Recordings")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.adaptiveAccent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.adaptiveAccent.opacity(0.1))
-                            .cornerRadius(15)
-                        }
-                        .buttonStyle(.plain)
-                        #endif
-                    }
+                    svFirstRecordingPrompt
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
-                    // Empty state when search returns no results
                     EmptyStateView(
-                        title: "No Results Found",
-                        subtitle: "Try adjusting your search terms or clearing the search to see all sermons.",
+                        title: "No results",
+                        subtitle: "Try different search terms.",
                         systemImage: "magnifyingglass",
                         actionTitle: "Clear Search",
-                        action: {
-                            sermonService.clearSearch()
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                            impactFeedback.impactOccurred()
-                        }
+                        action: { sermonService.clearSearch() }
                     )
                 } else {
-                    // Sermons list using List for proper swipe actions
-                    VStack(spacing: 0) {
-                        // Sort indicator with sort button
-                        HStack {
-                            Text("Sorted by: \(sortOrder.rawValue)")
-                                .font(.caption)
-                                .foregroundColor(.adaptiveSecondaryText)
-                            Spacer()
-                            let displayCount = sermonService.searchText.isEmpty ? sermonService.sermons.count : sermonService.filteredSermons.count
-                            Text("\(displayCount) sermon\(displayCount == 1 ? "" : "s")\(sermonService.searchText.isEmpty ? "" : " found")")
-                                .font(.caption)
-                                .foregroundColor(.adaptiveSecondaryText)
-                            
-                            // Sort button
-                            Button(action: {
-                                showingSortOptions = true
-                            }) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                    .font(.caption)
-                                    .foregroundColor(.adaptiveAccent)
-                                    .padding(.leading, 8)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.adaptiveBackground)
-                        
-                                                 // Native List for proper swipe actions
-                List {
-                             ForEach(Array(groupedSermons.enumerated()), id: \.element.0) { index, element in
-                                 let (dateString, sermons) = element
-                                 
-                        Section(header:
-                                     HStack {
-                                         Text(dateString)
-                                .font(.headline)
-                                             .fontWeight(.semibold)
-                                             .foregroundColor(.adaptivePrimaryText)
-                                         
-                                         Spacer()
-                                         
-                                         Text("\(sermons.count)")
-                                             .font(.caption)
-                                             .foregroundColor(.adaptiveSecondaryText)
-                                             .padding(.horizontal, 8)
-                                             .padding(.vertical, 8)
-                                             .background(Color.adaptiveInputBackground)
-                                             .cornerRadius(8)
-                                     }
-                                     .padding(.vertical, 2)
-                                 ) {
-                                    ForEach(sermons) { sermon in
-                                        SermonRowView(sermon: sermon) {
-                                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                            impactFeedback.impactOccurred()
-                                            print("[SermonListView] Selecting sermon '\(sermon.title)' with \(sermon.notes.count) notes")
-                                            onSermonSelected(sermon)
-                                        }
-                                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                                        .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                            // Delete action (right swipe)
-                                    Button(role: .destructive) {
-                                                sermonToDelete = sermon
-                                                showingDeleteAlert = true
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                            }
-                                        }
-                                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                            // Archive/Unarchive action (left swipe)
-                                            Button {
-                                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                                impactFeedback.impactOccurred()
-                                                sermonService.toggleSermonArchiveStatus(sermon)
-                                            } label: {
-                                                Label(
-                                                    sermon.isArchived ? "Unarchive" : "Archive",
-                                                    systemImage: sermon.isArchived ? "tray.and.arrow.up" : "tray.and.arrow.down"
-                                                )
-                                            }
-                                            .tint(sermon.isArchived ? .green : .orange)
-                                        }
-                                        .contextMenu {
-                                            Button(action: {
-                                                onSermonSelected(sermon)
-                                            }) {
-                                                Label("View Details", systemImage: "eye")
-                                            }
-                                            
-                                            Button(action: {
-                                                sermonService.toggleSermonArchiveStatus(sermon)
-                                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                                impactFeedback.impactOccurred()
-                                            }) {
-                                                Label(
-                                                    sermon.isArchived ? "Unarchive" : "Archive",
-                                                    systemImage: sermon.isArchived ? "tray.and.arrow.up" : "tray.and.arrow.down"
-                                                )
-                                            }
-                                            
-                                            // Regenerate Summary option (only show if summary failed or is processing)
-                                            if sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" {
-                                                Button(action: {
-                                                    regenerateSummary(for: sermon)
-                                                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                                    impactFeedback.impactOccurred()
-                                                }) {
-                                                    Label("Regenerate Summary", systemImage: "arrow.clockwise")
-                                                }
-                                            }
-                                            
-                                            Button(action: {
-                                                // Share functionality
-                                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                                impactFeedback.impactOccurred()
-                                            }) {
-                                                Label("Share", systemImage: "square.and.arrow.up")
-                                            }
-                                            
-                                            Divider()
-                                            
-                                            Button(role: .destructive, action: {
-                                                sermonToDelete = sermon
-                                                showingDeleteAlert = true
-                                            }) {
-                                                Label("Delete", systemImage: "trash")
-                                            }
-                                        }
-                                    }
-                                    
-                                                                         // Add divider after each section (except the last one)
-                                     if index < groupedSermons.count - 1 {
-                                         Rectangle()
-                                             .fill(Color(.systemGray4))
-                                             .frame(height: 0.5)
-                                             .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
-                                             .listRowBackground(Color.clear)
-                                             .listRowSeparator(.hidden)
-                                     }
-                                }
-                            }
-                                                 }
-                         .listStyle(PlainListStyle())
-                         .scrollContentBackground(.hidden)
-                         .background(Color.adaptiveBackground)
-                         .listSectionSeparator(.hidden)
-                        .refreshable {
-                            // Add haptic feedback for refresh
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                            impactFeedback.impactOccurred()
-
-                            await SermonProcessingCoordinator.shared.triggerManualSync()
-
-                            // Refresh local sermon list
-                            sermonService.fetchSermons()
-                        }
-                    }
+                    svSermonList
                 }
             }
-            .navigationBarHidden(true)
-            .alert("Delete Sermon", isPresented: $showingDeleteAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    if let sermon = sermonToDelete {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            sermonService.deleteSermon(sermon)
-                        }
-                        
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                        impactFeedback.impactOccurred()
-                    }
+            .animation(.easeInOut(duration: 0.25), value: isLoading)
+        }
+        .background(Color.SV.surface.ignoresSafeArea())
+        .alert("Delete Sermon", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let sermon = sermonToDelete {
+                    withAnimation { sermonService.deleteSermon(sermon) }
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 }
-            } message: {
-                Text("Are you sure you want to delete this sermon? This action cannot be undone.")
             }
-            .actionSheet(isPresented: $showingSortOptions) {
-                ActionSheet(
-                    title: Text("Sort Sermons"),
-                    message: Text("Choose how to organize your sermons"),
-                    buttons: SortOrder.allCases.map { order in
-                        ActionSheet.Button.default(
-                            Text(order.rawValue + (sortOrder == order ? " ✓" : "")),
-                            action: {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    sortOrder = order
-                                }
-                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                impactFeedback.impactOccurred()
-                            }
-                        )
-                    } + [ActionSheet.Button.cancel()]
-                )
+        } message: {
+            Text("This action cannot be undone.")
+        }
+        .confirmationDialog("Sort by", isPresented: $showingSortOptions, titleVisibility: .visible) {
+            ForEach(SortOrder.allCases, id: \.self) { order in
+                Button(order.rawValue + (sortOrder == order ? " ✓" : "")) {
+                    withAnimation { sortOrder = order }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    // MARK: - Header
+
+    private var svListHeader: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ARCHIVE")
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(2)
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
+                Text("The Word")
+                    .font(.system(size: 32, weight: .bold, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface)
+            }
+
+            Spacer()
+
+            HStack(spacing: 20) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showingSearch.toggle() }
+                } label: {
+                    Image(systemName: showingSearch ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.55))
+                }
+
+                Button { showingSortOptions = true } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 15, weight: .light))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.55))
+                }
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
+        .background(Color.SV.surface)
     }
-    
-    // MARK: - Helper Methods
+
+    // MARK: - First Recording Prompt
+
+    private var svFirstRecordingPrompt: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 40) {
+                // Decorative icon block
+                VStack(spacing: 16) {
+                    Rectangle()
+                        .fill(Color.SV.primary.opacity(0.15))
+                        .frame(width: 44, height: 1)
+
+                    Image(systemName: "mic")
+                        .font(.system(size: 52, weight: .ultraLight))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.18))
+
+                    Rectangle()
+                        .fill(Color.SV.primary.opacity(0.15))
+                        .frame(width: 44, height: 1)
+                }
+
+                // Text block
+                VStack(spacing: 10) {
+                    Text("Every sermon,\nremembered.")
+                        .font(.system(size: 26, weight: .bold, design: .serif))
+                        .foregroundStyle(Color.SV.onSurface)
+                        .multilineTextAlignment(.center)
+
+                    Text("Record, transcribe, and revisit\nthe Word — all in one place.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+
+                // CTA
+                Button {
+                    onStartRecording?()
+                } label: {
+                    Text("Start Your First Recording")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 13)
+                        .background(Color.SV.primary)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.SV.surface)
+    }
+
+    // MARK: - Search Bar
+
+    private var svSearchBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+
+                TextField("Search sermons...", text: $sermonService.searchText)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.SV.onSurface)
+
+                if !sermonService.searchText.isEmpty {
+                    Button("Clear") { sermonService.clearSearch() }
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.SV.primary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.SV.surfaceContainerLow)
+            .clipShape(.rect(cornerRadius: 8))
+
+            if !sermonService.searchText.isEmpty {
+                Text("\(sermonService.filteredSermons.count) result\(sermonService.filteredSermons.count == 1 ? "" : "s")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
+        .background(Color.SV.surface)
+    }
+
+    // MARK: - Sermon List
+
+    private var svSermonList: some View {
+        List {
+            ForEach(groupedSermons, id: \.0) { monthYear, sermons in
+                Section {
+                    ForEach(sermons) { sermon in
+                        SermonRowView(sermon: sermon) {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onSermonSelected(sermon)
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                        .listRowBackground(Color.SV.surface)
+                        .listRowSeparator(.hidden)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                sermonToDelete = sermon
+                                showingDeleteAlert = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                sermonService.toggleSermonArchiveStatus(sermon)
+                            } label: {
+                                Label(
+                                    sermon.isArchived ? "Unarchive" : "Archive",
+                                    systemImage: sermon.isArchived ? "tray.and.arrow.up" : "tray.and.arrow.down"
+                                )
+                            }
+                            .tint(sermon.isArchived ? .green : .orange)
+                        }
+                        .contextMenu {
+                            Button { onSermonSelected(sermon) } label: {
+                                Label("View Details", systemImage: "eye")
+                            }
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                sermonService.toggleSermonArchiveStatus(sermon)
+                            } label: {
+                                Label(
+                                    sermon.isArchived ? "Unarchive" : "Archive",
+                                    systemImage: sermon.isArchived ? "tray.and.arrow.up" : "tray.and.arrow.down"
+                                )
+                            }
+                            if sermon.summaryStatus == "failed" || sermon.summaryStatus == "processing" {
+                                Button { regenerateSummary(for: sermon) } label: {
+                                    Label("Regenerate Summary", systemImage: "arrow.clockwise")
+                                }
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                sermonToDelete = sermon
+                                showingDeleteAlert = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                } header: {
+                    svMonthHeader(monthYear)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.SV.surface)
+        .listSectionSeparator(.hidden)
+        .refreshable {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            await SermonProcessingCoordinator.shared.triggerManualSync()
+            sermonService.fetchSermons()
+        }
+    }
+
+    // MARK: - Section Header
+
+    private func svMonthHeader(_ title: String) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
+            Rectangle()
+                .fill(Color.SV.onSurface.opacity(0.12))
+                .frame(height: 0.5)
+        }
+        .textCase(nil)
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Loading State
+
+    private var svLoadingState: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(Color.SV.primary.opacity(0.5))
+            Text("Loading...")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.SV.surface)
+        .task {
+            try? await Task.sleep(for: .milliseconds(400))
+            withAnimation { isLoading = false }
+        }
+    }
+
+    // MARK: - Helpers
+
     private func regenerateSummary(for sermon: Sermon) {
         guard let transcript = sermon.transcript, !transcript.text.isEmpty else {
-            print("Cannot regenerate summary: No transcript available")
+            print("[SermonListView] Cannot regenerate summary: no transcript")
             return
         }
-        
-        // Use service layer approach to ensure summary completion is handled
-        print("[SermonListView] Regenerating summary via SermonService")
-        sermonService.generateSummaryForSermon(sermonId: sermon.id, transcript: transcript.text, serviceType: sermon.serviceType)
+        sermonService.generateSummaryForSermon(
+            sermonId: sermon.id,
+            transcript: transcript.text,
+            serviceType: sermon.serviceType
+        )
     }
-    
-    @State private var cancellables = Set<AnyCancellable>()
 }
 
+// MARK: - Preview
+
 #Preview {
-    SermonListView(sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self))), onSermonSelected: { _ in }, onStartRecording: { })
+    SermonListView(
+        sermonService: SermonService(
+            modelContext: try! ModelContext(ModelContainer(
+                for: Sermon.self, Note.self, Transcript.self, Summary.self,
+                ProcessingJob.self, TranscriptSegment.self
+            ))
+        ),
+        onSermonSelected: { _ in },
+        onStartRecording: {}
+    )
 }

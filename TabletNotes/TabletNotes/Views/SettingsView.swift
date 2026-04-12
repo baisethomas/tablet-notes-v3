@@ -361,7 +361,7 @@ struct SettingsView: View {
                 .padding(.vertical, 24)
             }
         }
-        .background(Color.adaptiveBackground)
+        .background(Color.SV.surface)
         .alert("Reset Settings", isPresented: $showingResetAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Reset", role: .destructive) {

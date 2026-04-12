@@ -10,142 +10,36 @@ struct TimestampedNote: Identifiable {
     let timestamp: TimeInterval
 }
 
-// MARK: - Animated Waveform Component
-struct WaveformView: View {
-    let isRecording: Bool
-    @State private var animationPhase: CGFloat = 0
-    
+// MARK: - Sacred Vellum Recording Indicator
+// Soft breathing pulse using tertiary purple — 3s cycle per design spec.
+private struct SVRecordingIndicator: View {
+    let isPaused: Bool
+    @State private var isBreathing = false
+
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<7, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(isRecording ? Color.recordingRed : Color.adaptiveTertiaryText.opacity(0.3))
-                    .frame(width: 3, height: barHeight(for: index))
-                    .animation(
-                        isRecording ? 
-                        Animation.easeInOut(duration: 0.5 + Double(index) * 0.1)
-                            .repeatForever(autoreverses: true) : 
-                        Animation.easeInOut(duration: 0.3),
-                        value: isRecording
-                    )
-            }
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.SV.tertiary)
+                .frame(width: 7, height: 7)
+                .opacity(isPaused ? 0.35 : (isBreathing ? 0.35 : 1.0))
+                .animation(
+                    isPaused ? .none : .easeInOut(duration: 3).repeatForever(autoreverses: true),
+                    value: isBreathing
+                )
+
+            Text("REC")
+                .font(.system(size: 12, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.SV.onSurface.opacity(isPaused ? 0.35 : 0.6))
         }
-        .onAppear {
-            startAnimation()
-        }
-        .onChange(of: isRecording) { _, newValue in
-            if newValue {
-                startAnimation()
-            }
-        }
-    }
-    
-    private func startAnimation() {
-        withAnimation(Animation.linear(duration: 2).repeatForever(autoreverses: false)) {
-            animationPhase = 1
-        }
-    }
-    
-    private func barHeight(for index: Int) -> CGFloat {
-        let baseHeight: CGFloat = 4
-        let maxHeight: CGFloat = 24
-        
-        if !isRecording {
-            return baseHeight
-        }
-        
-        let phase = animationPhase * 2 * .pi + Double(index) * 0.8
-        let variation = sin(phase) * 0.5 + 0.5
-        return baseHeight + (maxHeight - baseHeight) * variation
+        .onAppear { isBreathing = true }
     }
 }
 
-// MARK: - Loading State Component
-struct RecordingLoadingStateView: View {
-    let title: String
-    let subtitle: String?
-    @State private var rotation: Double = 0
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .stroke(Color.adaptiveTertiaryText.opacity(0.3), lineWidth: 4)
-                    .frame(width: 50, height: 50)
-                
-                Circle()
-                    .trim(from: 0, to: 0.3)
-                    .stroke(Color.adaptiveAccent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .frame(width: 50, height: 50)
-                    .rotationEffect(.degrees(rotation))
-                    .animation(Animation.linear(duration: 1).repeatForever(autoreverses: false), value: rotation)
-            }
-            
-            VStack(spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundColor(.adaptivePrimaryText)
-                
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.adaptiveSecondaryText)
-                        .multilineTextAlignment(.center)
-                }
-            }
-        }
-        .onAppear {
-            rotation = 360
-        }
-    }
-}
+// MARK: - Recording View
 
-// MARK: - Pulse Button Component
-struct PulseButton: View {
-    let action: () -> Void
-    let isActive: Bool
-    let systemImage: String
-    let size: CGFloat
-    let color: Color
-    
-    @State private var isPulsing = false
-    
-    var body: some View {
-        Button(action: {
-            // Haptic feedback
-            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-            impactFeedback.impactOccurred()
-            action()
-        }) {
-            ZStack {
-                Circle()
-                    .fill(color.opacity(0.2))
-                    .frame(width: size + 20, height: size + 20)
-                    .scaleEffect(isPulsing && isActive ? 1.2 : 1.0)
-                    .opacity(isPulsing && isActive ? 0.3 : 0.2)
-                    .animation(
-                        isActive ? 
-                        Animation.easeInOut(duration: 1.0).repeatForever(autoreverses: true) : 
-                        Animation.easeInOut(duration: 0.3),
-                        value: isPulsing
-                    )
-                
-                Circle()
-                    .fill(color)
-                    .frame(width: size, height: size)
-                
-                Image(systemName: systemImage)
-                    .font(.system(size: size * 0.4, weight: .medium))
-                    .foregroundColor(.white)
-            }
-        }
-        .onAppear {
-            isPulsing = isActive
-        }
-        .onChange(of: isActive) { _, newValue in
-            isPulsing = newValue
-        }
-    }
+enum RecordingFocus: Equatable {
+    case split, notes, transcript
 }
 
 struct RecordingView: View {
@@ -155,18 +49,18 @@ struct RecordingView: View {
     var sermonService: SermonService
     var recordingService: RecordingService
     @ObservedObject var transcriptionService: TranscriptionService
+
     private let recordingSessionId = UUID().uuidString
+
     @State private var showPermissionAlert = false
     @State private var permissionMessage = ""
+
     #if canImport(AVFoundation) && os(iOS)
     @StateObject private var scriptureAnalysisService = ScriptureAnalysisService()
-    // Timer removed - using RecordingService.recordingDuration for continuous timing
-    // Note: Using recordingService.recordingDuration instead of separate elapsedTime to ensure continuity
     @State private var isRecordingStarted = false
     @State private var isPaused = false
-    @State private var showNoteSheet = false
     @State private var noteText: String = ""
-    @State private var currentNoteID: UUID? = nil
+    @State private var noteSaveTask: Task<Void, Never>? = nil
     @State private var transcript: String = ""
     @State private var detectedReferences: [ScriptureReference] = []
     @State private var selectedReference: ScriptureReference? = nil
@@ -175,556 +69,455 @@ struct RecordingView: View {
     @State private var audioFileURL: URL? = nil
     @State private var isProcessingTranscript = false
     @State private var transcriptProcessingError: String? = nil
+    @State private var sectionFocus: RecordingFocus = .split
+    @FocusState private var isNotesFocused: Bool
     private let processingCoordinator = SermonProcessingCoordinator.shared
     #endif
-    
-    // Computed properties for the main button
-    private var buttonColor: Color {
-        if !isRecordingStarted {
-            return .recordingRed
-        } else if isPaused {
-            return .successGreen
-        } else {
-            return .warningOrange
-        }
-    }
-    
-    private var buttonIcon: String {
-        if !isRecordingStarted {
-            return "mic.fill"
-        } else if isPaused {
-            return "play.fill"
-        } else {
-            return "pause.fill"
-        }
-    }
 
     var body: some View {
         #if canImport(AVFoundation) && os(iOS)
         ZStack {
-            Color.recordingBackground
-                .ignoresSafeArea()
-            
+            Color.SV.surface.ignoresSafeArea()
+
             VStack(spacing: 0) {
-                HeaderView(title: "Recording", showLogo: true, showSearch: false, showSyncStatus: false, showBack: false)
-                
-                // Top controls bar
-                HStack(spacing: 16) {
-                    // Record/Pause button
-                    Button(action: {
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                        impactFeedback.impactOccurred()
-                        
-                        if !isRecordingStarted {
-                            checkPermissions()
-                        } else if isPaused {
-                            resumeRecording()
-                        } else {
-                            pauseRecording()
-                        }
-                    }) {
-                        Circle()
-                            .fill(buttonColor)
-                            .frame(width: 44, height: 44)
-                            .overlay(
-                                Image(systemName: buttonIcon)
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.white)
-                            )
-                    }
-                    
-                    // Animated waveform
-                    WaveformView(isRecording: isRecordingStarted && !isPaused)
-                        .frame(height: 20)
-                    
-                    Spacer()
-                    
-                    // Timer with remaining time
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(timeString(from: recordingService.recordingDuration))
-                            .font(.system(size: 18, weight: .medium, design: .monospaced))
-                            .foregroundColor(isRecordingStarted ? .recordingRed : .adaptivePrimaryText)
-                        
-                        if let remainingTime = recordingService.remainingTime {
-                            Text("(\(timeString(from: remainingTime)) left)")
-                                .font(.caption)
-                                .foregroundColor(remainingTime < 300 ? .warningOrange : .adaptiveSecondaryText) // Warning when < 5 min
-                        }
-                    }
-                    
-                    // Stop button (when recording)
-                    if isRecordingStarted {
-                        Button(action: {
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                            impactFeedback.impactOccurred()
-                            stopRecording()
-                        }) {
-                            Circle()
-                                .stroke(Color.red, lineWidth: 2)
-                                .frame(width: 32, height: 32)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color.red)
-                                        .frame(width: 12, height: 12)
-                                )
-                        }
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color.adaptiveSecondaryBackground.opacity(0.3))
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: isRecordingStarted)
-                
-                // Live transcript area
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if transcript.isEmpty {
-                            VStack(spacing: 16) {
-                                Image(systemName: "text.bubble")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.adaptiveSecondaryText.opacity(0.5))
-                                
-                                VStack(spacing: 8) {
-                                    Text("Live Transcript")
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                    
-                                    Text(isRecordingStarted ? "Start speaking to see live transcription..." : "Tap record to begin")
-                                        .font(.subheadline)
-                                        .foregroundColor(.adaptiveSecondaryText)
-                                        .multilineTextAlignment(.center)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 80)
-                        } else {
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Image(systemName: "text.bubble.fill")
-                                        .foregroundColor(.adaptiveAccent)
-                                    Text("Live Transcript")
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                    Spacer()
-                                    Text("Live")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.successGreen)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.successGreen.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
-                                
-                                Text(transcript)
-                                    .font(.body)
-                                    .foregroundColor(.adaptivePrimaryText)
-                                    .lineSpacing(4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .padding()
-                            .background(Color.transcriptionBackground)
-                            .cornerRadius(12)
-                            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                        }
-                        
-                        // Processing state
-                        if isProcessingTranscript {
-                            VStack(spacing: 12) {
-                                ProgressView()
-                                    .scaleEffect(1.0)
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .adaptiveAccent))
-                                
-                                VStack(spacing: 4) {
-                                    Text("Saving recording...")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                    
-                                    Text("Transcription will continue in the background")
-                                        .font(.caption)
-                                        .foregroundColor(.adaptiveSecondaryText)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.adaptiveSecondaryBackground.opacity(0.5))
-                            .cornerRadius(12)
-                            .transition(.opacity.combined(with: .scale))
-                        }
-                        
-                        if let error = transcriptProcessingError {
-                            VStack(spacing: 12) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(.warningOrange)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Processing Failed")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.adaptivePrimaryText)
-                                        Text(error)
-                                            .font(.caption)
-                                            .foregroundColor(.adaptiveSecondaryText)
-                                    }
-                                    Spacer()
-                                }
-                                
-                                if let audioURL = audioFileURL {
-                                    VStack(spacing: 8) {
-                                        HStack {
-                                            Button(action: {
-                                                let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-                                                let date = Date()
-                                                processTranscription(title: title, date: date, url: audioURL)
-                                            }) {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: "arrow.clockwise")
-                                                    Text("Retry")
-                                                }
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 16)
-                                                .padding(.vertical, 8)
-                                                .background(Color.accentColor)
-                                                .cornerRadius(8)
-                                            }
-                                            .disabled(isProcessingTranscript)
-                                            
-                                            Spacer()
-                                            
-                                            Button(action: {
-                                                withAnimation(.easeInOut(duration: 0.3)) {
-                                                    transcriptProcessingError = nil
-                                                }
-                                            }) {
-                                                Text("Dismiss")
-                                                    .font(.subheadline)
-                                                    .foregroundColor(.adaptiveSecondaryText)
-                                            }
-                                        }
-                                        
-                                        // Show "Save for Later" option if it's a network-related error
-                                        if let errorText = transcriptProcessingError, 
-                                           errorText.contains("internet connection") || errorText.contains("Network") {
-                                            Button(action: {
-                                                saveRecordingForLaterProcessing(audioURL: audioURL)
-                                            }) {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: "cloud.fill")
-                                                    Text("Save for Later Processing")
-                                                }
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(.accentColor)
-                                                .padding(.horizontal, 16)
-                                                .padding(.vertical, 8)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .stroke(Color.accentColor, lineWidth: 1)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .padding()
-                            .background(Color.warningOrange.opacity(0.1))
-                            .cornerRadius(12)
-                            .transition(.opacity.combined(with: .scale))
-                        }
-                    }
-                    .padding()
-                    .padding(.bottom, 100)
-                }
-                .background(Color.adaptiveBackground)
-            }
-            
-            // Floating Action Button for notes
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    Button(action: {
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                        impactFeedback.impactOccurred()
-                        showNoteSheet = true
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.adaptiveAccent)
-                                .frame(width: 56, height: 56)
-                                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
-                            
-                            Image(systemName: "note.text")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(.white)
-                            
-                            // Badge for note count
-                            if !notes.isEmpty {
-                                Circle()
-                                    .fill(Color.recordingRed)
-                                    .frame(width: 20, height: 20)
-                                    .overlay(
-                                        Text("\(notes.count)")
-                                            .font(.caption2)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.white)
-                                    )
-                                    .offset(x: 20, y: -20)
-                            }
-                        }
-                    }
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 120)
-                }
+                svTopBar
+                svErrorBanner
+                svNotesArea
+                svAmbientTranscript
             }
         }
         .ignoresSafeArea(edges: .bottom)
         .alert("Permission Required", isPresented: $showPermissionAlert) {
             Button("Settings") {
-                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(settingsUrl)
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
                 }
             }
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(permissionMessage)
         }
         .onReceive(recordingService.isRecordingPublisher) { recording in
-            // Handle recording state changes
-            if !recording && isRecordingStarted {
-                // Recording stopped unexpectedly (backgrounding issue)
-                DispatchQueue.main.async {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        isRecordingStarted = false
-                        isPaused = false
-                        transcriptProcessingError = "Recording was interrupted. The audio may have been saved."
-                    }
-                }
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isRecordingStarted = recording
+                if !recording { isPaused = false }
+            }
+            if !recording && !isProcessingTranscript {
+                transcriptProcessingError = "Recording was interrupted. The audio may have been saved."
+            }
+        }
+        .onReceive(recordingService.isPausedPublisher) { paused in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isPaused = paused
             }
         }
         .onReceive(recordingService.recordingStoppedPublisher) { (audioURL, wasAutoStopped) in
             if wasAutoStopped {
-                print("[RecordingView] Recording auto-stopped due to time limit, triggering transcription and summary")
-                // Update UI state
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                     isPaused = false
                     isRecordingStarted = false
                 }
-
-                // Stop transcription service
                 transcriptionService.stopTranscription()
-
-                // Trigger auto-processing
                 if let url = audioURL {
                     let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-                    let date = Date()
-                    processTranscription(title: title, date: date, url: url)
+                    processTranscription(title: title, date: Date(), url: url)
                 }
             }
         }
         .onReceive(recordingService.audioFileURLPublisher) { url in
             audioFileURL = url
-            print("[RecordingView] Captured audioFileURL: \(url?.absoluteString ?? "nil")")
         }
         .onReceive(transcriptionService.transcriptPublisher) { newTranscript in
-            print("[RecordingView] 📥 Received transcript update: '\(newTranscript)' (length: \(newTranscript.count))")
             withAnimation(.easeInOut(duration: 0.3)) {
                 transcript = newTranscript
-                print("[RecordingView] 📱 UI transcript updated to: '\(transcript)'")
             }
             detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: newTranscript)
         }
         .onReceive(noteService.notesPublisher) { updatedNotes in
-            withAnimation(.easeInOut(duration: 0.3)) {
-                notes = updatedNotes
+            notes = updatedNotes
+            // Load existing note text on first arrival (only if user hasn't typed anything)
+            if noteText.isEmpty, let firstNote = updatedNotes.first {
+                noteText = firstNote.text
             }
         }
-        .sheet(isPresented: $showNoteSheet) {
-            NavigationView {
-                ZStack(alignment: .bottomTrailing) {
-                    VStack(spacing: 0) {
-                        // Clean minimal header
-                        HStack {
-                            Image(systemName: "note.text")
-                                .foregroundColor(.adaptiveAccent)
-                            Text("Notes")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.adaptivePrimaryText)
-                            Spacer()
-                            Text(timeString(from: recordingService.recordingDuration))
-                                .font(.caption)
-                                .foregroundColor(.adaptiveSecondaryText)
-                        }
-                        .padding()
-                        
-                        // Clean text editor - no outline, no background
-                        TextEditor(text: $noteText)
-                            .font(.body)
-                            .padding()
-                            .background(Color.clear)
-                            .scrollContentBackground(.hidden)
-                        
-                        // Action buttons
-                        HStack(spacing: 16) {
-                            Button("Cancel") {
-                                showNoteSheet = false
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.adaptiveSecondaryBackground)
-                            .foregroundColor(.adaptivePrimaryText)
-                            .cornerRadius(12)
-                            
-                            Button("Save") {
-                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                impactFeedback.impactOccurred()
-
-                                let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                print("[RecordingView] Save button pressed. Note text: '\(trimmed)'")
-                                if !trimmed.isEmpty {
-                                    // Update the single continuous note
-                                    if let existingNote = notes.first {
-                                        print("[RecordingView] Updating existing note with id: \(existingNote.id)")
-                                        noteService.updateNote(id: existingNote.id, newText: trimmed)
-                                    } else {
-                                        print("[RecordingView] Adding new note at timestamp: \(recordingService.recordingDuration)")
-                                        noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
-                                    }
-                                    print("[RecordingView] After save, noteService.currentNotes count: \(noteService.currentNotes.count)")
-                                } else {
-                                    print("[RecordingView] Note text is empty after trimming, not saving")
-                                }
-                                showNoteSheet = false
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.adaptiveAccent)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                        }
-                        .padding()
-                    }
-                    
-                    // Bible FAB positioned in bottom right of the sheet
-                    BibleFAB { reference, content in
-                        insertScriptureIntoNote(reference: reference, content: content)
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 100)
-                }
-                .navigationTitle("")
-                .navigationBarHidden(true)
-                .onAppear {
-                    // Load the single continuous note
-                    if let existingNote = notes.first {
-                        noteText = existingNote.text
-                    } else {
-                        noteText = ""
-                    }
-                }
+        .onAppear {
+            if recordingService.isRecording {
+                isRecordingStarted = true
+                isPaused = recordingService.isPaused
+                try? transcriptionService.startTranscription()
+            } else if isRecordingStarted {
+                isRecordingStarted = false
+                isPaused = false
+                transcriptProcessingError = "Recording was interrupted. Please start a new recording."
+            }
+            // Load existing note
+            if let existingNote = noteService.currentNotes.first {
+                noteText = existingNote.text
             }
         }
-        // Scripture reference sheet with improved styling
         .sheet(item: $selectedReference) { ref in
-            NavigationView {
+            NavigationStack {
                 VStack(spacing: 20) {
-                    // Reference header
                     VStack(spacing: 8) {
                         Image(systemName: "book.closed")
                             .font(.largeTitle)
-                            .foregroundColor(.adaptiveAccent)
+                            .foregroundStyle(Color.SV.primary)
                         Text(ref.raw)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.adaptivePrimaryText)
+                            .font(.system(size: 20, design: .serif))
+                            .foregroundStyle(Color.SV.onSurface)
                         Text("Scripture Reference Detected")
                             .font(.caption)
-                            .foregroundColor(.adaptiveSecondaryText)
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                     }
                     .padding()
-                    .background(Color.adaptiveAccent.opacity(0.1))
-                    .cornerRadius(16)
-                    
-                    // Context
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Context")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.adaptivePrimaryText)
-                        Text(ref.raw) // Display scripture reference
-                            .font(.body)
-                            .foregroundColor(.adaptivePrimaryText)
-                            .padding()
-                            .background(Color.adaptiveSecondaryBackground)
-                            .cornerRadius(12)
-                    }
-                    
                     Spacer()
-                    
-                    // Action button
                     Button("Add to Notes") {
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                        impactFeedback.impactOccurred()
-                        
-                        noteService.addNote(text: "Scripture: \(ref.raw)", timestamp: recordingService.recordingDuration)
+                        noteText += noteText.isEmpty ? "📖 \(ref.raw)" : "\n\n📖 \(ref.raw)"
+                        saveNoteText(noteText)
                         selectedReference = nil
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Color.adaptiveAccent)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
+                    .background(Color.SV.primary)
+                    .foregroundStyle(.white)
+                    .clipShape(.rect(cornerRadius: 8))
                     .padding()
                 }
-                .padding()
-                .navigationTitle("Scripture Reference")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
-                            selectedReference = nil
-                        }
+                        Button("Done") { selectedReference = nil }
                     }
                 }
-            }
-        }
-        .onAppear {
-            // Check if recording is already in progress from MainAppView
-            if recordingService.isRecording {
-                print("[RecordingView] Recording already in progress, setting up UI state")
-                isRecordingStarted = true
-                isPaused = recordingService.isPaused
-                try? transcriptionService.startTranscription()
-                // Timer auto-starts with RecordingService
-            } else if isRecordingStarted {
-                // Recording was in progress but is no longer valid (backgrounding issue)
-                print("[RecordingView] Recording state mismatch detected, resetting UI")
-                isRecordingStarted = false
-                isPaused = false
-                transcriptProcessingError = "Recording was interrupted. Please start a new recording."
             }
         }
         #else
         VStack {
             Text("Recording is not available on this platform")
-                .foregroundColor(.adaptiveSecondaryText)
+                .foregroundStyle(.adaptiveSecondaryText)
         }
         #endif
     }
+
+    // MARK: - Sacred Vellum Layout
+
+    #if canImport(AVFoundation) && os(iOS)
+
+    /// Minimal 3-element top bar: pause | ● REC | ✓
+    private var svTopBar: some View {
+        HStack {
+            Button(action: handlePauseResume) {
+                Image(systemName: isPaused ? "play" : "pause")
+                    .font(.system(size: 18, weight: .light))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.7))
+                    .frame(width: 44, height: 44)
+            }
+
+            Spacer()
+
+            VStack(spacing: 4) {
+                SVRecordingIndicator(isPaused: isPaused)
+                if let remaining = recordingService.remainingTime, remaining < 300 {
+                    Text(timeString(from: remaining) + " left")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.SV.error.opacity(0.8))
+                        .transition(.opacity)
+                }
+            }
+
+            Spacer()
+
+            Button(action: handleDone) {
+                if isProcessingTranscript {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color.SV.primary))
+                        .frame(width: 44, height: 44)
+                } else {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Color.SV.primary)
+                        .frame(width: 44, height: 44)
+                }
+            }
+            .disabled(isProcessingTranscript)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color.SV.surface)
+    }
+
+    /// Subtle error/processing feedback strip shown below the top bar.
+    @ViewBuilder
+    private var svErrorBanner: some View {
+        if let error = transcriptProcessingError {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.SV.error)
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.SV.error.opacity(0.8))
+                    .lineLimit(1)
+                Spacer()
+                if let url = audioFileURL {
+                    Button("Retry") {
+                        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                        processTranscription(title: title, date: Date(), url: url)
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.SV.primary)
+                }
+                Button {
+                    withAnimation { transcriptProcessingError = nil }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color.SV.error.opacity(0.07))
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Primary content: full-screen serif TextEditor with placeholder, focus-aware.
+    @ViewBuilder
+    private var svNotesArea: some View {
+        if sectionFocus == .transcript {
+            // Collapsed strip — notes is minimized
+            HStack(spacing: 12) {
+                Text("NOTES")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(2)
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                Text(noteText.isEmpty ? "Tap to write notes" : noteText)
+                    .font(.system(size: 13, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.25))
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            .background(Color.SV.surface)
+            .contentShape(Rectangle())
+            .onTapGesture { handleFocusTap(tapped: .notes) }
+        } else {
+            // Full editor (split or notes-focused)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("NOTES")
+                        .font(.system(size: 10, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                    Spacer()
+                    if sectionFocus == .notes {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.25))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFocusTap(tapped: .notes) }
+
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $noteText)
+                        .focused($isNotesFocused)
+                        .font(.system(size: 20, design: .serif))
+                        .foregroundStyle(Color.SV.onSurface)
+                        .lineSpacing(4)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.clear)
+
+                    if noteText.isEmpty {
+                        Text("Untitled Reflection")
+                            .font(.system(size: 20, design: .serif))
+                            .italic()
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.22))
+                            .allowsHitTesting(false)
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .onChange(of: noteText) { _, newText in
+                    scheduleNoteSave(newText)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.SV.surface)
+        }
+    }
+
+    /// Ambient transcription section with gradient fade divider, focus-aware.
+    @ViewBuilder
+    private var svAmbientTranscript: some View {
+        if sectionFocus == .notes {
+            // Collapsed strip — transcript is minimized
+            HStack(spacing: 12) {
+                Text("AMBIENT TRANSCRIPTION")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(2)
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                Text(transcript.isEmpty ? "..." : transcript)
+                    .font(.system(size: 13, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.25))
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            .background(Color.SV.surfaceContainerLow)
+            .contentShape(Rectangle())
+            .onTapGesture { handleFocusTap(tapped: .transcript) }
+        } else {
+            // Full transcript (split or transcript-focused)
+            VStack(spacing: 0) {
+                // Gradient fade — only shown in split mode
+                if sectionFocus == .split {
+                    LinearGradient(
+                        colors: [Color.SV.surface.opacity(0), Color.SV.surfaceContainerLow],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 36)
+                }
+
+                HStack {
+                    Text("AMBIENT TRANSCRIPTION")
+                        .font(.system(size: 10, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                    Spacer()
+                    if sectionFocus == .transcript {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.25))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.SV.surfaceContainerLow)
+                .contentShape(Rectangle())
+                .onTapGesture { handleFocusTap(tapped: .transcript) }
+
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(transcript.isEmpty ? "...spoken words will appear here..." : transcript)
+                                .font(.system(size: 15, design: .serif))
+                                .foregroundStyle(Color.SV.onSurface.opacity(transcript.isEmpty ? 0.28 : 0.5))
+                                .italic(transcript.isEmpty)
+                                .lineSpacing(5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 8)
+
+                            // Sentinel view — always at the true bottom of content
+                            Color.clear
+                                .frame(height: 1)
+                                .id("transcriptEnd")
+                        }
+                    }
+                    .onChange(of: transcript) { _, _ in
+                        DispatchQueue.main.async {
+                            proxy.scrollTo("transcriptEnd", anchor: .bottom)
+                        }
+                    }
+                }
+                .frame(maxHeight: sectionFocus == .transcript ? .infinity : 220)
+                .background(Color.SV.surfaceContainerLow)
+                .mask(
+                    LinearGradient(
+                        colors: [.black, .black, .black.opacity(0.05)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            }
+        }
+    }
+
+    // MARK: - Interaction Handlers
+
+    private func handleFocusTap(tapped: RecordingFocus) {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
+
+        let next: RecordingFocus = sectionFocus == tapped ? .split : tapped
+
+        if next != .notes { isNotesFocused = false }
+
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+            sectionFocus = next
+        }
+
+        if next == .notes {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                isNotesFocused = true
+            }
+        }
+    }
+
+    private func handlePauseResume() {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
+        if !isRecordingStarted {
+            checkPermissions()
+        } else if isPaused {
+            resumeRecording()
+        } else {
+            pauseRecording()
+        }
+    }
+
+    private func handleDone() {
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
+        noteSaveTask?.cancel()
+        saveNoteText(noteText)
+        stopRecording()
+    }
+
+    // MARK: - Note Persistence
+
+    private func scheduleNoteSave(_ text: String) {
+        noteSaveTask?.cancel()
+        noteSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
+            guard !Task.isCancelled else { return }
+            await MainActor.run { saveNoteText(text) }
+        }
+    }
+
+    private func saveNoteText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existingNote = notes.first {
+            noteService.updateNote(id: existingNote.id, newText: trimmed.isEmpty ? " " : trimmed)
+        } else if !trimmed.isEmpty {
+            noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
+        }
+    }
+
+    #endif
+
+    // MARK: - Utilities
 
     private func timeString(from interval: TimeInterval) -> String {
         let hours = Int(interval) / 3600
         let minutes = Int(interval) % 3600 / 60
         let seconds = Int(interval) % 60
-        
         if hours > 0 {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         } else {
@@ -732,88 +525,61 @@ struct RecordingView: View {
         }
     }
 
+    // MARK: - Recording Control
+
     #if canImport(AVFoundation) && canImport(Speech) && os(iOS)
+
     private func checkPermissions() {
-        print("[RecordingView] checkPermissions called")
         if #available(iOS 17.0, *) {
             AVAudioApplication.requestRecordPermission { granted in
-                print("[RecordingView] Microphone permission granted: \(granted)")
                 handleMicrophonePermission(granted: granted)
             }
         } else {
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                print("[RecordingView] Microphone permission granted: \(granted)")
                 handleMicrophonePermission(granted: granted)
             }
         }
     }
 
     private func handleMicrophonePermission(granted: Bool) {
-        if !granted {
-            print("[RecordingView] Microphone permission denied")
+        guard granted else {
             permissionMessage = "Microphone access is required to record sermons. Please enable it in Settings."
             showPermissionAlert = true
             return
         }
-
-        // No longer need Apple Speech permission since we're using AssemblyAI Live
-        // which handles transcription via cloud API rather than on-device speech recognition
-        print("[RecordingView] Microphone permission granted, starting recording...")
         startRecording()
     }
 
     private func startRecording() {
-        print("[RecordingView] startRecording called")
-        guard !recordingService.isRecording else { print("[RecordingView] Already recording"); return }
-        
+        guard !recordingService.isRecording else { return }
         Task {
-            // Check if user can start recording based on limits
             let (canStart, reason) = await recordingService.canStartRecording()
-            if !canStart {
+            guard canStart else {
                 await MainActor.run {
                     permissionMessage = reason ?? "Recording limit exceeded"
                     showPermissionAlert = true
                 }
                 return
             }
-            
             do {
                 recordingService.prepareRecoverySession(sessionId: noteService.sessionId)
                 try await recordingService.startRecording(serviceType: serviceType)
-                
                 await MainActor.run {
                     do {
                         try transcriptionService.startTranscription()
-                        
                         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                             isRecordingStarted = true
                         }
-                        // Timer removed - RecordingService handles duration tracking continuously
                     } catch {
                         permissionMessage = "Failed to start transcription: \(error.localizedDescription)"
                         showPermissionAlert = true
                     }
                 }
-                
-                // Log duration limit info
-                let maxDuration = await recordingService.getMaxRecordingDuration()
-                if let maxDuration = maxDuration {
-                    let maxMinutes = Int(maxDuration / 60)
-                    print("[RecordingView] Recording started with \(maxMinutes) minute limit")
-                } else {
-                    print("[RecordingView] Recording started with no duration limit")
-                }
             } catch {
                 await MainActor.run {
-                    let errorMessage: String
-                    if let recordingError = error as? RecordingError {
-                        errorMessage = recordingError.localizedDescription
-                    } else {
-                        errorMessage = "Failed to start recording: \(error.localizedDescription)"
-                    }
-                    permissionMessage = errorMessage
+                    let msg = (error as? RecordingError)?.localizedDescription ?? "Failed to start recording: \(error.localizedDescription)"
+                    permissionMessage = msg
                     showPermissionAlert = true
-                    print("[RecordingView] Failed to start recording: \(error)")
                 }
             }
         }
@@ -822,50 +588,39 @@ struct RecordingView: View {
     private func pauseRecording() {
         do {
             try recordingService.pauseRecording()
-            withAnimation(.easeInOut(duration: 0.3)) {
-                isPaused = true
-            }
+            withAnimation(.easeInOut(duration: 0.3)) { isPaused = true }
         } catch {
-            print("[RecordingView] Failed to pause recording: \(error)")
+            print("[RecordingView] Failed to pause: \(error)")
         }
     }
-    
+
     private func resumeRecording() {
         do {
             try recordingService.resumeRecording()
-            withAnimation(.easeInOut(duration: 0.3)) {
-                isPaused = false
-            }
+            withAnimation(.easeInOut(duration: 0.3)) { isPaused = false }
         } catch {
-            print("[RecordingView] Failed to resume recording: \(error)")
+            print("[RecordingView] Failed to resume: \(error)")
         }
     }
-    
-    // Timer function removed - RecordingService manages duration continuously
-    
+
     private func stopRecording() {
         let audioURL = recordingService.stopRecording()
         transcriptionService.stopTranscription()
-        // Timer automatically stops with RecordingService
-
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             isPaused = false
             isRecordingStarted = false
         }
-
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-        let date = Date()
         if let url = audioURL {
-            processTranscription(title: title, date: date, url: url)
+            processTranscription(title: title, date: Date(), url: url)
         }
     }
-    
+
     private func processTranscription(title: String, date: Date, url: URL) {
         withAnimation(.easeInOut(duration: 0.5)) {
             isProcessingTranscript = true
             transcriptProcessingError = nil
         }
-
         let latestNotes = noteService.currentNotes
         processingCoordinator.handleCompletedRecording(
             audioURL: url,
@@ -885,48 +640,19 @@ struct RecordingView: View {
             }
         }
     }
-    
-    private func saveRecordingForLaterProcessing(audioURL: URL) {
-        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-        let date = Date()
 
-        print("[RecordingView] Saving recording for background processing: \(title)")
-        processTranscription(title: title, date: date, url: audioURL)
-    }
-    
-    // MARK: - Scripture Insertion
-    
-    private func insertScriptureIntoNote(reference: ScriptureReference, content: String) {
-        let scriptureText = """
-        📖 \(reference.displayText)
-        \(content)
-        """
-        
-        // Insert scripture into the note text
-        if noteText.isEmpty {
-            noteText = scriptureText
-        } else {
-            // Add some spacing and append the scripture
-            noteText += "\n\n" + scriptureText
-        }
-        
-        // Save the updated note immediately
-        let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            if let existingNote = notes.first {
-                noteService.updateNote(id: existingNote.id, newText: trimmed)
-            } else {
-                noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
-            }
-        }
-        
-        // Provide haptic feedback
-        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-        impactFeedback.impactOccurred()
-    }
     #endif
 }
 
 #Preview {
-    RecordingView(serviceType: "Sermon", noteService: NoteService(sessionId: UUID().uuidString), sermonService: SermonService(modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self)), authManager: AuthenticationManager.shared), recordingService: RecordingService(), transcriptionService: TranscriptionService())
+    RecordingView(
+        serviceType: "Sermon",
+        noteService: NoteService(sessionId: UUID().uuidString),
+        sermonService: SermonService(
+            modelContext: try! ModelContext(ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self)),
+            authManager: AuthenticationManager.shared
+        ),
+        recordingService: RecordingService(),
+        transcriptionService: TranscriptionService()
+    )
 }

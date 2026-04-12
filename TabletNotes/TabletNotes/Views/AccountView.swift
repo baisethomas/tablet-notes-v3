@@ -24,26 +24,25 @@ struct AccountView: View {
                 HStack {
                     Button(action: onBack) {
                         Image(systemName: "chevron.left")
-                            .font(.title2)
-                            .foregroundColor(.adaptiveAccent)
+                            .font(.system(size: 18, weight: .light))
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.7))
                     }
-                    
+
                     Spacer()
-                    
+
                     Text("Account")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.adaptivePrimaryText)
-                    
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.SV.onSurface)
+
                     Spacer()
-                    
+
                     // Placeholder for balance
                     Color.clear
                         .frame(width: 44, height: 44)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .background(Color.navigationBackground)
+                .background(Color.SV.surface)
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -52,73 +51,68 @@ struct AccountView: View {
                             // Profile picture and basic info
                             VStack(spacing: 12) {
                                 Circle()
-                                    .fill(Color.adaptiveAccent.opacity(0.1))
+                                    .fill(Color.SV.primary.opacity(0.1))
                                     .frame(width: 80, height: 80)
                                     .overlay(
                                         Image(systemName: "person.fill")
                                             .font(.system(size: 36))
-                                            .foregroundColor(.adaptiveAccent)
+                                            .foregroundStyle(Color.SV.primary)
                                     )
-                                
+
                                 VStack(spacing: 4) {
                                     Text(currentUser?.name ?? "User")
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                    
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .foregroundStyle(Color.SV.onSurface)
+
                                     Text(currentUser?.email ?? "user@example.com")
-                                        .font(.subheadline)
-                                        .foregroundColor(.adaptiveSecondaryText)
-                                    
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+
                                     if let user = currentUser {
                                         HStack(spacing: 8) {
                                             if user.isEmailVerified {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "checkmark.seal.fill")
                                                         .font(.caption)
-                                                        .foregroundColor(.successGreen)
+                                                        .foregroundStyle(Color.successGreen)
                                                     Text("Verified")
                                                         .font(.caption)
-                                                        .foregroundColor(.successGreen)
+                                                        .foregroundStyle(Color.successGreen)
                                                 }
                                             } else {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "exclamationmark.triangle.fill")
                                                         .font(.caption)
-                                                        .foregroundColor(.warningOrange)
+                                                        .foregroundStyle(Color.warningOrange)
                                                     Text("Verify Email")
                                                         .font(.caption)
-                                                        .foregroundColor(.warningOrange)
+                                                        .foregroundStyle(Color.warningOrange)
                                                 }
                                             }
-                                            
+
                                             Text("•")
                                                 .font(.caption)
-                                                .foregroundColor(.adaptiveSecondaryText)
-                                            
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                             Text(user.subscriptionTier.capitalized)
                                                 .font(.caption)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.adaptiveSecondaryText)
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                                         }
                                         .padding(.top, 4)
                                     }
                                 }
-                                
+
                                 Button("Edit Profile") {
                                     showingEditProfile = true
                                 }
-                                .font(.subheadline)
-                                .foregroundColor(.adaptiveAccent)
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color.SV.primary)
                             }
                             .padding(.vertical, 20)
                             .frame(maxWidth: .infinity)
-                            .background(Color.adaptiveCardBackground)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
                         // Account Settings Section
@@ -156,12 +150,8 @@ struct AccountView: View {
                                     // Handle data export
                                 }
                             }
-                            .background(Color.adaptiveCardBackground)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
                         // Support & Feedback Section
@@ -210,12 +200,8 @@ struct AccountView: View {
                                     // Handle feedback
                                 }
                             }
-                            .background(Color.adaptiveCardBackground)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
                         // Legal & Privacy Section
@@ -253,12 +239,8 @@ struct AccountView: View {
                                     showingAbout = true
                                 }
                             }
-                            .background(Color.adaptiveCardBackground)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
                         // App Settings Section
@@ -274,12 +256,8 @@ struct AccountView: View {
                                     onNavigateToSettings?()
                                 }
                             }
-                            .background(Color.adaptiveCardBackground)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
                         // Sign Out Section
@@ -289,34 +267,29 @@ struct AccountView: View {
                                     showingSignOutAlert = true
                                 }
                             }) {
-                                HStack {
+                                HStack(spacing: 12) {
                                     if isSigningOut {
                                         ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .recordingRed))
+                                            .progressViewStyle(CircularProgressViewStyle(tint: Color.SV.error))
                                             .scaleEffect(0.8)
                                             .frame(width: 24, height: 24)
                                     } else {
                                         Image(systemName: "arrow.right.square")
-                                            .font(.title3)
-                                            .foregroundColor(.recordingRed)
+                                            .font(.system(size: 15, weight: .medium))
+                                            .foregroundStyle(Color.SV.error)
                                             .frame(width: 24, height: 24)
                                     }
-                                    
+
                                     Text(isSigningOut ? "Signing Out..." : "Sign Out")
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.recordingRed)
-                                    
+                                        .font(.system(size: 16))
+                                        .foregroundStyle(Color.SV.error)
+
                                     Spacer()
                                 }
                                 .padding(.horizontal, 16)
-                                .padding(.vertical, 16)
-                                .background(Color.adaptiveCardBackground)
-                                .cornerRadius(12)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.adaptiveBorder, lineWidth: 1)
-                                )
+                                .padding(.vertical, 14)
+                                .background(Color.SV.surfaceContainerLowest)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(PlainButtonStyle())
                             .disabled(isSigningOut)
@@ -326,10 +299,10 @@ struct AccountView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 20) // Reduced padding since footer is removed
                 }
-                .background(Color.adaptiveBackground)
+                .background(Color.SV.surface)
             }
             .navigationBarHidden(true)
-            .background(Color.adaptiveBackground)
+            .background(Color.SV.surface)
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showingEditProfile) {
@@ -388,17 +361,17 @@ struct AccountView: View {
 // MARK: - Account Section Header
 struct AccountSectionHeader: View {
     let title: String
-    
+
     var body: some View {
         HStack {
-            Text(title)
-                .font(.headline)
-                .fontWeight(.semibold)
-                .foregroundColor(.adaptivePrimaryText)
-            
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
             Spacer()
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
         .padding(.bottom, 8)
     }
 }
@@ -409,34 +382,33 @@ struct AccountRowView: View {
     let title: String
     let subtitle: String
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(.adaptiveAccent)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.SV.primary)
                     .frame(width: 24, height: 24)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.adaptivePrimaryText)
-                    
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.SV.onSurface)
+
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.adaptiveSecondaryText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                 }
-                
+
                 Spacer()
-                
+
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.adaptiveSecondaryText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.3))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
         }
         .buttonStyle(PlainButtonStyle())
     }

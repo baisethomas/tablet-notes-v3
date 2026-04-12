@@ -37,7 +37,7 @@ struct MainAppView: View {
     @StateObject private var trialPromptManager = TrialPromptManager.shared
     private let authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
-    @StateObject private var syncService: SyncService
+    @State private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
     private let processingCoordinator = SermonProcessingCoordinator.shared
 
@@ -50,12 +50,7 @@ struct MainAppView: View {
             supabaseService: SupabaseService.shared,
             authService: AuthenticationManager.shared
         )
-        _syncService = StateObject(wrappedValue: syncSvc)
-        SermonProcessingCoordinator.shared.configure(
-            modelContext: modelContext,
-            sermonService: sermonSvc,
-            syncService: syncSvc
-        )
+        _syncService = State(initialValue: syncSvc)
         _backgroundSyncManager = StateObject(
             wrappedValue: BackgroundSyncManager(processingCoordinator: SermonProcessingCoordinator.shared)
         )
@@ -278,64 +273,92 @@ struct MainAppView: View {
             }
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
+                    // Drag indicator
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Color.secondary.opacity(0.4))
+                        .frame(width: 36, height: 5)
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
+
                     Text("Select Service Type")
-                        .font(.headline)
-                        .foregroundColor(.adaptivePrimaryText)
-                        .padding()
-                    
-                    ForEach(["Sermon", "Bible Study", "Youth Group", "Conference"], id: \.self) { type in
-                        Button(type) {
-                            selectedServiceType = type
-                            showServiceTypeModal = false
-                            
-                            Task {
-                                // Check if user can start recording before navigating
-                                let (canStart, reason) = await recordingService.canStartRecording()
-                                if !canStart {
-                                    print("[MainAppView] Cannot start recording: \(reason ?? "Unknown limit")")
-                                    // TODO: Show alert with reason
-                                    return
-                                }
-                                
-                                // Start recording immediately
-                                do {
-                                    recordingService.prepareRecoverySession(sessionId: currentRecordingSessionId)
-                                    try await recordingService.startRecording(serviceType: type)
-                                    print("[MainAppView] Recording started immediately for \(type)")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(Color.SV.onSurface)
+                        .padding(.bottom, 24)
 
-                                    // Log duration limit
-                                    let maxDuration = await recordingService.getMaxRecordingDuration()
-                                    if let maxDuration = maxDuration {
-                                        let maxMinutes = Int(maxDuration / 60)
-                                        print("[MainAppView] Recording limit: \(maxMinutes) minutes")
+                    VStack(spacing: 0) {
+                        ForEach(["Sermon", "Bible Study", "Youth Group", "Conference"], id: \.self) { type in
+                            Button {
+                                selectedServiceType = type
+                                showServiceTypeModal = false
+
+                                Task {
+                                    let (canStart, reason) = await recordingService.canStartRecording()
+                                    if !canStart {
+                                        print("[MainAppView] Cannot start recording: \(reason ?? "Unknown limit")")
+                                        return
                                     }
 
-                                    await MainActor.run {
-                                        // Track the current recording service type for mini-player
-                                        currentRecordingServiceType = type
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                            currentScreen = .recording(serviceType: type)
+                                    do {
+                                        recordingService.prepareRecoverySession(sessionId: currentRecordingSessionId)
+                                        try await recordingService.startRecording(serviceType: type)
+                                        print("[MainAppView] Recording started immediately for \(type)")
+
+                                        let maxDuration = await recordingService.getMaxRecordingDuration()
+                                        if let maxDuration = maxDuration {
+                                            let maxMinutes = Int(maxDuration / 60)
+                                            print("[MainAppView] Recording limit: \(maxMinutes) minutes")
                                         }
+
+                                        await MainActor.run {
+                                            currentRecordingServiceType = type
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                currentScreen = .recording(serviceType: type)
+                                            }
+                                        }
+                                    } catch {
+                                        print("[MainAppView] Failed to start recording: \(error)")
                                     }
-                                } catch {
-                                    print("[MainAppView] Failed to start recording: \(error)")
-                                    // TODO: Show alert with error
-                                    return
                                 }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Circle()
+                                        .fill(selectedServiceType == type ? Color.SV.onSurface : Color.clear)
+                                        .frame(width: 8, height: 8)
+                                    Text(type)
+                                        .font(.system(size: 17))
+                                        .foregroundColor(Color.SV.onSurface)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(Color.secondary)
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 18)
+                            }
+
+                            if type != "Conference" {
+                                Divider()
+                                    .padding(.leading, 24)
                             }
                         }
-                        .font(.title3)
-                        .foregroundColor(.adaptivePrimaryText)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.adaptiveSecondaryBackground)
-                        .cornerRadius(8)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
                     }
+
+                    Spacer()
+
+                    Button {
+                        showServiceTypeModal = false
+                    } label: {
+                        Text("DISMISS")
+                            .font(.system(size: 13, weight: .medium))
+                            .kerning(1.5)
+                            .foregroundColor(Color.secondary)
+                    }
+                    .padding(.bottom, 32)
                 }
-                .background(Color.adaptiveBackground)
+                .frame(maxWidth: .infinity)
+                .background(Color.SV.surfaceContainerLowest)
                 .presentationDetents([.medium])
+                .presentationDragIndicator(.hidden)
             }
         }
     }
