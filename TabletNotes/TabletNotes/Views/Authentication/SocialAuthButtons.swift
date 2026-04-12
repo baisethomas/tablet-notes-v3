@@ -7,80 +7,53 @@ struct SocialAuthButton: View {
     let provider: SocialAuthProvider
     let isLoading: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 if isLoading {
                     ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: providerForegroundColor))
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color.SV.onSurface))
                         .scaleEffect(0.8)
                 } else {
                     socialIcon
                 }
-                
+
                 Text("Continue with \(provider.displayName)")
-                    .font(.headline)
-                    .foregroundColor(providerForegroundColor)
-                
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.SV.onSurface)
+
                 Spacer()
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(providerBackgroundColor)
+            .background(Color.SV.surfaceContainerLowest)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(providerBorderColor, lineWidth: 1)
+                    .stroke(Color.SV.onSurface.opacity(0.12), lineWidth: 1)
             )
-            .cornerRadius(12)
         }
         .buttonStyle(.plain)
     }
-    
+
     private var socialIcon: some View {
         Group {
             switch provider {
             case .google:
                 Text("G")
-                    .font(.headline.weight(.bold))
-                    .foregroundColor(.white)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
                     .frame(width: 24, height: 24)
                     .background(Color(red: 0.26, green: 0.52, blue: 0.96))
                     .clipShape(Circle())
             case .apple:
                 Image(systemName: "apple.logo")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(providerForegroundColor)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.SV.onSurface)
                     .frame(width: 24, height: 24)
             }
-        }
-    }
-    
-    private var providerBackgroundColor: Color {
-        switch provider {
-        case .google:
-            return Color(.systemBackground)
-        case .apple:
-            return Color.primary
-        }
-    }
-    
-    private var providerForegroundColor: Color {
-        switch provider {
-        case .google:
-            return Color.primary
-        case .apple:
-            return Color(.systemBackground)
-        }
-    }
-    
-    private var providerBorderColor: Color {
-        switch provider {
-        case .google:
-            return Color(.systemGray4)
-        case .apple:
-            return Color.primary.opacity(0.2)
         }
     }
 }
@@ -92,9 +65,8 @@ struct NativeAppleSignInButton: View {
     let onSuccess: () -> Void
     let onError: (String) -> Void
     
-    @Environment(\.colorScheme) private var colorScheme
     @State private var currentNonce: String?
-    
+
     var body: some View {
         ZStack {
             SignInWithAppleButton(
@@ -102,14 +74,14 @@ struct NativeAppleSignInButton: View {
                 onRequest: configureAppleRequest,
                 onCompletion: handleAppleCompletion
             )
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .signInWithAppleButtonStyle(.black)
             .frame(height: 50)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .disabled(isLoading)
-            
+
             if isLoading {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(colorScheme == .dark ? 0.2 : 0.15))
+                    .fill(Color.black.opacity(0.15))
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle())
             }

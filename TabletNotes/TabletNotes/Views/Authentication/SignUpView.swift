@@ -3,8 +3,7 @@ import SwiftUI
 struct SignUpView: View {
     var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    
+
     @State private var name = ""
     @State private var email = ""
     @State private var password = ""
@@ -14,13 +13,13 @@ struct SignUpView: View {
     @State private var errorMessage = ""
     @State private var showingSuccess = false
     @State private var activeSocialProvider: SocialAuthProvider?
-    
+
     @FocusState private var focusedField: Field?
-    
+
     enum Field {
         case name, email, password, confirmPassword
     }
-    
+
     private var isFormValid: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -28,60 +27,51 @@ struct SignUpView: View {
         password.count >= 8 &&
         password == confirmPassword
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Background
-                Color(colorScheme == .dark ? Color(red: 0.07, green: 0.11, blue: 0.18) : Color.white)
-                    .ignoresSafeArea()
-                
+                Color.SV.surface.ignoresSafeArea()
+
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 0) {
+                        Spacer().frame(height: 48)
+
                         // Header
                         VStack(spacing: 16) {
-                            AppLogoView(size: 60, cornerRadius: 12)
-                            
-                            VStack(spacing: 8) {
-                                Text("Create Account")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
-                                Text("Join Tablet Notes to start recording and organizing your sermons")
-                                    .font(.subheadline)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
+                            AppLogoView(size: 56, cornerRadius: 12)
+
+                            Text("Create Account")
+                                .font(.system(size: 28, weight: .bold, design: .serif))
+                                .foregroundStyle(Color.SV.onSurface)
                         }
-                        .padding(.top, 40)
-                        
+
+                        Spacer().frame(height: 40)
+
                         // Form
                         VStack(spacing: 20) {
-                            // Name field
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Full Name")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
+                            // Name
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("FULL NAME")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                 TextField("Enter your full name", text: $name)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.name)
                                     .autocapitalization(.words)
                                     .focused($focusedField, equals: .name)
-                                    .onSubmit {
-                                        focusedField = .email
-                                    }
+                                    .onSubmit { focusedField = .email }
                             }
-                            
-                            // Email field
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Email Address")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
+
+                            // Email
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("EMAIL ADDRESS")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                 TextField("Enter your email", text: $email)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.emailAddress)
@@ -89,95 +79,91 @@ struct SignUpView: View {
                                     .autocapitalization(.none)
                                     .autocorrectionDisabled()
                                     .focused($focusedField, equals: .email)
-                                    .onSubmit {
-                                        focusedField = .password
-                                    }
+                                    .onSubmit { focusedField = .password }
                             }
-                            
-                            // Password field
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Password")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
+
+                            // Password
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("PASSWORD")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                 SecureField("Create a password", text: $password)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.newPassword)
                                     .focused($focusedField, equals: .password)
-                                    .onSubmit {
-                                        focusedField = .confirmPassword
-                                    }
-                                
+                                    .onSubmit { focusedField = .confirmPassword }
+
                                 Text("Must be at least 8 characters")
-                                    .font(.caption)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                             }
-                            
-                            // Confirm password field
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Confirm Password")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
+
+                            // Confirm password
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("CONFIRM PASSWORD")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                 SecureField("Confirm your password", text: $confirmPassword)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.newPassword)
                                     .focused($focusedField, equals: .confirmPassword)
                                     .onSubmit {
-                                        if isFormValid {
-                                            signUp()
-                                        }
+                                        if isFormValid { signUp() }
                                     }
-                                
+
                                 if !confirmPassword.isEmpty && password != confirmPassword {
                                     Text("Passwords don't match")
-                                        .font(.caption)
-                                        .foregroundColor(.red)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.SV.error)
                                 }
                             }
                         }
-                        
-                        // Sign up button
+
+                        Spacer().frame(height: 28)
+
+                        // Create account CTA
                         Button(action: signUp) {
-                            HStack {
+                            Group {
                                 if isLoading {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                         .scaleEffect(0.8)
                                 } else {
-                                    Image(systemName: "person.badge.plus")
                                     Text("Create Account")
+                                        .font(.system(size: 16, weight: .semibold))
                                 }
                             }
-                            .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(isFormValid && !isLoading ? Color.accentColor : Color.gray)
-                            .cornerRadius(12)
+                            .padding(.vertical, 15)
+                            .background(isFormValid && !isLoading ? Color.SV.primary : Color.SV.primary.opacity(0.35))
+                            .clipShape(Capsule())
                         }
                         .disabled(!isFormValid || isLoading)
-                        .padding(.top, 8)
-                        .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                        
-                        HStack {
+                        .buttonStyle(.plain)
+
+                        Spacer().frame(height: 28)
+
+                        // Or divider
+                        HStack(spacing: 12) {
                             Rectangle()
-                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .fill(Color.SV.onSurface.opacity(0.1))
                                 .frame(height: 1)
-                            
                             Text("or")
-                                .font(.subheadline)
-                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                .padding(.horizontal, 16)
-                            
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                             Rectangle()
-                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .fill(Color.SV.onSurface.opacity(0.1))
                                 .frame(height: 1)
                         }
-                        .padding(.vertical, 8)
-                        
+
+                        Spacer().frame(height: 16)
+
+                        // Social auth
                         VStack(spacing: 12) {
                             SocialAuthButton(
                                 provider: .google,
@@ -186,7 +172,7 @@ struct SignUpView: View {
                                 signInWithSocial(.google)
                             }
                             .disabled(isLoading)
-                            
+
                             NativeAppleSignInButton(
                                 authManager: authManager,
                                 isLoading: activeSocialProvider == .apple && isLoading,
@@ -209,23 +195,20 @@ struct SignUpView: View {
                                 }
                             )
                         }
-                        
+
+                        Spacer().frame(height: 32)
+
                         // Sign in link
-                        HStack {
-                            Text("Already have an account?")
-                                .font(.subheadline)
-                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                            
-                            Button("Sign In") {
-                                dismiss()
-                                // Navigate to sign in
-                            }
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(Color.accentColor)
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Already have an account? Sign In")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
                         }
-                        
-                        Spacer(minLength: 20)
+                        .buttonStyle(.plain)
+
+                        Spacer().frame(height: 40)
                     }
                     .padding(.horizontal, 32)
                 }
@@ -234,10 +217,9 @@ struct SignUpView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(Color.accentColor)
+                    Button("Cancel") { dismiss() }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                 }
             }
         }
@@ -247,31 +229,28 @@ struct SignUpView: View {
             Text(errorMessage)
         }
         .alert("Account Created!", isPresented: $showingSuccess) {
-            Button("Continue") {
-                dismiss()
-            }
+            Button("Continue") { dismiss() }
         } message: {
             Text("Please check your email to verify your account before signing in.")
         }
     }
-    
+
     private func signUp() {
         guard isFormValid else { return }
-        
+
         isLoading = true
         activeSocialProvider = nil
         focusedField = nil
-        
+
         let signUpData = SignUpData(
             email: email.trimmingCharacters(in: .whitespacesAndNewlines),
             password: password,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        
+
         Task {
             do {
                 _ = try await authManager.signUp(data: signUpData)
-                
                 await MainActor.run {
                     isLoading = false
                     activeSocialProvider = nil
@@ -294,19 +273,18 @@ struct SignUpView: View {
             }
         }
     }
-    
+
     private func signInWithSocial(_ provider: SocialAuthProvider) {
         guard !isLoading else { return }
         guard provider == .google else { return }
-        
+
         isLoading = true
         activeSocialProvider = provider
         focusedField = nil
-        
+
         Task {
             do {
                 _ = try await authManager.signInWithSocial(provider: provider)
-                
                 await MainActor.run {
                     isLoading = false
                     activeSocialProvider = nil
@@ -333,17 +311,15 @@ struct SignUpView: View {
 
 // MARK: - Auth Text Field Style
 struct AuthTextFieldStyle: TextFieldStyle {
-    @Environment(\.colorScheme) private var colorScheme
-    
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(colorScheme == .dark ? Color(red: 0.11, green: 0.17, blue: 0.26) : Color(.systemGray6))
-            .cornerRadius(10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(Color.SV.surfaceContainerLowest)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4), lineWidth: 1)
+                    .stroke(Color.SV.onSurface.opacity(0.12), lineWidth: 1)
             )
     }
 }

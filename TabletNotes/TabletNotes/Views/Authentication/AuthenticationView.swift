@@ -8,208 +8,137 @@ struct AuthenticationView: View {
     @State private var activeSocialProvider: SocialAuthProvider?
     @State private var showingError = false
     @State private var errorMessage = ""
-    @Environment(\.colorScheme) private var colorScheme
-    
+
     var body: some View {
-        NavigationView {
-            GeometryReader { geometry in
-                ZStack {
-                    // Background gradient
-                    LinearGradient(
-                        gradient: Gradient(colors: colorScheme == .dark ? [
-                            Color(red: 0.07, green: 0.11, blue: 0.18), // Navy dark primary
-                            Color(red: 0.10, green: 0.15, blue: 0.24), // Navy dark secondary
-                            Color(red: 0.07, green: 0.11, blue: 0.18)  // Navy dark primary
-                        ] : [
-                            Color.white,
-                            Color.gray.opacity(0.1),
-                            Color.white
-                        ]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
-                    
-                    ScrollView {
-                        VStack(spacing: 40) {
-                            Spacer(minLength: geometry.size.height * 0.1)
-                            
-                            // Logo and branding
-                            VStack(spacing: 24) {
-                                // App Logo
-                                ZStack {
-                                    Circle()
-                                        .fill(colorScheme == .dark ? Color(red: 0.14, green: 0.22, blue: 0.33) : Color.white)
-                                        .frame(width: 120, height: 120)
-                                        .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
-                                    
-                                    Circle()
-                                        .fill(Color.accentColor.opacity(0.1))
-                                        .frame(width: 110, height: 110)
-                                    
-                                    AppLogoView(size: 90, cornerRadius: 18)
-                                }
-                                
-                                VStack(spacing: 12) {
-                                    Text("Welcome to Tablet Notes")
-                                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                        .multilineTextAlignment(.center)
-                                    
-                                    Text("Record, transcribe, and summarize your sermons with AI-powered insights")
-                                        .font(.body)
-                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                        .multilineTextAlignment(.center)
-                                        .padding(.horizontal, 20)
-                                }
-                            }
-                            
-                            // Features preview
-                            VStack(spacing: 20) {
-                                FeatureHighlight(
-                                    icon: "mic.circle.fill",
-                                    title: "High-Quality Recording",
-                                    description: "Crystal clear audio capture with real-time note-taking"
-                                )
-                                
-                                FeatureHighlight(
-                                    icon: "text.bubble.fill",
-                                    title: "AI Transcription",
-                                    description: "Automatic transcription with speaker identification"
-                                )
-                                
-                                FeatureHighlight(
-                                    icon: "doc.text.fill",
-                                    title: "Smart Summaries",
-                                    description: "AI-generated key points and sermon summaries"
-                                )
-                                
-                                FeatureHighlight(
-                                    icon: "icloud.fill",
-                                    title: "Cloud Sync",
-                                    description: "Access your content across all your devices"
-                                )
-                            }
-                            
-                            // Action buttons
-                            VStack(spacing: 16) {
-                                Button(action: {
-                                    showingSignUp = true
-                                }) {
-                                    HStack {
-                                        Image(systemName: "person.badge.plus")
-                                        Text("Create Account")
-                                    }
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 16)
-                                    .background(Color.accentColor)
-                                    .cornerRadius(12)
-                                }
-                                .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                                
-                                Button(action: {
-                                    showingSignIn = true
-                                }) {
-                                    HStack {
-                                        Image(systemName: "person.fill")
-                                        Text("Sign In")
-                                    }
-                                    .font(.headline)
-                                    .foregroundColor(Color.accentColor)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 16)
-                                    .background(Color.accentColor.opacity(0.1))
-                                    .cornerRadius(12)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
-                                    )
-                                }
-                                
-                                HStack {
-                                    Rectangle()
-                                        .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
-                                        .frame(height: 1)
-                                    
-                                    Text("or continue with")
-                                        .font(.subheadline)
-                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                        .padding(.horizontal, 12)
-                                    
-                                    Rectangle()
-                                        .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
-                                        .frame(height: 1)
-                                }
-                                .padding(.vertical, 4)
-                                
-                                VStack(spacing: 12) {
-                                    SocialAuthButton(
-                                        provider: .google,
-                                        isLoading: activeSocialProvider == .google && isSocialLoading
-                                    ) {
-                                        signInWithSocial(.google)
-                                    }
-                                    .disabled(isSocialLoading)
-                                    
-                                    NativeAppleSignInButton(
-                                        authManager: authManager,
-                                        isLoading: activeSocialProvider == .apple && isSocialLoading,
-                                        onStart: {
-                                            if !isSocialLoading {
-                                                activeSocialProvider = .apple
-                                                isSocialLoading = true
-                                            }
-                                        },
-                                        onSuccess: {
-                                            isSocialLoading = false
-                                            activeSocialProvider = nil
-                                        },
-                                        onError: { message in
-                                            isSocialLoading = false
-                                            activeSocialProvider = nil
-                                            errorMessage = message
-                                            showingError = true
-                                        }
-                                    )
-                                }
-                                
-                                // Terms and privacy
-                                VStack(spacing: 8) {
-                                    Text("By continuing, you agree to our")
-                                        .font(.caption)
-                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                    
-                                    HStack(spacing: 4) {
-                                        Button("Terms of Service") {
-                                            // Show terms
-                                        }
-                                        .font(.caption)
-                                        .foregroundColor(Color.accentColor)
-                                        
-                                        Text("and")
-                                            .font(.caption)
-                                            .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                        
-                                        Button("Privacy Policy") {
-                                            // Show privacy policy
-                                        }
-                                        .font(.caption)
-                                        .foregroundColor(Color.accentColor)
-                                    }
-                                }
-                                .padding(.top, 8)
-                            }
-                            .padding(.horizontal, 32)
-                            
-                            Spacer(minLength: 40)
+        ZStack {
+            Color.SV.surface.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer().frame(height: 80)
+
+                    // Logo + wordmark
+                    VStack(spacing: 20) {
+                        AppLogoView(size: 100, cornerRadius: 22)
+
+                        VStack(spacing: 8) {
+                            Text("Tablet Notes")
+                                .font(.system(size: 34, weight: .bold, design: .serif))
+                                .foregroundStyle(Color.SV.onSurface)
+
+                            Text("Every sermon, remembered.")
+                                .font(.system(size: 15))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
                         }
                     }
+
+                    Spacer().frame(height: 60)
+
+                    // Primary actions
+                    VStack(spacing: 14) {
+                        Button {
+                            showingSignUp = true
+                        } label: {
+                            Text("Get Started")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 15)
+                                .background(Color.SV.primary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showingSignIn = true
+                        } label: {
+                            Text("Sign In")
+                                .font(.system(size: 15))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 32)
+
+                    Spacer().frame(height: 36)
+
+                    // Or divider
+                    HStack(spacing: 12) {
+                        Rectangle()
+                            .fill(Color.SV.onSurface.opacity(0.1))
+                            .frame(height: 1)
+                        Text("or")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                        Rectangle()
+                            .fill(Color.SV.onSurface.opacity(0.1))
+                            .frame(height: 1)
+                    }
+                    .padding(.horizontal, 32)
+
+                    Spacer().frame(height: 20)
+
+                    // Social auth
+                    VStack(spacing: 12) {
+                        SocialAuthButton(
+                            provider: .google,
+                            isLoading: activeSocialProvider == .google && isSocialLoading
+                        ) {
+                            signInWithSocial(.google)
+                        }
+                        .disabled(isSocialLoading)
+
+                        NativeAppleSignInButton(
+                            authManager: authManager,
+                            isLoading: activeSocialProvider == .apple && isSocialLoading,
+                            onStart: {
+                                if !isSocialLoading {
+                                    activeSocialProvider = .apple
+                                    isSocialLoading = true
+                                }
+                            },
+                            onSuccess: {
+                                isSocialLoading = false
+                                activeSocialProvider = nil
+                            },
+                            onError: { message in
+                                isSocialLoading = false
+                                activeSocialProvider = nil
+                                errorMessage = message
+                                showingError = true
+                            }
+                        )
+                    }
+                    .padding(.horizontal, 32)
+
+                    Spacer().frame(height: 44)
+
+                    // Terms
+                    VStack(spacing: 6) {
+                        Text("BY CONTINUING YOU AGREE TO OUR")
+                            .font(.system(size: 10, weight: .medium))
+                            .tracking(1)
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.28))
+
+                        HStack(spacing: 6) {
+                            Button("Terms of Service") { }
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.SV.primary.opacity(0.7))
+
+                            Text("·")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.28))
+
+                            Button("Privacy Policy") { }
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.SV.primary.opacity(0.7))
+                        }
+                    }
+
+                    Spacer().frame(height: 48)
                 }
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showingSignUp) {
             SignUpView(authManager: authManager)
         }
@@ -222,14 +151,14 @@ struct AuthenticationView: View {
             Text(errorMessage)
         }
     }
-    
+
     private func signInWithSocial(_ provider: SocialAuthProvider) {
         guard !isSocialLoading else { return }
         guard provider == .google else { return }
-        
+
         isSocialLoading = true
         activeSocialProvider = provider
-        
+
         Task {
             do {
                 _ = try await authManager.signInWithSocial(provider: provider)
@@ -253,38 +182,6 @@ struct AuthenticationView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Feature Highlight Component
-struct FeatureHighlight: View {
-    let icon: String
-    let title: String
-    let description: String
-    @Environment(\.colorScheme) private var colorScheme
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.system(size: 24))
-                .foregroundColor(Color.accentColor)
-                .frame(width: 32, height: 32)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                
-                Text(description)
-                    .font(.subheadline)
-                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            
-            Spacer()
-        }
-        .padding(.horizontal, 32)
     }
 }
 

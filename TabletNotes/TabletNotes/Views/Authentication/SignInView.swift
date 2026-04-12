@@ -3,65 +3,56 @@ import SwiftUI
 struct SignInView: View {
     var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    
+
     @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var showingForgotPassword = false
-    @State private var showingResetSuccess = false
     @State private var activeSocialProvider: SocialAuthProvider?
-    
+
     @FocusState private var focusedField: Field?
-    
+
     enum Field {
         case email, password
     }
-    
+
     private var isFormValid: Bool {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         email.contains("@") &&
         !password.isEmpty
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Background
-                Color(colorScheme == .dark ? Color(red: 0.07, green: 0.11, blue: 0.18) : Color.white)
-                    .ignoresSafeArea()
-                
+                Color.SV.surface.ignoresSafeArea()
+
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 0) {
+                        Spacer().frame(height: 48)
+
                         // Header
                         VStack(spacing: 16) {
-                            AppLogoView(size: 60, cornerRadius: 12)
-                            
-                            VStack(spacing: 8) {
-                                Text("Welcome Back")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
-                                Text("Sign in to access your sermons and notes")
-                                    .font(.subheadline)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
+                            AppLogoView(size: 56, cornerRadius: 12)
+
+                            Text("Welcome Back")
+                                .font(.system(size: 28, weight: .bold, design: .serif))
+                                .foregroundStyle(Color.SV.onSurface)
                         }
-                        .padding(.top, 40)
-                        
+
+                        Spacer().frame(height: 40)
+
                         // Form
                         VStack(spacing: 20) {
-                            // Email field
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Email Address")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                
+                            // Email
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("EMAIL ADDRESS")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .tracking(1)
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                 TextField("Enter your email", text: $email)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.emailAddress)
@@ -69,80 +60,77 @@ struct SignInView: View {
                                     .autocapitalization(.none)
                                     .autocorrectionDisabled()
                                     .focused($focusedField, equals: .email)
-                                    .onSubmit {
-                                        focusedField = .password
-                                    }
+                                    .onSubmit { focusedField = .password }
                             }
-                            
-                            // Password field
-                            VStack(alignment: .leading, spacing: 8) {
+
+                            // Password
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text("Password")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                                    
+                                    Text("PASSWORD")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .tracking(1)
+                                        .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                                     Spacer()
-                                    
+
                                     Button("Forgot?") {
                                         showingForgotPassword = true
                                     }
-                                    .font(.caption)
-                                    .foregroundColor(Color.accentColor)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.SV.primary)
                                 }
-                                
+
                                 SecureField("Enter your password", text: $password)
                                     .textFieldStyle(AuthTextFieldStyle())
                                     .textContentType(.password)
                                     .focused($focusedField, equals: .password)
                                     .onSubmit {
-                                        if isFormValid {
-                                            signIn()
-                                        }
+                                        if isFormValid { signIn() }
                                     }
                             }
                         }
-                        
-                        // Sign in button
+
+                        Spacer().frame(height: 28)
+
+                        // Sign in CTA
                         Button(action: signIn) {
-                            HStack {
+                            Group {
                                 if isLoading {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                         .scaleEffect(0.8)
                                 } else {
-                                    Image(systemName: "person.fill")
                                     Text("Sign In")
+                                        .font(.system(size: 16, weight: .semibold))
                                 }
                             }
-                            .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(isFormValid && !isLoading ? Color.accentColor : Color.gray)
-                            .cornerRadius(12)
+                            .padding(.vertical, 15)
+                            .background(isFormValid && !isLoading ? Color.SV.primary : Color.SV.primary.opacity(0.35))
+                            .clipShape(Capsule())
                         }
                         .disabled(!isFormValid || isLoading)
-                        .padding(.top, 8)
-                        .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                        
-                        // Divider
-                        HStack {
+                        .buttonStyle(.plain)
+
+                        Spacer().frame(height: 28)
+
+                        // Or divider
+                        HStack(spacing: 12) {
                             Rectangle()
-                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .fill(Color.SV.onSurface.opacity(0.1))
                                 .frame(height: 1)
-                            
                             Text("or")
-                                .font(.subheadline)
-                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
-                                .padding(.horizontal, 16)
-                            
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                             Rectangle()
-                                .fill(colorScheme == .dark ? Color(red: 0.20, green: 0.29, blue: 0.42) : Color(.systemGray4))
+                                .fill(Color.SV.onSurface.opacity(0.1))
                                 .frame(height: 1)
                         }
-                        .padding(.vertical, 8)
-                        
+
+                        Spacer().frame(height: 16)
+
+                        // Social auth
                         VStack(spacing: 12) {
                             SocialAuthButton(
                                 provider: .google,
@@ -151,7 +139,7 @@ struct SignInView: View {
                                 signInWithSocial(.google)
                             }
                             .disabled(isLoading)
-                            
+
                             NativeAppleSignInButton(
                                 authManager: authManager,
                                 isLoading: activeSocialProvider == .apple && isLoading,
@@ -174,29 +162,20 @@ struct SignInView: View {
                                 }
                             )
                         }
-                        
-                        // Create account button
-                        Button(action: {
+
+                        Spacer().frame(height: 32)
+
+                        // New account link
+                        Button {
                             dismiss()
-                            // Navigate to sign up
-                        }) {
-                            HStack {
-                                Image(systemName: "person.badge.plus")
-                                Text("Create New Account")
-                            }
-                            .font(.headline)
-                            .foregroundColor(Color.accentColor)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(Color.accentColor.opacity(0.1))
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
-                            )
+                        } label: {
+                            Text("New here? Create an account")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
                         }
-                        
-                        Spacer(minLength: 20)
+                        .buttonStyle(.plain)
+
+                        Spacer().frame(height: 40)
                     }
                     .padding(.horizontal, 32)
                 }
@@ -205,10 +184,9 @@ struct SignInView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(Color.accentColor)
+                    Button("Cancel") { dismiss() }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                 }
             }
         }
@@ -220,27 +198,21 @@ struct SignInView: View {
         .sheet(isPresented: $showingForgotPassword) {
             ForgotPasswordView(authManager: authManager)
         }
-        .alert("Password Reset Sent", isPresented: $showingResetSuccess) {
-            Button("OK") { }
-        } message: {
-            Text("Check your email for instructions to reset your password.")
-        }
     }
-    
+
     private func signIn() {
         guard isFormValid else { return }
-        
+
         isLoading = true
         activeSocialProvider = nil
         focusedField = nil
-        
+
         Task {
             do {
                 _ = try await authManager.signIn(
                     email: email.trimmingCharacters(in: .whitespacesAndNewlines),
                     password: password
                 )
-                
                 await MainActor.run {
                     isLoading = false
                     activeSocialProvider = nil
@@ -263,19 +235,18 @@ struct SignInView: View {
             }
         }
     }
-    
+
     private func signInWithSocial(_ provider: SocialAuthProvider) {
         guard !isLoading else { return }
         guard provider == .google else { return }
-        
+
         isLoading = true
         activeSocialProvider = provider
         focusedField = nil
-        
+
         Task {
             do {
                 _ = try await authManager.signInWithSocial(provider: provider)
-                
                 await MainActor.run {
                     isLoading = false
                     activeSocialProvider = nil
@@ -304,52 +275,51 @@ struct SignInView: View {
 struct ForgotPasswordView: View {
     var authManager: AuthenticationManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    
+
     @State private var email = ""
     @State private var isLoading = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var showingSuccess = false
-    
+
     private var isEmailValid: Bool {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         email.contains("@")
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
-                // Background
-                Color(colorScheme == .dark ? Color(red: 0.07, green: 0.11, blue: 0.18) : Color.white)
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 24) {
+                Color.SV.surface.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    Spacer().frame(height: 48)
+
                     VStack(spacing: 16) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(Color.accentColor)
-                        
+                        Image(systemName: "envelope")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundStyle(Color.SV.primary)
+
                         VStack(spacing: 8) {
                             Text("Reset Password")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                            
-                            Text("Enter your email address and we'll send you instructions to reset your password.")
-                                .font(.subheadline)
-                                .foregroundColor(colorScheme == .dark ? Color(red: 0.70, green: 0.76, blue: 0.85) : Color.secondary)
+                                .font(.system(size: 26, weight: .bold, design: .serif))
+                                .foregroundStyle(Color.SV.onSurface)
+
+                            Text("Enter your email and we'll send reset instructions.")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                                 .multilineTextAlignment(.center)
                         }
                     }
-                    .padding(.top, 40)
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Email Address")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(colorScheme == .dark ? Color(red: 0.95, green: 0.96, blue: 0.98) : Color.primary)
-                        
+
+                    Spacer().frame(height: 40)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("EMAIL ADDRESS")
+                            .font(.system(size: 11, weight: .medium))
+                            .tracking(1)
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
                         TextField("Enter your email", text: $email)
                             .textFieldStyle(AuthTextFieldStyle())
                             .textContentType(.emailAddress)
@@ -357,40 +327,40 @@ struct ForgotPasswordView: View {
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
                     }
-                    
+
+                    Spacer().frame(height: 24)
+
                     Button(action: resetPassword) {
-                        HStack {
+                        Group {
                             if isLoading {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
                             } else {
-                                Image(systemName: "paperplane.fill")
                                 Text("Send Reset Link")
+                                    .font(.system(size: 16, weight: .semibold))
                             }
                         }
-                        .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(isEmailValid && !isLoading ? Color.accentColor : Color.gray)
-                        .cornerRadius(12)
+                        .padding(.vertical, 15)
+                        .background(isEmailValid && !isLoading ? Color.SV.primary : Color.SV.primary.opacity(0.35))
+                        .clipShape(Capsule())
                     }
                     .disabled(!isEmailValid || isLoading)
-                    .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                    
+                    .buttonStyle(.plain)
+
                     Spacer()
                 }
                 .padding(.horizontal, 32)
             }
-            .navigationTitle("Reset Password")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(Color.accentColor)
+                    Button("Cancel") { dismiss() }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
                 }
             }
         }
@@ -400,23 +370,20 @@ struct ForgotPasswordView: View {
             Text(errorMessage)
         }
         .alert("Email Sent", isPresented: $showingSuccess) {
-            Button("OK") {
-                dismiss()
-            }
+            Button("OK") { dismiss() }
         } message: {
             Text("Check your email for password reset instructions.")
         }
     }
-    
+
     private func resetPassword() {
         guard isEmailValid else { return }
-        
+
         isLoading = true
-        
+
         Task {
             do {
                 try await authManager.resetPassword(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
-                
                 await MainActor.run {
                     isLoading = false
                     showingSuccess = true
