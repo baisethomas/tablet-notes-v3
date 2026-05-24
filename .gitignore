@@ -150,6 +150,11 @@ tasks/
 
 #Cursor
 .cursor/
+.claude/worktrees/
+
+# Local design exploration artifacts
+new-icons/
+stitch_recording_interface/
 
 # Config
 TabletNotes/TabletNotes/Resources/Config.plist 
