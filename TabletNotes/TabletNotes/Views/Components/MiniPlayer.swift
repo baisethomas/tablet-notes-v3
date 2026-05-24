@@ -1,5 +1,49 @@
 import SwiftUI
 
+// MARK: - Waveform View
+// Moved here from RecordingView — MiniPlayer is its only consumer.
+struct WaveformView: View {
+    let isRecording: Bool
+    @State private var animationPhase: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<7, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(isRecording ? Color.SV.tertiary : Color.SV.onSurface.opacity(0.2))
+                    .frame(width: 3, height: barHeight(for: index))
+                    .animation(
+                        isRecording ?
+                            .easeInOut(duration: 0.5 + Double(index) * 0.1).repeatForever(autoreverses: true) :
+                            .easeInOut(duration: 0.3),
+                        value: isRecording
+                    )
+            }
+        }
+        .onAppear { startAnimation() }
+        .onChange(of: isRecording) { _, newValue in
+            if newValue { startAnimation() }
+        }
+    }
+
+    private func startAnimation() {
+        withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+            animationPhase = 1
+        }
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        let baseHeight: CGFloat = 4
+        let maxHeight: CGFloat = 24
+        guard isRecording else { return baseHeight }
+        let phase = animationPhase * 2 * .pi + Double(index) * 0.8
+        let variation = sin(phase) * 0.5 + 0.5
+        return baseHeight + (maxHeight - baseHeight) * variation
+    }
+}
+
+// MARK: - Mini Player
+
 struct MiniPlayer: View {
     let serviceType: String
     let duration: TimeInterval
@@ -11,14 +55,19 @@ struct MiniPlayer: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Tonal separator
+            Rectangle()
+                .fill(Color.SV.onSurface.opacity(0.06))
+                .frame(height: 0.5)
+
             // Thin progress bar at the top
             Rectangle()
-                .fill(Color.recordingRed.opacity(0.3))
+                .fill(Color.SV.tertiary.opacity(0.12))
                 .frame(height: 2)
                 .overlay(
                     HStack {
                         Rectangle()
-                            .fill(Color.recordingRed)
+                            .fill(Color.SV.tertiary)
                             .frame(height: 2)
                             .animation(.easeInOut(duration: 0.3), value: duration)
                         Spacer()
@@ -26,94 +75,82 @@ struct MiniPlayer: View {
                 )
 
             // Main mini-player content
-            HStack(spacing: 12) {
-                // Waveform indicator
-                WaveformView(isRecording: isRecording && !isPaused)
-                    .frame(width: 40, height: 20)
+            Button(action: onTap) {
+                HStack(spacing: 12) {
+                    // Waveform indicator
+                    WaveformView(isRecording: isRecording && !isPaused)
+                        .frame(width: 40, height: 20)
 
-                // Recording info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(serviceType)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
+                    // Recording info
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(serviceType)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color.SV.onSurface)
+                            .lineLimit(1)
 
-                    HStack(spacing: 4) {
-                        // Recording status indicator
-                        Circle()
-                            .fill(recordingStatusColor)
-                            .frame(width: 6, height: 6)
-                            .scaleEffect(isRecording && !isPaused ? 1.2 : 1.0)
-                            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isRecording && !isPaused)
+                        HStack(spacing: 4) {
+                            // Recording status indicator
+                            Circle()
+                                .fill(recordingStatusColor)
+                                .frame(width: 6, height: 6)
+                                .scaleEffect(isRecording && !isPaused ? 1.2 : 1.0)
+                                .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isRecording && !isPaused)
 
-                        Text(recordingStatusText)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
+                            Text(recordingStatusText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.5))
 
-                        Spacer()
+                            Spacer()
 
-                        Text(formatDuration(duration))
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundColor(.secondary)
+                            Text(formatDuration(duration))
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                        }
+                    }
+
+                    Spacer()
+
+                    // Control buttons
+                    HStack(spacing: 8) {
+                        // Play/Pause button
+                        Button(action: onPlayPause) {
+                            Image(systemName: playPauseIcon)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Color.SV.onSurface)
+                                .frame(width: 32, height: 32)
+                                .background(Color.SV.onSurface.opacity(0.07))
+                                .clipShape(Circle())
+                        }
+
+                        // Stop button
+                        Button(action: onStop) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.SV.tertiary)
+                                .clipShape(Circle())
+                        }
                     }
                 }
-
-                Spacer()
-
-                // Control buttons
-                HStack(spacing: 8) {
-                    // Play/Pause button
-                    Button(action: onPlayPause) {
-                        Image(systemName: playPauseIcon)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: 32, height: 32)
-                            .background(Color.adaptiveBackground)
-                            .clipShape(Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.adaptiveBorder, lineWidth: 1)
-                            )
-                    }
-
-                    // Stop button
-                    Button(action: onStop) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white)
-                            .frame(width: 32, height: 32)
-                            .background(Color.recordingRed)
-                            .clipShape(Circle())
-                    }
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.adaptiveBackground)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onTap()
-            }
+            .background(Color.SV.surface)
         }
-        .background(Color.adaptiveBackground)
-        .overlay(
-            Rectangle()
-                .fill(Color.adaptiveBorder)
-                .frame(height: 1),
-            alignment: .top
-        )
-        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: -2)
+        .background(Color.SV.surface)
+        .shadow(color: Color.SV.onSurface.opacity(0.08), radius: 8, x: 0, y: -2)
     }
 
     // MARK: - Computed Properties
 
     private var recordingStatusColor: Color {
         if !isRecording {
-            return .gray
+            return Color.SV.onSurface.opacity(0.3)
         } else if isPaused {
-            return .orange
+            return Color.SV.tertiary.opacity(0.6)
         } else {
-            return .recordingRed
+            return Color.SV.tertiary
         }
     }
 

@@ -1,292 +1,224 @@
 import SwiftUI
 
+// MARK: - Clickable Scripture Text
+
 struct ClickableScriptureText: View {
     let text: String
     let font: Font
     let lineSpacing: CGFloat
     @StateObject private var scriptureAnalyzer = ScriptureAnalysisService()
     @State private var detectedReferences: [ScriptureReference] = []
-    
-    init(text: String, font: Font = .body, lineSpacing: CGFloat = 4) {
+
+    init(text: String, font: Font = .system(size: 16, design: .serif), lineSpacing: CGFloat = 7) {
         self.text = text
         self.font = font
         self.lineSpacing = lineSpacing
     }
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Main text with highlighted references
-            textWithClickableReferences
-            
-            // Scripture reference chips
+        VStack(alignment: .leading, spacing: 14) {
+            Text(createAttributedText())
+                .font(font)
+                .lineSpacing(lineSpacing)
+                .foregroundStyle(Color.SV.onSurface)
+                .textSelection(.enabled)
+
             if !detectedReferences.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Scripture References")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                    
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], alignment: .leading, spacing: 8) {
+                    Text("SCRIPTURE REFERENCES")
+                        .font(.system(size: 10, weight: .medium))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 110))],
+                        alignment: .leading,
+                        spacing: 6
+                    ) {
                         ForEach(detectedReferences) { reference in
                             ScriptureReferenceButton(reference: reference)
                         }
                     }
                 }
-                .padding(.top, 8)
+                .padding(.top, 4)
             }
         }
-        .onAppear {
-            analyzeReferences()
-        }
-        .onChange(of: text) { _, _ in
-            analyzeReferences()
-        }
+        .onAppear { analyzeReferences() }
+        .onChange(of: text) { _, _ in analyzeReferences() }
     }
-    
-    private var textWithClickableReferences: some View {
-        Text(createAttributedText())
-            .font(font)
-            .lineSpacing(lineSpacing)
-            .textSelection(.enabled)
-    }
-    
+
     private func createAttributedText() -> AttributedString {
-        var attributedString = AttributedString(text)
-        
-        // Apply base styling
-        attributedString.font = UIFont.systemFont(ofSize: 16)
-        attributedString.foregroundColor = UIColor.label
-        
-        // Highlight scripture references
+        var string = AttributedString(text)
         for reference in detectedReferences {
-            if let range = attributedString.range(of: reference.raw) {
-                attributedString[range].foregroundColor = UIColor.systemBlue
-                attributedString[range].font = UIFont.systemFont(ofSize: 16, weight: .medium)
-                attributedString[range].underlineStyle = .single
-                attributedString[range].underlineColor = UIColor.systemBlue.withAlphaComponent(0.5)
+            if let range = string.range(of: reference.raw) {
+                string[range].foregroundColor = UIColor(Color.SV.primary)
+                string[range].underlineStyle = .single
+                string[range].underlineColor = UIColor(Color.SV.primary.opacity(0.4))
             }
         }
-        
-        return attributedString
+        return string
     }
-    
+
     private func analyzeReferences() {
         detectedReferences = scriptureAnalyzer.analyzeScriptureReferences(in: text)
     }
 }
 
-// MARK: - Enhanced Summary Text View
+// MARK: - Summary Text View
+
 struct SummaryTextView: View {
     let summaryText: String
     let serviceType: String
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Minimal share action, right-aligned
             HStack {
-                Image(systemName: "brain.head.profile")
-                    .foregroundColor(.accentColor)
-                Text("AI Summary")
-                    .font(.headline)
-                    .fontWeight(.semibold)
                 Spacer()
-                Text(serviceType)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(4)
-                Button(action: {
-                    shareSummary()
-                }) {
+                Button { shareSummary() } label: {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.accentColor)
+                        .font(.system(size: 15, weight: .light))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
             }
-            
+            .padding(.bottom, 20)
+
             StructuredSummaryView(summaryText: summaryText)
         }
-        .padding()
     }
-    
+
     private func shareSummary() {
         let shareText = """
-        AI Summary - \(serviceType)
-        
+        AI Summary — \(serviceType)
+
         \(summaryText)
-        
+
         Generated by TabletNotes
         """
-        
+
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController {
+           let rootVC = window.rootViewController {
             let activityVC = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
-            
-            // Configure for iPad with safe bounds checking
             if let popover = activityVC.popoverPresentationController {
                 let bounds = window.bounds
-                // Validate bounds to prevent NaN/infinity values
-                let isValidBounds = bounds.width > 0 && bounds.height > 0 && 
-                                   bounds.width.isFinite && bounds.height.isFinite &&
-                                   !bounds.width.isNaN && !bounds.height.isNaN
-                
-                if isValidBounds {
+                let validBounds = bounds.width > 0 && bounds.height > 0
+                    && bounds.width.isFinite && bounds.height.isFinite
+                if validBounds {
                     popover.sourceView = window
                     popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 0, height: 0)
                 } else {
-                    // Fallback: use the root view controller's view
-                    let viewBounds = rootViewController.view.bounds
-                    let isValidViewBounds = viewBounds.width > 0 && viewBounds.height > 0 && 
-                                          viewBounds.width.isFinite && viewBounds.height.isFinite &&
-                                          !viewBounds.width.isNaN && !viewBounds.height.isNaN
-                    
-                    if isValidViewBounds {
-                        popover.sourceView = rootViewController.view
-                        popover.sourceRect = CGRect(x: viewBounds.midX, y: viewBounds.midY, width: 0, height: 0)
-                    } else {
-                        // Final fallback: use a default center point
-                        popover.sourceView = rootViewController.view
-                        popover.sourceRect = CGRect(x: 400, y: 400, width: 0, height: 0)
-                    }
+                    popover.sourceView = rootVC.view
+                    popover.sourceRect = CGRect(x: 400, y: 400, width: 0, height: 0)
                 }
                 popover.permittedArrowDirections = []
             }
-            
-            rootViewController.present(activityVC, animated: true)
+            rootVC.present(activityVC, animated: true)
         }
     }
 }
 
-// MARK: - Structured Summary Display
+// MARK: - Structured Summary View
+
 struct StructuredSummaryView: View {
     let summaryText: String
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // Simple improved display for now - check if it contains structured sections
-            if summaryText.contains("**") && summaryText.contains("**") {
-                // Has structured format, display as formatted sections
+        VStack(alignment: .leading, spacing: 32) {
+            if summaryText.contains("**") {
                 let sections = parseSimpleSections(summaryText)
-                ForEach(Array(sections.enumerated()), id: \.element.title) { index, section in
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Section header with appropriate icon
-                        HStack {
-                            Image(systemName: iconForSection(section.title))
-                                .foregroundColor(.accentColor)
-                                .font(.system(size: 14))
-                            Text(section.title)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                        }
-                        
-                        // Section content
-                        ClickableScriptureText(
-                            text: section.content,
-                            font: .body,
-                            lineSpacing: 6
-                        )
-                    }
-                    .padding(.bottom, 8)
+                ForEach(Array(sections.enumerated()), id: \.element.title) { _, section in
+                    svSection(title: section.title, content: section.content)
                 }
             } else {
-                // Fallback to original display
-                ClickableScriptureText(
-                    text: summaryText,
-                    font: .body,
-                    lineSpacing: 6
-                )
+                ClickableScriptureText(text: summaryText)
             }
         }
     }
-    
+
+    @ViewBuilder
+    private func svSection(title: String, content: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Small caps section label
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+
+            if isScriptureSection(title) {
+                // Left-border block quote for scripture sections
+                HStack(alignment: .top, spacing: 14) {
+                    Rectangle()
+                        .fill(Color.SV.primary.opacity(0.25))
+                        .frame(width: 2)
+                    ClickableScriptureText(
+                        text: content,
+                        font: .system(size: 15, design: .serif),
+                        lineSpacing: 6
+                    )
+                }
+                .padding(.leading, 4)
+            } else {
+                ClickableScriptureText(text: content)
+            }
+        }
+    }
+
+    private func isScriptureSection(_ title: String) -> Bool {
+        let lower = title.lowercased()
+        return lower.contains("scripture") || lower.contains("bible") || lower.contains("references")
+    }
+
     private func parseSimpleSections(_ text: String) -> [(title: String, content: String)] {
         var sections: [(title: String, content: String)] = []
         let lines = text.components(separatedBy: .newlines)
-        
         var currentTitle: String? = nil
         var currentContent: [String] = []
-        
+
         for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            
-            // Check if this is a section header (e.g., "**Main Scripture Text**")
-            if trimmedLine.hasPrefix("**") && trimmedLine.hasSuffix("**") && trimmedLine.count > 4 {
-                // Save previous section if exists
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("**") && trimmed.hasSuffix("**") && trimmed.count > 4 {
                 if let title = currentTitle {
                     sections.append((title: title, content: currentContent.joined(separator: "\n")))
                 }
-                
-                // Start new section
-                currentTitle = String(trimmedLine.dropFirst(2).dropLast(2))
+                currentTitle = String(trimmed.dropFirst(2).dropLast(2))
                 currentContent = []
-            } else if !trimmedLine.isEmpty {
-                // Add content to current section
-                currentContent.append(trimmedLine)
+            } else if !trimmed.isEmpty {
+                currentContent.append(trimmed)
             }
         }
-        
-        // Add final section
+
         if let title = currentTitle, !currentContent.isEmpty {
             sections.append((title: title, content: currentContent.joined(separator: "\n")))
         }
-        
+
         return sections
-    }
-    
-    private func iconForSection(_ title: String) -> String {
-        let lowercased = title.lowercased()
-        
-        if lowercased.contains("scripture") || lowercased.contains("bible") {
-            return "book.closed"
-        } else if lowercased.contains("summary") || lowercased.contains("overview") {
-            return "text.alignleft"
-        } else if lowercased.contains("key points") || lowercased.contains("main points") {
-            return "list.bullet"
-        } else if lowercased.contains("memorable") || lowercased.contains("quotes") || lowercased.contains("impact") {
-            return "star.fill"
-        } else if lowercased.contains("application") || lowercased.contains("apply") {
-            return "hand.raised"
-        } else if lowercased.contains("questions") || lowercased.contains("study") {
-            return "questionmark.circle"
-        } else if lowercased.contains("structure") || lowercased.contains("outline") {
-            return "list.number"
-        } else if lowercased.contains("insights") || lowercased.contains("deeper") {
-            return "lightbulb"
-        } else if lowercased.contains("references") {
-            return "link"
-        } else {
-            return "text.alignleft"
-        }
     }
 }
 
+// MARK: - Preview
 
 #Preview {
-    VStack {
+    ScrollView {
         SummaryTextView(
             summaryText: """
             **Main Scripture Text**
-            John 3:16 - "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life."
-            
+            John 3:16 — "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life."
+
             **Brief Summary**
             In this sermon, we explored the profound truth of God's love for humanity through John 3:16. The message emphasized that salvation comes through faith alone, and we examined how this truth transforms our daily lives and relationship with God.
-            
+
             **Key Points**
             - God's love is universal and sacrificial
             - Salvation is a gift received through faith, not works
             - Eternal life begins the moment we believe
             - Our response should be gratitude and transformed living
-            
+
             **Memorable Elements**
-            - "God didn't just love the world - He gave His very best for the world's very worst"
-            - Like a father giving his life for his child, God's love goes beyond human comprehension
-            - "Every breath you take is a gift of grace, every heartbeat is God saying 'I love you'"
-            - When we truly grasp God's love, our entire perspective on life changes
-            
+            "God didn't just love the world — He gave His very best for the world's very worst."
+            Like a father giving his life for his child, God's love goes beyond human comprehension.
+
             **Scripture References**
             John 3:16
             Ephesians 2:8-9
@@ -295,9 +227,7 @@ struct StructuredSummaryView: View {
             """,
             serviceType: "Sunday Service"
         )
-        .padding()
-        
-        Spacer()
+        .padding(24)
     }
-    .background(Color(.systemGroupedBackground))
+    .background(Color.SV.surface)
 }

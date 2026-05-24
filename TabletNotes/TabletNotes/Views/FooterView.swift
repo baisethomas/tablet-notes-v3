@@ -11,28 +11,26 @@ struct FooterView: View {
     var onHome: (() -> Void)? = nil
     var onRecord: (() -> Void)? = nil
     var onAccount: (() -> Void)? = nil
-    
+
     // Computed properties for button appearance
     private var buttonColor: Color {
         if !isRecording {
-            return .adaptiveAccent  // Blue color for starting recording
-        } else if isPaused {
-            return .successGreen    // Green for resume (matches RecordingView)
+            return Color.SV.primary
         } else {
-            return .warningOrange   // Orange for pause (matches RecordingView)
+            return Color.SV.tertiary
         }
     }
-    
+
     private var buttonIcon: String {
         if !isRecording {
-            return "mic.fill"      // Microphone for start recording
+            return "mic.fill"
         } else if isPaused {
-            return "play.fill"     // Play icon for resume
+            return "play.fill"
         } else {
-            return "pause.fill"    // Pause icon for pause
+            return "pause.fill"
         }
     }
-    
+
     private var accessibilityLabel: String {
         if !isRecording {
             return "Record"
@@ -42,27 +40,28 @@ struct FooterView: View {
             return "Pause Recording"
         }
     }
-    
+
     var body: some View {
         HStack {
             Button(action: { onHome?() }) {
                 VStack {
                     Image(systemName: "house.fill")
                         .font(.title2)
-                        .foregroundColor(selectedTab == .home ? .adaptiveAccent : .adaptiveSecondaryText)
+                        .foregroundStyle(selectedTab == .home ? Color.SV.primary : Color.SV.onSurface.opacity(0.35))
                     Text("Home")
                         .font(.caption)
-                        .foregroundColor(selectedTab == .home ? .adaptiveAccent : .adaptiveSecondaryText)
+                        .foregroundStyle(selectedTab == .home ? Color.SV.primary : Color.SV.onSurface.opacity(0.35))
                 }
             }
             .frame(maxWidth: .infinity)
             ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                Rectangle()
                     .fill(buttonColor)
                     .frame(width: 56, height: 56)
+                    .clipShape(.rect(cornerRadius: 16, style: .continuous))
                 Button(action: { onRecord?() }) {
                     Image(systemName: buttonIcon)
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .font(.title2)
                         .accessibilityLabel(accessibilityLabel)
                 }
@@ -73,21 +72,21 @@ struct FooterView: View {
                 VStack {
                     Image(systemName: "person")
                         .font(.title2)
-                        .foregroundColor(selectedTab == .account ? .adaptiveAccent : .adaptiveSecondaryText)
+                        .foregroundStyle(selectedTab == .account ? Color.SV.primary : Color.SV.onSurface.opacity(0.35))
                     Text("Account")
                         .font(.caption)
-                        .foregroundColor(selectedTab == .account ? .adaptiveAccent : .adaptiveSecondaryText)
+                        .foregroundStyle(selectedTab == .account ? Color.SV.primary : Color.SV.onSurface.opacity(0.35))
                 }
             }
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal)
         .padding(.bottom, 8)
-        .background(Color.navigationBackground)
-        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: -1)
+        .background(Color.SV.surface)
+        .shadow(color: Color.SV.onSurface.opacity(0.06), radius: 2, x: 0, y: -1)
     }
 }
 
 #Preview {
     FooterView(selectedTab: .home)
-} 
+}

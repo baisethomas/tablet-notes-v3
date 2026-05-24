@@ -295,24 +295,20 @@ struct ScriptureDetailView: View {
 struct ScriptureReferenceButton: View {
     let reference: ScriptureReference
     @State private var showingDetail = false
-    
+
     var body: some View {
-        Button(action: {
+        Button {
             showingDetail = true
-        }) {
+        } label: {
             Text(reference.displayText)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.accentColor.opacity(0.1))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
-                )
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.SV.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.SV.primary.opacity(0.08))
+                .clipShape(.rect(cornerRadius: 4))
         }
+        .buttonStyle(.plain)
         .sheet(isPresented: $showingDetail) {
             ScriptureDetailView(reference: reference)
         }

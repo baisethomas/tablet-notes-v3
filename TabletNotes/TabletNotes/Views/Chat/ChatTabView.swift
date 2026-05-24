@@ -1,10 +1,3 @@
-//
-//  ChatTabView.swift
-//  TabletNotes
-//
-//  Created by Claude Code
-//
-
 import SwiftUI
 import Combine
 
@@ -22,162 +15,144 @@ struct ChatTabView: View {
     @State private var cancellables = Set<AnyCancellable>()
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                // Main content area
-                if messages.isEmpty {
-                    emptyStateView
-                } else {
-                    messageListView
-                }
-            }
-            .background(Color.adaptiveBackground)
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 0) {
-                    Divider()
-                    
-                    ChatInputView(
-                        text: $messageText,
-                        remainingQuestions: remainingQuestions,
-                        isLoading: isLoading,
-                        onSend: sendMessage
-                    )
-                    .padding(.top, 12)
-                }
-                .background(Color.adaptiveBackground)
-                .padding(.bottom, 45) // Tab bar height
+        VStack(spacing: 0) {
+            if messages.isEmpty {
+                svEmptyState
+            } else {
+                svMessageList
             }
         }
-        .background(Color.adaptiveBackground)
+        .background(Color.SV.surface)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.SV.onSurface.opacity(0.06))
+                    .frame(height: 0.5)
+
+                ChatInputView(
+                    text: $messageText,
+                    remainingQuestions: remainingQuestions,
+                    isLoading: isLoading,
+                    onSend: sendMessage
+                )
+                .padding(.top, 12)
+            }
+            .background(Color.SV.surface)
+            .padding(.bottom, 90)
+        }
         .onAppear {
-            print("[ChatTabView] onAppear - messages.count: \(messages.count), suggestedQuestions.count: \(suggestedQuestions.count)")
+            print("[ChatTabView] onAppear — messages: \(messages.count), questions: \(suggestedQuestions.count)")
             setupSubscriptions()
             chatService.loadMessages(for: sermon)
-
-            // Generate suggestions if we don't have any yet
             if suggestedQuestions.isEmpty {
-                print("[ChatTabView] Triggering question generation")
-                Task {
-                    try? await chatService.generateSuggestedQuestions(for: sermon)
-                }
-            } else {
-                print("[ChatTabView] Already have \(suggestedQuestions.count) questions, skipping generation")
+                Task { try? await chatService.generateSuggestedQuestions(for: sermon) }
             }
         }
     }
 
     // MARK: - Empty State
-    private var emptyStateView: some View {
+
+    private var svEmptyState: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                Spacer()
-                    .frame(height: 60)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("INQUIRY & REFLECTION")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.4))
+                    .padding(.horizontal, 24)
+                    .padding(.top, 36)
+                    .padding(.bottom, 28)
 
-                VStack(spacing: 8) {
-                    Text("Ask Questions About This Sermon")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.adaptivePrimaryText)
-                        .multilineTextAlignment(.center)
-
-                    Text("Get answers from AI Chat")
-                        .font(.subheadline)
-                        .foregroundColor(.adaptiveSecondaryText)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .padding(.top, 24)
-                .padding(.bottom, 32)
-
-                if !suggestedQuestions.isEmpty {
-                    VStack(spacing: 12) {
-                        ForEach(suggestedQuestions, id: \.self) { question in
-                            Button(action: {
+                if suggestedQuestions.isEmpty {
+                    // Generating questions
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .tint(Color.SV.onSurface.opacity(0.3))
+                            .scaleEffect(0.8)
+                        Text("Preparing questions...")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                    }
+                    .padding(.horizontal, 24)
+                } else {
+                    // Suggested questions as italic serif quotes
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(suggestedQuestions.enumerated()), id: \.element) { _, question in
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 messageText = question
-                            }) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.adaptiveAccent)
-                                    
-                                    Text(question)
-                                        .font(.subheadline)
-                                        .foregroundColor(.adaptivePrimaryText)
-                                        .multilineTextAlignment(.leading)
-                                    
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                                .background(Color.adaptiveInputBackground)
-                                .cornerRadius(12)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.adaptiveBorder.opacity(0.3), lineWidth: 1)
-                                )
+                            } label: {
+                                Text("\u{201C}\(question)\u{201D}")
+                                    .font(.system(size: 17, design: .serif))
+                                    .italic()
+                                    .foregroundStyle(Color.SV.onSurface.opacity(0.65))
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 18)
                             }
                             .buttonStyle(.plain)
+
+                            Rectangle()
+                                .fill(Color.SV.onSurface.opacity(0.07))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 24)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .onAppear {
-                        print("[ChatTabView] Suggested questions section appearing with \(suggestedQuestions.count) questions")
-                    }
                 }
-
-                Spacer()
-                    .frame(height: 20)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // MARK: - Message List
-    private var messageListView: some View {
+
+    private var svMessageList: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottom) {
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        ForEach(messages) { message in
-                            MessageBubbleView(message: message)
-                                .id(message.id)
-                        }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        let isUser = message.role == ChatRole.user.rawValue
+                        let topPad: CGFloat = index == 0 ? 24 : (isUser ? 28 : 20)
+
+                        MessageBubbleView(message: message)
+                            .padding(.top, topPad)
+                            .id(message.id)
                     }
-                    .padding(.vertical, 16)
-                    .padding(.bottom, 80) // Padding to prevent content behind input
-                }
-                .onAppear {
-                    scrollProxy = proxy
-                    scrollToBottom()
-                }
-                .onChange(of: messages.count) {
-                    scrollToBottom()
-                }
-                
-                // Fully opaque gradient fade effect at bottom
-                VStack {
-                    Spacer()
-                    LinearGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color.adaptiveBackground.opacity(0), location: 0.0),
-                            .init(color: Color.adaptiveBackground.opacity(0.4), location: 0.4),
-                            .init(color: Color.adaptiveBackground.opacity(0.8), location: 0.7),
-                            .init(color: Color.adaptiveBackground, location: 0.85),
-                            .init(color: Color.adaptiveBackground, location: 1.0)
-                        ]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 100)
-                    .allowsHitTesting(false)
+
+                    // Thinking indicator while loading
+                    if isLoading {
+                        svThinkingIndicator
+                            .padding(.top, 20)
+                            .id("thinking")
+                    }
+
+                    Color.clear.frame(height: 80).id("bottom")
                 }
             }
-            .background(Color.adaptiveBackground)
-            .clipped()
+            .onAppear {
+                scrollProxy = proxy
+                scrollToBottom()
+            }
+            .onChange(of: messages.count) { scrollToBottom() }
+            .onChange(of: isLoading) { if isLoading { scrollToThinking() } }
         }
     }
 
+    private var svThinkingIndicator: some View {
+        HStack(spacing: 6) {
+            Text("Scholar is synthesizing deeper connections")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                .italic()
+            ThinkingDotsView()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+    }
+
     // MARK: - Helpers
+
     private var remainingQuestions: Int? {
         guard let user = authManager.currentUser else { return nil }
         return chatService.remainingQuestions(user: user, sermon: sermon)
@@ -186,55 +161,68 @@ struct ChatTabView: View {
     private func setupSubscriptions() {
         chatService.messagesPublisher
             .receive(on: DispatchQueue.main)
-            .sink { newMessages in
-                messages = newMessages
-            }
+            .sink { messages = $0 }
             .store(in: &cancellables)
 
         chatService.loadingPublisher
             .receive(on: DispatchQueue.main)
-            .sink { loading in
-                isLoading = loading
-            }
+            .sink { isLoading = $0 }
             .store(in: &cancellables)
 
         chatService.errorPublisher
             .receive(on: DispatchQueue.main)
-            .sink { newError in
-                error = newError
-            }
+            .sink { error = $0 }
             .store(in: &cancellables)
 
         chatService.suggestedQuestionsPublisher
             .receive(on: DispatchQueue.main)
             .sink { questions in
-                print("[ChatTabView] Received \(questions.count) suggested questions from publisher")
+                print("[ChatTabView] Received \(questions.count) suggested questions")
                 suggestedQuestions = questions
-                print("[ChatTabView] suggestedQuestions state updated, isEmpty: \(suggestedQuestions.isEmpty)")
             }
             .store(in: &cancellables)
     }
 
     private func sendMessage() {
         guard let user = authManager.currentUser else { return }
-
         let message = messageText
         messageText = ""
-
         Task {
             do {
                 try await chatService.sendMessage(message, for: sermon, user: user)
             } catch {
                 print("[ChatTabView] Error sending message: \(error)")
-                // Show error to user
             }
         }
     }
 
     private func scrollToBottom() {
-        guard let lastMessage = messages.last else { return }
-        withAnimation {
-            scrollProxy?.scrollTo(lastMessage.id, anchor: .bottom)
+        guard let last = messages.last else { return }
+        withAnimation { scrollProxy?.scrollTo(last.id, anchor: .bottom) }
+    }
+
+    private func scrollToThinking() {
+        withAnimation { scrollProxy?.scrollTo("thinking", anchor: .bottom) }
+    }
+}
+
+// MARK: - Thinking Dots Animation
+
+private struct ThinkingDotsView: View {
+    @State private var phase = 0
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.SV.onSurface.opacity(phase == i ? 0.5 : 0.2))
+                    .frame(width: 4, height: 4)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.5).repeatForever()) {
+                phase = (phase + 1) % 3
+            }
         }
     }
 }

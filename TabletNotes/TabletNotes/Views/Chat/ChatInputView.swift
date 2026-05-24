@@ -1,10 +1,3 @@
-//
-//  ChatInputView.swift
-//  TabletNotes
-//
-//  Created by Claude Code
-//
-
 import SwiftUI
 
 struct ChatInputView: View {
@@ -15,78 +8,81 @@ struct ChatInputView: View {
 
     @FocusState private var isFocused: Bool
 
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
-            // Remaining questions indicator (for free users)
+        VStack(spacing: 0) {
+            // Remaining questions (free tier)
             if let remaining = remainingQuestions {
                 HStack {
-                    Image(systemName: "info.circle.fill")
-                        .font(.caption)
-                        .foregroundColor(.adaptiveSecondaryText)
-
                     Text("\(remaining) question\(remaining == 1 ? "" : "s") remaining")
-                        .font(.caption)
-                        .foregroundColor(.adaptiveSecondaryText)
-
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                     Spacer()
-
                     if remaining == 0 {
                         Text("Upgrade for unlimited")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.adaptiveAccent)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.SV.primary)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 10)
             }
 
-            // Input field
-            HStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14))
-                        .foregroundColor(.adaptiveAccent)
-                    
-                    TextField("Ask a question", text: $text, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...4)
-                        .focused($isFocused)
-                        .disabled(isLoading)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color.adaptiveInputBackground)
-                .cornerRadius(20)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.adaptiveBorder.opacity(0.3), lineWidth: 1)
-                )
+            // Input row
+            HStack(alignment: .bottom, spacing: 14) {
+                // Underline-style text field
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.SV.tertiary.opacity(0.75))
+                            .padding(.top, 2)
 
+                        TextField("Ask about this sermon...", text: $text, axis: .vertical)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.SV.onSurface)
+                            .textFieldStyle(.plain)
+                            .lineLimit(1...4)
+                            .focused($isFocused)
+                            .disabled(isLoading)
+                    }
+                    .padding(.bottom, 9)
+
+                    // Underline — transitions to primary on focus
+                    Rectangle()
+                        .fill(isFocused ? Color.SV.primary : Color.SV.onSurface.opacity(0.15))
+                        .frame(height: 1)
+                        .animation(.easeInOut(duration: 0.2), value: isFocused)
+                }
+
+                // Send button
                 Button(action: onSend) {
                     ZStack {
                         Circle()
-                            .fill(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading ?
-                                  Color.adaptiveInputBackground :
-                                  Color.adaptiveInputBackground)
-                            .frame(width: 44, height: 44)
+                            .fill(canSend ? Color.SV.primary : Color.SV.onSurface.opacity(0.07))
+                            .frame(width: 36, height: 36)
 
                         if isLoading {
                             ProgressView()
-                                .tint(.adaptiveSecondaryText)
+                                .tint(Color.SV.onSurface.opacity(0.35))
+                                .scaleEffect(0.75)
                         } else {
                             Image(systemName: "arrow.up")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.adaptiveSecondaryText)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(canSend ? .white : Color.SV.onSurface.opacity(0.25))
                         }
                     }
                 }
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
+                .disabled(!canSend)
                 .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.15), value: canSend)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 4)
         }
-        .background(Color.adaptiveBackground)
+        .background(Color.SV.surface)
     }
 }

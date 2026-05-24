@@ -1,72 +1,73 @@
-//
-//  MessageBubbleView.swift
-//  TabletNotes
-//
-//  Created by Claude Code
-//
-
 import SwiftUI
 
 struct MessageBubbleView: View {
     let message: ChatMessage
 
-    private var isUser: Bool {
-        message.role == ChatRole.user.rawValue
-    }
+    private var isUser: Bool { message.role == ChatRole.user.rawValue }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            if isUser {
-                Spacer(minLength: 40)
-            } else {
-                // AI avatar
-                ZStack {
-                    Circle()
-                        .fill(Color.adaptiveAccent.opacity(0.2))
-                        .frame(width: 32, height: 32)
+        if isUser {
+            svUserMessage
+        } else {
+            svAIResponse
+        }
+    }
 
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 14))
-                        .foregroundColor(.adaptiveAccent)
-                }
-            }
+    // MARK: - User Message
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                // Message content
-                Text(isUser ? message.content : cleanMarkdown(message.content))
-                    .font(.body)
-                    .foregroundColor(isUser ? .white : .adaptivePrimaryText)
+    private var svUserMessage: some View {
+        HStack(alignment: .top) {
+            Spacer(minLength: 60)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(message.content)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(
-                        isUser ?
-                            Color.adaptiveAccent :
-                            Color.adaptiveCardBackground
-                    )
-                    .cornerRadius(16)
+                    .padding(.vertical, 11)
+                    .background(Color.SV.primary)
+                    .clipShape(.rect(cornerRadius: 18, style: .continuous))
 
-                // Timestamp
                 Text(formatTimestamp(message.timestamp))
-                    .font(.caption2)
-                    .foregroundColor(.adaptiveSecondaryText)
-                    .padding(.horizontal, 8)
-            }
-
-            if !isUser {
-                Spacer(minLength: 40)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.3))
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, 20)
     }
+
+    // MARK: - AI Response
+
+    private var svAIResponse: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("SCHOLAR ANALYSIS")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+
+            Text(cleanMarkdown(message.content))
+                .font(.system(size: 16, design: .serif))
+                .foregroundStyle(Color.SV.onSurface)
+                .lineSpacing(7)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(formatTimestamp(message.timestamp))
+                .font(.system(size: 10))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.3))
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Helpers
 
     private func formatTimestamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
-    
-    /// Cleans markdown using optimized cached regex patterns (50% faster)
+
     private func cleanMarkdown(_ text: String) -> String {
-        return MarkdownCleaner.clean(text)
+        MarkdownCleaner.clean(text)
     }
 }
