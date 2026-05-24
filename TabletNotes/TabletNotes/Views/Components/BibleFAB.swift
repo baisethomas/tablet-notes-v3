@@ -1,5 +1,309 @@
 import SwiftUI
 
+struct AddScriptureSheet: View {
+    let onSelection: (ScriptureReference, String) -> Void
+
+    @StateObject private var bibleService = BibleAPIService()
+    @State private var searchText = ""
+    @State private var searchResults: [ScriptureReference] = []
+    @State private var loadingReferenceID: String?
+    @State private var errorMessage: String?
+    @State private var showingBibleBrowser = false
+    @Environment(\.dismiss) private var dismiss
+
+    private let popularScriptures = [
+        "John 3:16",
+        "Romans 8:28",
+        "Philippians 4:13",
+        "Psalm 23:1",
+        "Matthew 28:19-20",
+        "1 Corinthians 13:4-7"
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    searchField
+                    quickReferences
+                    searchResultsSection
+                    browseButton
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 24)
+            }
+            .background(Color.SV.surface.ignoresSafeArea())
+            .navigationTitle("Add Scripture")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.SV.primary)
+                }
+            }
+        }
+        .sheet(isPresented: $showingBibleBrowser) {
+            BibleBrowserView { reference, content in
+                onSelection(reference, content)
+                showingBibleBrowser = false
+                dismiss()
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "book.closed")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(Color.SV.primary)
+                .frame(width: 48, height: 48)
+                .background(Color.SV.primary.opacity(0.08), in: Circle())
+
+            Text("Find a verse")
+                .font(.system(size: 26, weight: .semibold, design: .serif))
+                .foregroundStyle(Color.SV.onSurface)
+
+            Text("Type a reference, choose a common passage, or browse the Bible.")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.58))
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.42))
+
+            TextField("John 3:16", text: $searchText)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit(performSearch)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    searchResults = []
+                    errorMessage = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.35))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear scripture search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(Color.SV.surfaceContainerLowest, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.SV.primary.opacity(0.10), lineWidth: 1)
+        )
+        .onChange(of: searchText) { _, newValue in
+            errorMessage = nil
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                searchResults = []
+            }
+        }
+    }
+
+    private var quickReferences: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("COMMON PASSAGES")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(1.6)
+                .foregroundStyle(Color.SV.onSurface.opacity(0.38))
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(popularScriptures, id: \.self) { scripture in
+                        Button {
+                            searchText = scripture
+                            performSearch()
+                        } label: {
+                            Text(scripture)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Color.SV.primary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.SV.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    @ViewBuilder
+    private var searchResultsSection: some View {
+        if let errorMessage {
+            Text(errorMessage)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.SV.error)
+                .padding(.vertical, 4)
+        }
+
+        if !searchResults.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("RESULTS")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(1.6)
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.38))
+
+                VStack(spacing: 8) {
+                    ForEach(searchResults) { reference in
+                        ScriptureInsertRow(
+                            reference: reference,
+                            isLoading: loadingReferenceID == reference.id
+                        ) {
+                            insert(reference)
+                        }
+                    }
+                }
+            }
+        } else if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text("Enter a full reference like John 3:16 or Matthew 5:3-12.")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
+        }
+    }
+
+    private var browseButton: some View {
+        Button {
+            showingBibleBrowser = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 16, weight: .medium))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Browse Bible")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Choose translation, book, chapter, and verse.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.52))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.32))
+            }
+            .foregroundStyle(Color.SV.onSurface)
+            .padding(16)
+            .background(Color.SV.surfaceContainerLow, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func performSearch() {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let scriptureAnalysis = ScriptureAnalysisService()
+        let references = scriptureAnalysis.analyzeScriptureReferences(in: trimmed)
+        searchResults = references
+        errorMessage = references.isEmpty ? "No scripture reference found." : nil
+    }
+
+    private func insert(_ reference: ScriptureReference) {
+        loadingReferenceID = reference.id
+        errorMessage = nil
+
+        Task {
+            do {
+                let content: String
+                if reference.isRange {
+                    let passage = try await bibleService.fetchPassage(
+                        reference: reference.displayText,
+                        bibleId: ApiBibleConfig.preferredBibleTranslationId
+                    )
+                    content = cleanScriptureContent(passage.content)
+                } else {
+                    let verse = try await bibleService.fetchVerse(
+                        reference: reference.displayText,
+                        bibleId: ApiBibleConfig.preferredBibleTranslationId
+                    )
+                    content = cleanScriptureContent(verse.content)
+                }
+
+                await MainActor.run {
+                    onSelection(reference, content)
+                    loadingReferenceID = nil
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    loadingReferenceID = nil
+                    errorMessage = "Unable to load \(reference.displayText): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func cleanScriptureContent(_ content: String) -> String {
+        let cleanedContent = content
+            .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(
+                of: "(\\d+)([A-Za-z])",
+                with: "$1 $2",
+                options: .regularExpression
+            )
+
+        return cleanedContent.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct ScriptureInsertRow: View {
+    let reference: ScriptureReference
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reference.displayText)
+                        .font(.system(size: 17, weight: .semibold, design: .serif))
+                        .foregroundStyle(Color.SV.onSurface)
+
+                    Text("Tap to insert into notes")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.48))
+                }
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color.SV.primary))
+                } else {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Color.SV.primary)
+                }
+            }
+            .padding(14)
+            .background(Color.SV.surfaceContainerLowest, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+    }
+}
+
 struct ScriptureSearchFAB: View {
     let onScriptureSelected: (ScriptureReference, String) -> Void
     

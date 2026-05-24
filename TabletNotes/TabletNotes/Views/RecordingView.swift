@@ -61,9 +61,11 @@ struct RecordingView: View {
     @State private var isPaused = false
     @State private var noteText: String = ""
     @State private var noteSaveTask: Task<Void, Never>? = nil
+    @State private var transcriptAnalysisTask: Task<Void, Never>? = nil
     @State private var transcript: String = ""
     @State private var detectedReferences: [ScriptureReference] = []
     @State private var selectedReference: ScriptureReference? = nil
+    @State private var showingAddScriptureSheet = false
     @State private var cancellables = Set<AnyCancellable>()
     @State private var notes: [Note] = []
     @State private var audioFileURL: URL? = nil
@@ -128,10 +130,9 @@ struct RecordingView: View {
             audioFileURL = url
         }
         .onReceive(transcriptionService.transcriptPublisher) { newTranscript in
-            withAnimation(.easeInOut(duration: 0.3)) {
-                transcript = newTranscript
-            }
-            detectedReferences = scriptureAnalysisService.analyzeScriptureReferences(in: newTranscript)
+            guard newTranscript != transcript else { return }
+            transcript = newTranscript
+            scheduleTranscriptAnalysis(newTranscript)
         }
         .onReceive(noteService.notesPublisher) { updatedNotes in
             notes = updatedNotes
@@ -154,6 +155,10 @@ struct RecordingView: View {
             if let existingNote = noteService.currentNotes.first {
                 noteText = existingNote.text
             }
+        }
+        .onDisappear {
+            noteSaveTask?.cancel()
+            transcriptAnalysisTask?.cancel()
         }
         .sheet(item: $selectedReference) { ref in
             NavigationStack {
@@ -189,6 +194,12 @@ struct RecordingView: View {
                         Button("Done") { selectedReference = nil }
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showingAddScriptureSheet) {
+            AddScriptureSheet { reference, content in
+                insertScriptureIntoNotes(reference: reference, content: content)
+                showingAddScriptureSheet = false
             }
         }
         #else
@@ -316,6 +327,16 @@ struct RecordingView: View {
                         .tracking(2)
                         .foregroundStyle(Color.SV.onSurface.opacity(0.35))
                     Spacer()
+                    Button(action: showAddScripture) {
+                        Label("Add Scripture", systemImage: "book.closed")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color.SV.primary)
+                            .frame(width: 32, height: 32)
+                            .background(Color.SV.primary.opacity(0.08), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add Scripture")
                     if sectionFocus == .notes {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10, weight: .medium))
@@ -490,6 +511,12 @@ struct RecordingView: View {
         stopRecording()
     }
 
+    private func showAddScripture() {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
+        showingAddScriptureSheet = true
+    }
+
     // MARK: - Note Persistence
 
     private func scheduleNoteSave(_ text: String) {
@@ -501,6 +528,21 @@ struct RecordingView: View {
         }
     }
 
+    private func scheduleTranscriptAnalysis(_ text: String) {
+        transcriptAnalysisTask?.cancel()
+        transcriptAnalysisTask = Task {
+            try? await Task.sleep(nanoseconds: 750_000_000)
+            guard !Task.isCancelled else { return }
+
+            let references = scriptureAnalysisService.analyzeScriptureReferences(in: text)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                detectedReferences = references
+            }
+        }
+    }
+
     private func saveNoteText(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let existingNote = notes.first {
@@ -508,6 +550,21 @@ struct RecordingView: View {
         } else if !trimmed.isEmpty {
             noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
         }
+    }
+
+    private func insertScriptureIntoNotes(reference: ScriptureReference, content: String) {
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scriptureText = """
+        📖 \(reference.displayText)
+
+        \(trimmedContent)
+        """
+        let separator = noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+        noteText += separator + scriptureText
+        saveNoteText(noteText)
+
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
     }
 
     #endif

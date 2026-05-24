@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BibleBrowserView: View {
     @StateObject private var bibleService = BibleAPIService()
-    @State private var selectedBibleId = ApiBibleConfig.defaultBibleId
+    @State private var selectedBibleId = ApiBibleConfig.preferredBibleTranslationId
     @State private var selectedBook: BibleBook?
     @State private var selectedChapter: Int = 1
     @State private var selectedVerseStart: Int = 1
@@ -23,7 +23,7 @@ struct BibleBrowserView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Bible Version Selector
                 if !getEnglishBibles().isEmpty {
@@ -34,6 +34,7 @@ struct BibleBrowserView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .tint(Color.SV.primary)
                     .padding()
                     .onChange(of: selectedBibleId) { _, _ in
                         loadBooks()
@@ -43,12 +44,13 @@ struct BibleBrowserView: View {
                 if isLoadingBooks {
                     VStack {
                         ProgressView("Loading Bible books...")
+                            .tint(Color.SV.primary)
                         Spacer()
                     }
                 } else if let errorMessage = errorMessage {
                     VStack {
                         Text("Error: \(errorMessage)")
-                            .foregroundColor(.red)
+                            .foregroundStyle(Color.SV.error)
                         Button("Retry") {
                             loadBooks()
                         }
@@ -64,6 +66,7 @@ struct BibleBrowserView: View {
                                 Text("Select Book")
                                     .font(.headline)
                                     .fontWeight(.semibold)
+                                    .foregroundStyle(Color.SV.onSurface)
                                 
                                 // Old Testament Section
                                 VStack(alignment: .leading, spacing: 12) {
@@ -71,7 +74,7 @@ struct BibleBrowserView: View {
                                         Text("Old Testament")
                                             .font(.subheadline)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.secondary)
+                                            .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                         Spacer()
                                     }
                                     
@@ -97,7 +100,7 @@ struct BibleBrowserView: View {
                                         Text("New Testament")
                                             .font(.subheadline)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.secondary)
+                                            .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                         Spacer()
                                     }
                                     
@@ -127,6 +130,7 @@ struct BibleBrowserView: View {
                                     Text("Select Chapter & Verse")
                                         .font(.headline)
                                         .fontWeight(.semibold)
+                                        .foregroundStyle(Color.SV.onSurface)
                                     
                                     HStack(spacing: 20) {
                                         // Chapter Picker
@@ -134,7 +138,7 @@ struct BibleBrowserView: View {
                                             Text("Chapter")
                                                 .font(.subheadline)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.secondary)
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                             
                                             Picker("Chapter", selection: $selectedChapter) {
                                                 ForEach(1...50, id: \.self) { chapter in
@@ -156,7 +160,7 @@ struct BibleBrowserView: View {
                                             Text("Start Verse")
                                                 .font(.subheadline)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.secondary)
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                             
                                             Picker("Start Verse", selection: $selectedVerseStart) {
                                                 ForEach(1...50, id: \.self) { verse in
@@ -177,7 +181,7 @@ struct BibleBrowserView: View {
                                             Text("End Verse (Optional)")
                                                 .font(.subheadline)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.secondary)
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                             
                                             Picker("End Verse", selection: Binding(
                                                 get: { selectedVerseEnd ?? selectedVerseStart },
@@ -207,6 +211,7 @@ struct BibleBrowserView: View {
                                         Text("Preview")
                                             .font(.headline)
                                             .fontWeight(.semibold)
+                                            .foregroundStyle(Color.SV.onSurface)
                                         
                                         Spacer()
                                         
@@ -214,7 +219,7 @@ struct BibleBrowserView: View {
                                             Text(createReferenceText(book: book))
                                                 .font(.subheadline)
                                                 .fontWeight(.medium)
-                                                .foregroundColor(.accentColor)
+                                                .foregroundStyle(Color.SV.primary)
                                         }
                                     }
                                     
@@ -224,7 +229,7 @@ struct BibleBrowserView: View {
                                                 .scaleEffect(0.8)
                                             Text("Loading scripture...")
                                                 .font(.subheadline)
-                                                .foregroundColor(.secondary)
+                                                .foregroundStyle(Color.SV.onSurface.opacity(0.55))
                                         }
                                         .padding()
                                     } else if !scriptureContent.isEmpty {
@@ -234,8 +239,7 @@ struct BibleBrowserView: View {
                                                 .lineSpacing(4)
                                                 .textSelection(.enabled)
                                                 .padding()
-                                                .background(Color(.systemGray6).opacity(0.5))
-                                                .cornerRadius(8)
+                                                .background(Color.SV.surfaceContainerLow, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         }
                                         .frame(maxHeight: 200)
                                     }
@@ -250,11 +254,10 @@ struct BibleBrowserView: View {
                                             Text("Add to Notes")
                                         }
                                         .font(.headline)
-                                        .foregroundColor(.white)
+                                        .foregroundStyle(.white)
                                         .frame(maxWidth: .infinity)
                                         .padding()
-                                        .background(Color.accentColor)
-                                        .cornerRadius(12)
+                                        .background(Color.SV.primary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                                     }
                                     .padding(.horizontal)
                                     .padding(.bottom)
@@ -275,6 +278,7 @@ struct BibleBrowserView: View {
                     }
                 }
             }
+            .background(Color.SV.surface.ignoresSafeArea())
         }
         .onAppear {
             loadBooks()
@@ -450,16 +454,16 @@ struct BookButton: View {
             Text(book.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(isSelected ? .white : .primary)
+                .foregroundStyle(isSelected ? .white : Color.SV.onSurface)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
                 .background(
-                    isSelected ? 
-                    Color.accentColor : Color(.systemGray6)
+                    isSelected ?
+                    Color.SV.primary : Color.SV.surfaceContainerLow
                 )
-                .cornerRadius(8)
+                .clipShape(.rect(cornerRadius: 10))
         }
     }
 }
@@ -475,13 +479,13 @@ struct BibleFAB: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Color.purple)
+                    .fill(Color.SV.primary)
                     .frame(width: 56, height: 56)
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
         }
         .sheet(isPresented: $showingBibleBrowser) {
