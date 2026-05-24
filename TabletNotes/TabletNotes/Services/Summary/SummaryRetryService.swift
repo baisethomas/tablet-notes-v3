@@ -35,6 +35,36 @@ class SummaryRetryService: ObservableObject {
         self.summaryService = summaryService
     }
 
+    private func normalizedTranscriptText(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    private func resolvedTranscriptText(
+        for sermon: Sermon,
+        fallbackText: String? = nil,
+        allowRelationshipFallback: Bool
+    ) -> String? {
+        if let fallbackText = normalizedTranscriptText(fallbackText) {
+            return fallbackText
+        }
+
+        if let cachedText = normalizedTranscriptText(
+            TranscriptSnapshotStore.snapshot(for: sermon.id)?.text
+        ) {
+            return cachedText
+        }
+
+        guard allowRelationshipFallback,
+              let transcript = sermon.transcript else {
+            return nil
+        }
+
+        return normalizedTranscriptText(transcript.text)
+    }
+
     private func upsertSummary(
         on sermon: Sermon,
         in context: ModelContext,
@@ -99,16 +129,24 @@ class SummaryRetryService: ObservableObject {
     }
 
     @discardableResult
-    func enqueueSummary(for sermonId: UUID) -> Bool {
+    private func enqueueSummary(
+        for sermonId: UUID,
+        transcriptText: String?,
+        allowRelationshipFallback: Bool
+    ) -> Bool {
         guard let context = modelContext,
               let sermon = fetchSermon(withId: sermonId, in: context),
-              let transcript = sermon.transcript,
-              !transcript.text.isEmpty else {
+              sermon.transcriptionStatus == "complete",
+              let transcriptText = resolvedTranscriptText(
+                  for: sermon,
+                  fallbackText: transcriptText,
+                  allowRelationshipFallback: allowRelationshipFallback
+              ) else {
             print("[SummaryRetryService] Cannot enqueue summary; transcript unavailable")
             return false
         }
 
-        print("[SummaryRetryService] Enqueuing summary for sermon \(sermonId) with transcript length \(transcript.text.count)")
+        print("[SummaryRetryService] Enqueuing summary for sermon \(sermonId) with transcript length \(transcriptText.count)")
         upsertJob(for: sermonId, resetAttempts: true)
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
@@ -122,13 +160,61 @@ class SummaryRetryService: ObservableObject {
     }
 
     @discardableResult
-    func retrySummaryNow(for sermonId: UUID) -> Bool {
-        guard enqueueSummary(for: sermonId) else {
+    func enqueueSummary(for sermonId: UUID) -> Bool {
+        enqueueSummary(
+            for: sermonId,
+            transcriptText: nil,
+            allowRelationshipFallback: true
+        )
+    }
+
+    @discardableResult
+    func enqueueSummary(for sermonId: UUID, transcriptText: String) -> Bool {
+        enqueueSummary(
+            for: sermonId,
+            transcriptText: transcriptText,
+            allowRelationshipFallback: false
+        )
+    }
+
+    @discardableResult
+    private func retrySummaryNow(
+        for sermonId: UUID,
+        transcriptText: String?,
+        allowRelationshipFallback: Bool
+    ) -> Bool {
+        guard enqueueSummary(
+            for: sermonId,
+            transcriptText: transcriptText,
+            allowRelationshipFallback: allowRelationshipFallback
+        ) else {
             return false
         }
 
-        processJob(for: sermonId)
+        processJob(
+            for: sermonId,
+            transcriptText: transcriptText,
+            allowRelationshipFallback: allowRelationshipFallback
+        )
         return true
+    }
+
+    @discardableResult
+    func retrySummaryNow(for sermonId: UUID) -> Bool {
+        retrySummaryNow(
+            for: sermonId,
+            transcriptText: nil,
+            allowRelationshipFallback: true
+        )
+    }
+
+    @discardableResult
+    func retrySummaryNow(for sermonId: UUID, transcriptText: String) -> Bool {
+        retrySummaryNow(
+            for: sermonId,
+            transcriptText: transcriptText,
+            allowRelationshipFallback: false
+        )
     }
 
     func retrySummaryIfNeeded(for sermon: Sermon) {
@@ -136,7 +222,11 @@ class SummaryRetryService: ObservableObject {
             return
         }
         guard job(for: sermon.id) == nil else { return }
-        enqueueSummary(for: sermon.id)
+        _ = enqueueSummary(
+            for: sermon.id,
+            transcriptText: nil,
+            allowRelationshipFallback: false
+        )
     }
 
     func recoverIncompleteSummaries() {
@@ -146,7 +236,12 @@ class SummaryRetryService: ObservableObject {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             print("[SummaryRetryService] Recovering incomplete summaries from \(sermons.count) sermons")
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
-                guard let transcript = sermon.transcript, !transcript.text.isEmpty else { continue }
+                guard resolvedTranscriptText(
+                    for: sermon,
+                    allowRelationshipFallback: false
+                ) != nil else {
+                    continue
+                }
                 let existingJob = job(for: sermon.id)
                 guard shouldAutomaticallyRecoverSummary(for: sermon, job: existingJob) else { continue }
                 print("[SummaryRetryService] Inspecting sermon \(sermon.id) with summaryStatus=\(sermon.summaryStatus)")
@@ -205,30 +300,47 @@ class SummaryRetryService: ObservableObject {
 
         let nextJob = nextCandidate.job
         let sermon = nextCandidate.sermon
-        let transcript = nextCandidate.transcript
+        let transcriptText = nextCandidate.transcriptText
         print("[SummaryRetryService] Starting queued summary job for sermon \(nextJob.sermonId)")
-        startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
+        startProcessing(
+            job: nextJob,
+            sermon: sermon,
+            transcriptText: transcriptText,
+            in: context
+        )
     }
 
-    private func processJob(for sermonId: UUID) {
+    private func processJob(
+        for sermonId: UUID,
+        transcriptText: String?,
+        allowRelationshipFallback: Bool
+    ) {
         guard !isProcessingQueue,
               let context = modelContext,
               let nextJob = job(for: sermonId),
               nextJob.isRunnable(),
               let sermon = fetchSermon(withId: nextJob.sermonId, in: context),
-              let transcript = sermon.transcript,
-              !transcript.text.isEmpty else {
+              let transcriptText = resolvedTranscriptText(
+                  for: sermon,
+                  fallbackText: transcriptText,
+                  allowRelationshipFallback: allowRelationshipFallback
+              ) else {
             return
         }
 
         print("[SummaryRetryService] Starting manual summary job for sermon \(sermonId)")
-        startProcessing(job: nextJob, sermon: sermon, transcript: transcript, in: context)
+        startProcessing(
+            job: nextJob,
+            sermon: sermon,
+            transcriptText: transcriptText,
+            in: context
+        )
     }
 
     private func startProcessing(
         job nextJob: ProcessingJob,
         sermon: Sermon,
-        transcript: Transcript,
+        transcriptText: String,
         in context: ModelContext
     ) {
         isProcessingQueue = true
@@ -239,7 +351,6 @@ class SummaryRetryService: ObservableObject {
 
         let sermonId = sermon.id
         let jobId = nextJob.id
-        let transcriptText = transcript.text
         let serviceType = sermon.serviceType
         let summaryService = self.summaryService
         let runner = summaryRunner ?? { transcript, type in
@@ -448,7 +559,6 @@ class SummaryRetryService: ObservableObject {
             job?.updatedAt,
             job?.lastAttemptAt,
             sermon.updatedAt,
-            sermon.transcript?.updatedAt,
             sermon.date
         ]
         .compactMap { $0 }
@@ -496,7 +606,7 @@ class SummaryRetryService: ObservableObject {
     private func nextProcessableJob(in context: ModelContext) -> (
         job: ProcessingJob,
         sermon: Sermon,
-        transcript: Transcript
+        transcriptText: String
     )? {
         let descriptor = FetchDescriptor<ProcessingJob>(
             sortBy: [SortDescriptor(\.createdAt)]
@@ -521,8 +631,10 @@ class SummaryRetryService: ObservableObject {
             }
 
             guard sermon.transcriptionStatus == "complete",
-                  let transcript = sermon.transcript,
-                  !transcript.text.isEmpty else {
+                  let transcriptText = resolvedTranscriptText(
+                      for: sermon,
+                      allowRelationshipFallback: false
+                  ) else {
                 print("[SummaryRetryService] Skipping summary job for sermon \(sermon.id); transcript unavailable")
                 continue
             }
@@ -531,7 +643,7 @@ class SummaryRetryService: ObservableObject {
                 try? context.save()
             }
 
-            return (job, sermon, transcript)
+            return (job, sermon, transcriptText)
         }
 
         if mutatedQueue {

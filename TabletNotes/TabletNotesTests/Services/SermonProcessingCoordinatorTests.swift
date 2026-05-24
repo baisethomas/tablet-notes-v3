@@ -141,7 +141,7 @@ struct SermonProcessingCoordinatorTests {
                 [TranscriptSegment(text: "Recovered on launch", startTime: 0, endTime: 2)]
             )))
         }
-        retryService.summaryEnqueuer = { _ in }
+        retryService.summaryEnqueuer = { _, _ in }
 
         await coordinator.handleAppLaunch(syncDelayNanoseconds: 0)
 
@@ -163,5 +163,80 @@ struct SermonProcessingCoordinatorTests {
         #expect(runnerCallCount == 1)
         #expect(recoveredSermon?.transcriptionStatus == "complete")
         #expect(recoveredSermon?.transcript?.text == "Recovered on launch")
+    }
+
+    @MainActor
+    @Test func completedRecordingStartsTranscriptionEvenWhenReachabilityStateIsStale() async throws {
+        let context = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        mockAuthService.setAuthState(.authenticated(
+            MockAuthService.createMockUser(email: "coordinator@test.com")
+        ))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+        for _ in 0..<20 where authManager.currentUser == nil {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let sermonService = SermonService(modelContext: context, authManager: authManager)
+        let coordinator = SermonProcessingCoordinator.shared
+        let retryService = TranscriptionRetryService.shared
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("completed-recording-\(UUID().uuidString).m4a")
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x0A, count: 4096))
+
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.summaryEnqueuer = nil
+            retryService.overrideNetworkAvailability(false)
+            coordinator.resetForTesting()
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        coordinator.resetForTesting()
+        coordinator.syncRunner = {}
+        coordinator.configure(modelContext: context, sermonService: sermonService)
+
+        var runnerCallCount = 0
+        retryService.overrideNetworkAvailability(false)
+        retryService.transcriptionRunner = { _, completion in
+            runnerCallCount += 1
+            completion(.success((
+                "Auto-started transcript",
+                [TranscriptSegment(text: "Auto-started transcript", startTime: 0, endTime: 2)]
+            )))
+        }
+        retryService.summaryEnqueuer = { _, _ in }
+
+        let savedId = await withCheckedContinuation { continuation in
+            coordinator.handleCompletedRecording(
+                audioURL: audioURL,
+                title: "Completed Recording",
+                date: Date(),
+                serviceType: "Sermon",
+                notes: []
+            ) { savedId in
+                continuation.resume(returning: savedId)
+            }
+        }
+
+        var savedSermon: Sermon?
+        for _ in 0..<40 {
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            if let sermon = sermons.first(where: { $0.id == savedId }),
+               sermon.transcriptionStatus == "complete",
+               sermon.transcript?.text == "Auto-started transcript" {
+                savedSermon = sermon
+                break
+            }
+
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(runnerCallCount == 1)
+        #expect(savedSermon?.transcriptionStatus == "complete")
+        #expect(savedSermon?.transcript?.text == "Auto-started transcript")
     }
 }

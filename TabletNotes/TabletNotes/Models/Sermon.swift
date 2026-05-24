@@ -72,9 +72,6 @@ final class Sermon {
         notesNeedSync ||
         transcriptNeedsSync ||
         summaryNeedsSync ||
-        notes.contains(where: \.needsSync) ||
-        transcript?.needsSync == true ||
-        summary?.needsSync == true ||
         needsSync
     }
 
@@ -135,10 +132,7 @@ final class Sermon {
         needsSync = metadataNeedsSync ||
             notesNeedSync ||
             transcriptNeedsSync ||
-            summaryNeedsSync ||
-            notes.contains(where: \.needsSync) ||
-            transcript?.needsSync == true ||
-            summary?.needsSync == true
+            summaryNeedsSync
     }
 
     // Computed property to count user questions (for usage limit tracking)

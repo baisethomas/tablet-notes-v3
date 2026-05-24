@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 import SwiftData
 
@@ -191,20 +190,12 @@ final class SermonSyncEngine {
 }
 
 @MainActor
-class SyncService: ObservableObject, SyncServiceProtocol {
+final class SyncService: SyncServiceProtocol {
     private let authService: any SyncUserProviding
     private let engine: SermonSyncEngine
 
-    @Published private var syncStatus: String = "idle"
-    @Published private var syncError: Error?
-
-    var syncStatusPublisher: AnyPublisher<String, Never> {
-        $syncStatus.eraseToAnyPublisher()
-    }
-
-    var errorPublisher: AnyPublisher<Error?, Never> {
-        $syncError.eraseToAnyPublisher()
-    }
+    private var syncStatus: String = "idle"
+    private var syncError: Error?
 
     init(
         modelContext: ModelContext,

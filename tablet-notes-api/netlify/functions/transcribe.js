@@ -136,15 +136,20 @@ exports.handler = withLogging('transcribe', async (event, context) => {
             fileSize: blobData.size 
         });
         
+        const transcriptOptions = {
+            audio: blobData,
+            speaker_labels: true,
+            auto_chapters: false,
+            filter_profanity: false,
+            format_text: true
+        };
+
+        // AssemblyAI deprecated `word_boost` and will reject it starting May 11, 2026.
+        // Keep the payload explicit so the deprecated parameter is not reintroduced.
+
         // Submit transcription with circuit breaker and timeout
         const transcriptWithTimeout = withTimeout(
-            () => assemblyAIBreaker.execute(() => assembly.transcripts.submit({
-                audio: blobData,
-                speaker_labels: true,
-                auto_chapters: false,
-                filter_profanity: false,
-                format_text: true
-            })),
+            () => assemblyAIBreaker.execute(() => assembly.transcripts.submit(transcriptOptions)),
             120000 // 2 minute timeout for submission
         );
         

@@ -7,7 +7,7 @@ final class SermonProcessingCoordinator {
 
     private var modelContext: ModelContext?
     private weak var sermonService: SermonService?
-    private var syncService: SyncServiceProtocol?
+    private weak var syncService: (any SyncServiceProtocol)?
     private var hasBootstrappedBackgroundProcessing = false
 
     var backgroundBootstrapper: (@MainActor () -> Void)?
@@ -166,7 +166,9 @@ final class SermonProcessingCoordinator {
             summaryStatus: "pending",
             id: sermonId
         ) { savedId in
-            self.enqueueTranscription(for: savedId)
+            DispatchQueue.main.async {
+                _ = self.retryTranscription(for: savedId)
+            }
             completion?(savedId)
         }
     }

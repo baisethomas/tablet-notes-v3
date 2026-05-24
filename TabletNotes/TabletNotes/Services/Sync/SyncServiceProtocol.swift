@@ -1,5 +1,4 @@
 import Foundation
-import Combine
 
 @MainActor
 protocol SyncUserProviding: AnyObject {
@@ -7,9 +6,7 @@ protocol SyncUserProviding: AnyObject {
 }
 
 @MainActor
-protocol SyncServiceProtocol {
-    var syncStatusPublisher: AnyPublisher<String, Never> { get } // e.g., syncing, synced, error
-    var errorPublisher: AnyPublisher<Error?, Never> { get }
+protocol SyncServiceProtocol: AnyObject {
     func syncAllData() async
     func deleteAllCloudData() async
 }

@@ -34,25 +34,17 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             !sermon.metadataNeedsSync &&
             !sermon.notesNeedSync &&
             !sermon.transcriptNeedsSync &&
-            !sermon.summaryNeedsSync &&
-            !sermon.notes.contains(where: \.needsSync) &&
-            sermon.transcript?.needsSync != true &&
-            sermon.summary?.needsSync != true
+            !sermon.summaryNeedsSync
 
-        let scopes = SermonSyncScopes(
-            metadata: isCreate || sermon.metadataNeedsSync || legacyPendingMarker,
-            notes: isCreate || sermon.notesNeedSync || sermon.notes.contains(where: \.needsSync),
-            transcript: isCreate || sermon.transcriptNeedsSync || sermon.transcript?.needsSync == true,
-            summary: isCreate || sermon.summaryNeedsSync || sermon.summary?.needsSync == true
-        )
+        let notesRequested = isCreate || sermon.notesNeedSync || legacyPendingMarker
+        let transcriptRequested = isCreate || sermon.transcriptNeedsSync || legacyPendingMarker
+        let summaryRequested = isCreate || sermon.summaryNeedsSync || legacyPendingMarker
 
-        let notesSnapshot = sermon.notes.map { note in
+        let notesSnapshot = notesRequested ? sermon.notes.map { note in
             NoteSyncPayload(id: note.id, text: note.text, timestamp: note.timestamp)
-        }
-        let transcriptSnapshot = sermon.transcript.map { transcript in
-            TranscriptSyncPayload(id: transcript.id, text: transcript.text)
-        }
-        let summarySnapshot = sermon.summary.map { summary in
+        } : nil
+        let transcriptSnapshot = transcriptRequested ? transcriptSyncPayload(for: sermon) : nil
+        let summarySnapshot = summaryRequested ? sermon.summary.map { summary in
             SummarySyncPayload(
                 id: summary.id,
                 title: summary.title,
@@ -60,7 +52,13 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
                 type: summary.type,
                 status: summary.status
             )
-        }
+        } : nil
+        let scopes = SermonSyncScopes(
+            metadata: isCreate || sermon.metadataNeedsSync || legacyPendingMarker,
+            notes: notesSnapshot != nil,
+            transcript: transcriptSnapshot != nil,
+            summary: summarySnapshot != nil
+        )
 
         return SermonSyncData(
             id: sermon.id,
@@ -259,6 +257,7 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
                 sermon.transcript = nil
                 modelContext.delete(existingTranscript)
             }
+            TranscriptSnapshotStore.remove(for: sermon.id)
             return
         }
 
@@ -269,6 +268,11 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             existingTranscript.remoteId = snapshot.remoteId ?? existingTranscript.remoteId
             existingTranscript.updatedAt = snapshot.updatedAt
             existingTranscript.needsSync = false
+            TranscriptSnapshotStore.save(
+                transcriptId: existingTranscript.id,
+                text: snapshot.text,
+                for: sermon.id
+            )
             return
         }
 
@@ -291,6 +295,11 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         )
         modelContext.insert(transcript)
         sermon.transcript = transcript
+        TranscriptSnapshotStore.save(
+            transcriptId: transcript.id,
+            text: snapshot.text,
+            for: sermon.id
+        )
     }
 
     private func applySummarySnapshot(_ snapshot: SummarySnapshot?, to sermon: Sermon) {
@@ -360,6 +369,15 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
 
     private func shouldPreserveMissingLocalNote(_ note: Note, on sermon: Sermon) -> Bool {
         note.remoteId == nil || shouldPreserveLocalChildData(for: sermon, childNeedsSync: note.needsSync)
+    }
+
+    private func transcriptSyncPayload(for sermon: Sermon) -> TranscriptSyncPayload? {
+        if let snapshot = TranscriptSnapshotStore.snapshot(for: sermon.id) {
+            return TranscriptSyncPayload(id: snapshot.transcriptId, text: snapshot.text)
+        }
+
+        print("[SyncService] ⚠️ Skipping transcript sync for sermon \(sermon.id); transcript snapshot unavailable")
+        return nil
     }
 
     private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {

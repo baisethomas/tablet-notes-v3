@@ -359,32 +359,32 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
                                 if isEndOfTurn && !transcriptText.isEmpty {
                                     // Final transcript for this turn
-                                    print("[AssemblyAI Live] ✅ Final turn transcript: '\(transcriptText)'")
+                                    print("[AssemblyAI Live] Final turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
                                         if self.fullTranscript.isEmpty {
                                             self.fullTranscript = transcriptText
                                         } else {
                                             self.fullTranscript += " " + transcriptText
                                         }
-                                        print("[AssemblyAI Live] 📤 Sending final to UI: '\(self.fullTranscript)'")
+                                        print("[AssemblyAI Live] Sending final transcript to UI, characters=\(self.fullTranscript.count)")
                                         self.transcriptSubject.send(self.fullTranscript)
                                     }
                                 } else if !transcriptText.isEmpty {
                                     // Partial transcript for this turn
-                                    print("[AssemblyAI Live] ✅ Partial turn transcript: '\(transcriptText)'")
+                                    print("[AssemblyAI Live] Partial turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
                                         let combinedText = self.fullTranscript + (self.fullTranscript.isEmpty ? "" : " ") + transcriptText
-                                        print("[AssemblyAI Live] 📤 Sending partial to UI: '\(combinedText)'")
+                                        print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                         self.transcriptSubject.send(combinedText)
                                     }
                                 }
                             }
                         case "PartialTranscript":
                             if let partialText = jsonObject["text"] as? String {
-                                print("[AssemblyAI Live] ✅ Partial transcript received: '\(partialText)'")
+                                print("[AssemblyAI Live] Partial transcript received, characters=\(partialText.count)")
                                 DispatchQueue.main.async {
                                     let combinedText = self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText)
-                                    print("[AssemblyAI Live] 📤 Sending partial to UI: '\(combinedText)'")
+                                    print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                     self.transcriptSubject.send(combinedText)
                                 }
                             } else {
@@ -392,14 +392,14 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                             }
                         case "FinalTranscript":
                             if let finalText = jsonObject["text"] as? String, !finalText.isEmpty {
-                                print("[AssemblyAI Live] ✅ Final transcript received: '\(finalText)'")
+                                print("[AssemblyAI Live] Final transcript received, characters=\(finalText.count)")
                                 DispatchQueue.main.async {
                                     if self.fullTranscript.isEmpty {
                                         self.fullTranscript = finalText
                                     } else {
                                         self.fullTranscript += " " + finalText
                                     }
-                                    print("[AssemblyAI Live] 📤 Sending final to UI: '\(self.fullTranscript)'")
+                                    print("[AssemblyAI Live] Sending final transcript to UI, characters=\(self.fullTranscript.count)")
                                     self.transcriptSubject.send(self.fullTranscript)
                                 }
                             } else {

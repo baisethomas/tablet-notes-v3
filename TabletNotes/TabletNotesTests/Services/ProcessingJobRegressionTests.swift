@@ -59,7 +59,7 @@ struct ProcessingJobRegressionTests {
                 [TranscriptSegment(text: "Recovered transcript", startTime: 0, endTime: 4)]
             )))
         }
-        retryService.summaryEnqueuer = { _ in }
+        retryService.summaryEnqueuer = { _, _ in }
 
         retryService.enqueueTranscription(for: sermon.id)
         retryService.processQueue()
@@ -143,7 +143,7 @@ struct ProcessingJobRegressionTests {
                 [TranscriptSegment(text: "Immediate retry transcript", startTime: 0, endTime: 2)]
             )))
         }
-        retryService.summaryEnqueuer = { _ in }
+        retryService.summaryEnqueuer = { _, _ in }
 
         let accepted = retryService.retryTranscriptionNow(for: sermon.id)
 
@@ -218,8 +218,8 @@ struct ProcessingJobRegressionTests {
             )
         }
 
-        transcriptionRetryService.summaryEnqueuer = { sermonId in
-            _ = summaryRetryService.retrySummaryNow(for: sermonId)
+        transcriptionRetryService.summaryEnqueuer = { sermonId, transcriptText in
+            _ = summaryRetryService.retrySummaryNow(for: sermonId, transcriptText: transcriptText)
         }
 
         let accepted = transcriptionRetryService.retryTranscriptionNow(for: sermon.id)
@@ -299,7 +299,7 @@ struct ProcessingJobRegressionTests {
                 [TranscriptSegment(text: "Recovered after relaunch", startTime: 0, endTime: 2)]
             )))
         }
-        retryService.summaryEnqueuer = { _ in }
+        retryService.summaryEnqueuer = { _, _ in }
 
         retryService.recoverIncompleteTranscriptions()
         retryService.processQueue()
@@ -382,7 +382,7 @@ struct ProcessingJobRegressionTests {
                 [TranscriptSegment(text: "Should not auto-recover old transcription", startTime: 0, endTime: 2)]
             )))
         }
-        retryService.summaryEnqueuer = { _ in }
+        retryService.summaryEnqueuer = { _, _ in }
 
         retryService.recoverIncompleteTranscriptions()
         retryService.processQueue()

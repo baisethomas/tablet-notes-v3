@@ -226,6 +226,7 @@ class SermonService {
                 sermon.transcript = nil
                 modelContext.delete(existingTranscript)
             }
+            TranscriptSnapshotStore.remove(for: sermon.id)
             return true
         }
 
@@ -250,6 +251,11 @@ class SermonService {
             existingTranscript.remoteId = snapshot.remoteId
             existingTranscript.updatedAt = snapshot.updatedAt
             existingTranscript.needsSync = snapshot.needsSync
+            TranscriptSnapshotStore.save(
+                transcriptId: existingTranscript.id,
+                text: snapshot.text,
+                for: sermon.id
+            )
             return true
         }
 
@@ -263,6 +269,11 @@ class SermonService {
         )
         modelContext.insert(transcript)
         sermon.transcript = transcript
+        TranscriptSnapshotStore.save(
+            transcriptId: transcript.id,
+            text: snapshot.text,
+            for: sermon.id
+        )
         return true
     }
 

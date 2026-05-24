@@ -290,6 +290,11 @@ class MigrationSafety {
                             needsSync: transcriptData["needsSync"] as? Bool ?? false
                         )
                         sermon.transcript = transcript
+                        TranscriptSnapshotStore.save(
+                            transcriptId: transcript.id,
+                            text: text,
+                            for: sermon.id
+                        )
                     }
                     
                     // Restore summary

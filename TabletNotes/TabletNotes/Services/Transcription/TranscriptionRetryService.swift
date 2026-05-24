@@ -27,7 +27,7 @@ class TranscriptionRetryService: ObservableObject {
     private let maxRetries = 3
     private let automaticRecoveryWindow: TimeInterval = 7 * 24 * 60 * 60
     var transcriptionRunner: ((URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void)?
-    var summaryEnqueuer: (@MainActor (UUID) -> Void)?
+    var summaryEnqueuer: (@MainActor (UUID, String) -> Void)?
 
     init() {}
 
@@ -48,6 +48,11 @@ class TranscriptionRetryService: ObservableObject {
             existingTranscript.segments = segments
             existingTranscript.updatedAt = Date()
             existingTranscript.needsSync = true
+            TranscriptSnapshotStore.save(
+                transcriptId: existingTranscript.id,
+                text: text,
+                for: sermon.id
+            )
             return
         }
 
@@ -59,6 +64,11 @@ class TranscriptionRetryService: ObservableObject {
         )
         context.insert(transcript)
         sermon.transcript = transcript
+        TranscriptSnapshotStore.save(
+            transcriptId: transcript.id,
+            text: text,
+            for: sermon.id
+        )
     }
 
     func setModelContext(_ context: ModelContext) {
@@ -265,9 +275,12 @@ class TranscriptionRetryService: ObservableObject {
                     )
 
                     if let summaryEnqueuer = self.summaryEnqueuer {
-                        summaryEnqueuer(refreshedSermon.id)
+                        summaryEnqueuer(refreshedSermon.id, text)
                     } else {
-                        SermonProcessingCoordinator.shared.retrySummary(for: refreshedSermon.id)
+                        SummaryRetryService.shared.retrySummaryNow(
+                            for: refreshedSermon.id,
+                            transcriptText: text
+                        )
                     }
 
                 case .failure(let error):
