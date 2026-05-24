@@ -28,6 +28,23 @@ final class AuthenticationManager {
         self.authService = SupabaseAuthService()
         print("[AuthenticationManager] Initializing AuthenticationManager: \(ObjectIdentifier(self))")
         print("[AuthenticationManager] Using SupabaseAuthService instance: \(ObjectIdentifier(self.authService))")
+
+        if ProcessInfo.processInfo.environment["APP_STORE_SCREENSHOTS"] == "1" {
+            let user = User(
+                id: AppStoreScreenshotSeed.userID,
+                email: "screenshots@tabletnotes.app",
+                name: "TabletNotes Demo",
+                isEmailVerified: true,
+                subscriptionTier: "premium",
+                subscriptionStatus: "active"
+            )
+            currentUser = user
+            authState = .authenticated(user)
+            authStatePublished = .authenticated(user)
+            isInitialized = true
+            return
+        }
+
         print("[AuthenticationManager] Setting up bindings")
         setupBindings()
         print("[AuthenticationManager] Initializing auth state")

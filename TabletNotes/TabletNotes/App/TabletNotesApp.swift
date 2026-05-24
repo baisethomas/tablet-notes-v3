@@ -81,6 +81,7 @@ struct TabletNotesApp: App {
         }
 
         modelContext = ModelContext(container)
+        AppStoreScreenshotSeed.seedIfNeeded(in: modelContext)
     }
 
     var body: some Scene {
