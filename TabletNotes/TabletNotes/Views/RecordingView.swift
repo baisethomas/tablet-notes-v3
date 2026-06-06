@@ -88,7 +88,9 @@ struct RecordingView: View {
                 svAmbientTranscript
             }
         }
-        .ignoresSafeArea(edges: .bottom)
+        // Ignore only the container safe area (home indicator) so the layout still
+        // reacts to the keyboard and keeps the cursor visible while writing notes.
+        .ignoresSafeArea(.container, edges: .bottom)
         .alert("Permission Required", isPresented: $showPermissionAlert) {
             Button("Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {

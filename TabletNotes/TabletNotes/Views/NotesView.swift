@@ -178,7 +178,9 @@ struct NotesView: View {
             .padding(.trailing, 20)
             .padding(.bottom, 120)
         }
-        .ignoresSafeArea(edges: .bottom)
+        // Ignore only the container safe area (home indicator) so the layout still
+        // reacts to the keyboard and keeps the cursor visible while editing notes.
+        .ignoresSafeArea(.container, edges: .bottom)
         .sheet(isPresented: $showingAddNoteSheet) {
             NavigationView {
                 VStack(spacing: 16) {
@@ -196,10 +198,12 @@ struct NotesView: View {
                         .padding()
                         .background(Color(.systemGray6))
                         .cornerRadius(12)
-                        .frame(minHeight: 150)
-                    
-                    Spacer()
-                    
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding()
+                // Pin the action buttons above the keyboard so they (and the editor's
+                // cursor) are never hidden when the keyboard is up.
+                .safeAreaInset(edge: .bottom) {
                     HStack(spacing: 16) {
                         Button("Cancel") {
                             newNoteText = ""
@@ -226,9 +230,10 @@ struct NotesView: View {
                         .cornerRadius(12)
                         .disabled(newNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .padding()
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                    .background(.bar)
                 }
-                .padding()
                 .navigationTitle("")
                 .navigationBarHidden(true)
             }

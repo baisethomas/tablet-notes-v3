@@ -157,6 +157,9 @@ struct MainAppView: View {
                         onAccount: { currentScreen = .account }
                     )
                     }
+                    // Keep the tab bar pinned to the bottom edge behind the keyboard
+                    // (standard tab-bar behavior) instead of floating above it.
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
 
                 // Show mini-player on settings/account screens when recording (no footer)
@@ -212,7 +215,10 @@ struct MainAppView: View {
                     .padding(.bottom, 20) // Bottom padding for no-footer screens
                 }
             }
-            .ignoresSafeArea(edges: .bottom)
+            // Ignore only the container safe area (home indicator) so screens still
+            // extend to the bottom edge, while keeping keyboard avoidance active for
+            // every child screen (e.g. the recording notes editor).
+            .ignoresSafeArea(.container, edges: .bottom)
             .background(Color.adaptiveBackground)
             .customColorScheme(settingsService.appTheme.colorScheme)
             .overlay(alignment: .top) {
