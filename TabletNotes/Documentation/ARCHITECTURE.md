@@ -70,8 +70,6 @@ TabletNotes/
 │   ├── SermonListView.swift           # Sermon list with grouped sections
 │   ├── SermonDetailView.swift         # Sermon detail (transcript, notes, summary, audio)
 │   ├── RecordingView.swift            # Recording screen with live notes
-│   ├── SummaryView.swift              # AI summary display
-│   ├── NotesView.swift                # Notes viewer/editor
 │   ├── SettingsView.swift             # App settings
 │   ├── AccountView.swift              # User account management
 │   ├── OnboardingView.swift           # First-launch onboarding

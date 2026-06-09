@@ -88,7 +88,9 @@ struct RecordingView: View {
                 svAmbientTranscript
             }
         }
-        .ignoresSafeArea(edges: .bottom)
+        // Ignore only the container safe area (home indicator) so the layout still
+        // reacts to the keyboard and keeps the cursor visible while writing notes.
+        .ignoresSafeArea(.container, edges: .bottom)
         .alert("Permission Required", isPresented: $showPermissionAlert) {
             Button("Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -159,6 +161,20 @@ struct RecordingView: View {
         .onDisappear {
             noteSaveTask?.cancel()
             transcriptAnalysisTask?.cancel()
+        }
+        .onChange(of: isNotesFocused) { _, focused in
+            // Give the editor full height while typing: collapse the ambient
+            // transcript when the keyboard comes up in split mode, and restore
+            // the split layout once editing ends.
+            if focused, sectionFocus == .split {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                    sectionFocus = .notes
+                }
+            } else if !focused, sectionFocus == .notes {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                    sectionFocus = .split
+                }
+            }
         }
         .sheet(item: $selectedReference) { ref in
             NavigationStack {

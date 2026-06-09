@@ -13,6 +13,7 @@ struct ChatTabView: View {
     @State private var error: Error?
     @State private var scrollProxy: ScrollViewProxy?
     @State private var cancellables = Set<AnyCancellable>()
+    @State private var isKeyboardVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,7 +39,15 @@ struct ChatTabView: View {
                 .padding(.top, 12)
             }
             .background(Color.SV.surface)
-            .padding(.bottom, 90)
+            // Clear the app footer when the keyboard is hidden. When the keyboard is
+            // up, the footer sits behind it, so the input should hug the keyboard.
+            .padding(.bottom, isKeyboardVisible ? 0 : 90)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.25)) { isKeyboardVisible = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.25)) { isKeyboardVisible = false }
         }
         .onAppear {
             print("[ChatTabView] onAppear — messages: \(messages.count), questions: \(suggestedQuestions.count)")
