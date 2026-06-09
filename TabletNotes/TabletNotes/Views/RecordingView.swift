@@ -162,6 +162,20 @@ struct RecordingView: View {
             noteSaveTask?.cancel()
             transcriptAnalysisTask?.cancel()
         }
+        .onChange(of: isNotesFocused) { _, focused in
+            // Give the editor full height while typing: collapse the ambient
+            // transcript when the keyboard comes up in split mode, and restore
+            // the split layout once editing ends.
+            if focused, sectionFocus == .split {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                    sectionFocus = .notes
+                }
+            } else if !focused, sectionFocus == .notes {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                    sectionFocus = .split
+                }
+            }
+        }
         .sheet(item: $selectedReference) { ref in
             NavigationStack {
                 VStack(spacing: 20) {
