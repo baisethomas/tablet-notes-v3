@@ -783,8 +783,10 @@ struct SyncServiceMergeTests {
 
         #expect(recorder.events == [
             "local.sermonsNeedingSync",
+            "local.refreshSermon",
             "local.syncData",
             "remote.create",
+            "local.refreshSermon",
             "local.markSermonSynced",
             "remote.fetch"
         ])
@@ -822,9 +824,11 @@ struct SyncServiceMergeTests {
         #expect(localRepository.markedRemoteIds == ["remote-existing"])
         #expect(recorder.events == [
             "local.sermonsNeedingSync",
+            "local.refreshSermon",
             "local.syncData",
             "remote.create",
             "remote.fetch",
+            "local.refreshSermon",
             "local.markSermonSynced",
             "remote.fetch"
         ])
@@ -880,10 +884,129 @@ struct SyncServiceMergeTests {
         #expect(remoteGateway.fetchCallCount == 1)
         #expect(recorder.events == [
             "local.sermonsNeedingSync",
+            "local.refreshSermon",
             "local.syncData",
             "remote.create",
+            "local.refreshSermon",
             "local.markSermonSynced",
             "remote.fetch"
         ])
+    }
+
+    // MARK: - TAB-21: deletion during in-flight push must not crash
+
+    /// Remote gateway that runs a caller-supplied action while the push is
+    /// suspended on the network call, simulating user activity mid-sync.
+    final class MutatingRemoteGateway: SermonSyncRemoteGatewayProtocol {
+        var onUpdate: (() -> Void)?
+        var onCreate: (() -> Void)?
+
+        func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
+            []
+        }
+
+        func createRemoteSermon(data: SermonSyncData) async throws -> String {
+            onCreate?()
+            return "remote-created"
+        }
+
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+            onUpdate?()
+        }
+
+        func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
+            url
+        }
+
+        func deleteAllRemoteData(for userId: UUID) async throws {}
+    }
+
+    private func makePendingSermon(modelContext: ModelContext, remoteId: String? = nil) -> Sermon {
+        let sermon = Sermon(
+            title: "In-flight Sermon",
+            audioFileName: "inflight.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: remoteId,
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true,
+            transcriptNeedsSync: true
+        )
+        modelContext.insert(sermon)
+
+        let transcript = Transcript(text: "Dirty transcript", updatedAt: Date(), needsSync: true)
+        modelContext.insert(transcript)
+        sermon.transcript = transcript
+        sermon.refreshPendingSyncState()
+        return sermon
+    }
+
+    @Test func syncEngineSurvivesSermonDeletionDuringPush() async throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = makePendingSermon(modelContext: modelContext, remoteId: "remote-sermon")
+        try modelContext.save()
+
+        let gateway = MutatingRemoteGateway()
+        gateway.onUpdate = {
+            // Simulates the user deleting the sermon while the push is in flight.
+            modelContext.delete(sermon)
+            try? modelContext.save()
+        }
+
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: gateway)
+
+        try await engine.sync(userId: UUID())
+
+        let remaining = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(remaining.isEmpty)
+    }
+
+    @Test func syncEngineSurvivesTranscriptDeletionDuringPush() async throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = makePendingSermon(modelContext: modelContext, remoteId: "remote-sermon")
+        try modelContext.save()
+
+        let gateway = MutatingRemoteGateway()
+        gateway.onUpdate = {
+            // Simulates the transcript being removed/replaced while the push is in flight.
+            if let transcript = sermon.transcript {
+                sermon.transcript = nil
+                modelContext.delete(transcript)
+                try? modelContext.save()
+            }
+        }
+
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: gateway)
+
+        try await engine.sync(userId: UUID())
+
+        // Reaching here without a SwiftData assertion is the regression check.
+        #expect(sermon.syncStatus == "synced")
+        #expect(sermon.transcript == nil)
+    }
+
+    @Test func markSermonSyncedSkipsDeletedSermon() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = makePendingSermon(modelContext: modelContext, remoteId: "remote-sermon")
+        try modelContext.save()
+
+        modelContext.delete(sermon)
+
+        try repository.markSermonSynced(
+            sermon,
+            remoteId: "remote-sermon",
+            syncedAt: Date(),
+            scopes: .all
+        )
+
+        // Reaching here without a SwiftData assertion is the regression check.
+        #expect(sermon.isDeleted)
     }
 }

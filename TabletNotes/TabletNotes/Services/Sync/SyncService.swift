@@ -71,23 +71,31 @@ final class SermonSyncEngine {
     }
 
     private func pushLocalChanges(userId: UUID) async throws {
-        let sermonsToSync = try localRepository.sermonsNeedingSync()
-        print("[SyncService] Found \(sermonsToSync.count) sermons marked for sync")
+        // Capture IDs only — holding live Sermon models across the awaits below
+        // crashes if a sermon is deleted while a push is in flight (TAB-21).
+        let sermonIdsToSync = try localRepository.sermonsNeedingSync().map(\.id)
+        print("[SyncService] Found \(sermonIdsToSync.count) sermons marked for sync")
 
-        for sermon in sermonsToSync {
+        for sermonId in sermonIdsToSync {
+            guard let sermon = try localRepository.refreshSermon(id: sermonId) else {
+                print("[SyncService] ⚠️ Sermon \(sermonId) disappeared before push, skipping")
+                continue
+            }
             print("[SyncService] Syncing sermon: \(sermon.title)")
             try await pushSermonToCloud(sermon, userId: userId)
         }
     }
 
     private func pushSermonToCloud(_ sermon: Sermon, userId: UUID) async throws {
+        let sermonId = sermon.id
         let syncData = localRepository.syncData(for: sermon)
         let syncedAt = Date()
+        let existingRemoteId = sermon.remoteId
 
-        if let remoteId = sermon.remoteId, !remoteId.isEmpty {
+        if let remoteId = existingRemoteId, !remoteId.isEmpty {
             try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
-            try localRepository.markSermonSynced(
-                sermon,
+            try markSermonSyncedIfStillPresent(
+                sermonId: sermonId,
                 remoteId: remoteId,
                 syncedAt: syncedAt,
                 scopes: syncData.scopes
@@ -102,21 +110,42 @@ final class SermonSyncEngine {
                 throw SyncError.conflictResolution
             }
 
-            try localRepository.markSermonSynced(
-                sermon,
+            try markSermonSyncedIfStillPresent(
+                sermonId: sermonId,
                 remoteId: newRemoteId,
                 syncedAt: syncedAt,
                 scopes: .all
             )
         } catch SyncError.remoteAlreadyExists {
-            let resolvedRemoteId = try await resolveExistingRemoteId(for: sermon.id, userId: userId)
-            try localRepository.markSermonSynced(
-                sermon,
+            let resolvedRemoteId = try await resolveExistingRemoteId(for: sermonId, userId: userId)
+            try markSermonSyncedIfStillPresent(
+                sermonId: sermonId,
                 remoteId: resolvedRemoteId,
                 syncedAt: syncedAt,
                 scopes: syncData.scopes
             )
         }
+    }
+
+    /// Re-fetches the sermon after a remote call so we never mutate a model that
+    /// was deleted (or had children invalidated) while the network call was suspended.
+    private func markSermonSyncedIfStillPresent(
+        sermonId: UUID,
+        remoteId: String?,
+        syncedAt: Date,
+        scopes: SermonSyncScopes
+    ) throws {
+        guard let sermon = try localRepository.refreshSermon(id: sermonId) else {
+            print("[SyncService] ⚠️ Sermon \(sermonId) deleted during push, skipping sync bookkeeping")
+            return
+        }
+
+        try localRepository.markSermonSynced(
+            sermon,
+            remoteId: remoteId,
+            syncedAt: syncedAt,
+            scopes: scopes
+        )
     }
 
     private func resolveExistingRemoteId(for localId: UUID, userId: UUID) async throws -> String {
