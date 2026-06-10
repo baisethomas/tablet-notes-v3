@@ -159,8 +159,16 @@ struct RecordingView: View {
             }
         }
         .onDisappear {
-            noteSaveTask?.cancel()
             transcriptAnalysisTask?.cancel()
+            // Flush — don't drop — any pending debounced note save. When the
+            // user navigates Home while recording continues in the mini-player,
+            // this view's @State text is destroyed, so persist it now. Skip the
+            // flush when the recording already stopped: those paths flush via
+            // processTranscription, and the session may have been cleared.
+            noteSaveTask?.cancel()
+            if recordingService.isRecording {
+                saveNoteText(noteText)
+            }
         }
         .onChange(of: isNotesFocused) { _, focused in
             // Give the editor full height while typing: collapse the ambient
@@ -694,6 +702,10 @@ struct RecordingView: View {
             isProcessingTranscript = true
             transcriptProcessingError = nil
         }
+        // Flush any pending debounced note save so text typed in the final
+        // 500ms (e.g. before an auto-stop) is included in the saved sermon.
+        noteSaveTask?.cancel()
+        saveNoteText(noteText)
         let latestNotes = noteService.currentNotes
         processingCoordinator.handleCompletedRecording(
             audioURL: url,
