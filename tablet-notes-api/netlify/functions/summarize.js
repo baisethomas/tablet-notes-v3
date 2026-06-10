@@ -408,12 +408,11 @@ Before finalizing, ensure that everything in your summary can be directly traced
         max_tokens: length === 'short' ? 1000 : length === 'long' ? 3000 : 2000,
         temperature: tone === 'formal' ? 0.3 : tone === 'academic' ? 0.2 : 0.7
       })),
-      // Netlify kills synchronous functions at the platform limit (26s max).
-      // The previous 120s budget could never be honored: the platform
-      // terminated the invocation first and the app saw an opaque 5xx.
-      // Time out just under the ceiling so the client gets a clean,
-      // retryable 408 instead.
-      24000
+      // Netlify's synchronous execution limit is 60s (not configurable).
+      // The previous 120s budget could never be honored. Abort just under
+      // the platform ceiling so the client gets a clean, retryable 408
+      // instead of an opaque 502.
+      55000
     );
     
     const completion = await completionWithTimeout();

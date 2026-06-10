@@ -102,7 +102,7 @@ exports.handler = withLogging('transcribe', async (event, context) => {
         // Hand AssemblyAI a signed URL instead of downloading the audio and
         // re-uploading it through this function. Proxying the bytes of a long
         // sermon (tens of MB) cannot finish inside Netlify's synchronous
-        // function limit (10-26s) and was killing invocations mid-flight.
+        // function limit (60s) and was killing invocations mid-flight.
         logger.info('Creating signed URL for audio file', { bucket: bucketName, filePath });
 
         const signedUrlWithTimeout = withTimeout(
@@ -147,7 +147,7 @@ exports.handler = withLogging('transcribe', async (event, context) => {
 
         // Submit transcription with circuit breaker and timeout. Submission with
         // a URL is a small JSON API call; keep the budget inside the platform's
-        // 26s ceiling so failures surface as clean 408s instead of opaque 502s.
+        // 60s ceiling so failures surface as clean 408s instead of opaque 502s.
         const transcriptWithTimeout = withTimeout(
             () => assemblyAIBreaker.execute(() => assembly.transcripts.submit(transcriptOptions)),
             20000 // 20 second timeout for submission
