@@ -128,6 +128,7 @@ final class SermonProcessingCoordinator {
     }
 
     private func runDefaultBackgroundRefresh() {
+        TranscriptionRetryService.shared.checkForStuckProcessingTranscriptions()
         SummaryRetryService.shared.checkForStuckProcessingSummaries()
         TranscriptionRetryService.shared.processQueue()
         SummaryRetryService.shared.processQueue()

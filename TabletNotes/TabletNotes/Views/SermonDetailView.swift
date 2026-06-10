@@ -406,11 +406,20 @@ struct SermonDetailView: View {
             if let sermon {
                 switch sermon.summaryStatus {
                 case "processing":
-                    ProcessingStateView(
-                        title: "Generating Summary",
-                        subtitle: "AI is analyzing your sermon content to create a comprehensive summary.",
-                        icon: "doc.text"
-                    )
+                    if isProcessingStuck(since: sermon.updatedAt) {
+                        SermonErrorStateView(
+                            title: "Summary Is Taking Too Long",
+                            subtitle: "This is taking longer than expected. You can retry now or check back later.",
+                            actionTitle: "Retry",
+                            action: { generateSummaryForSermon(sermon) }
+                        )
+                    } else {
+                        ProcessingStateView(
+                            title: "Generating Summary",
+                            subtitle: "AI is analyzing your sermon content to create a comprehensive summary.",
+                            icon: "doc.text"
+                        )
+                    }
                 case "failed":
                     SermonErrorStateView(
                         title: "Summary Generation Failed",
@@ -451,11 +460,20 @@ struct SermonDetailView: View {
 
                 switch sermon.transcriptionStatus {
                 case "processing":
-                    ProcessingStateView(
-                        title: "Transcribing Audio",
-                        subtitle: "Converting your sermon audio to text. This may take a few minutes.",
-                        icon: "text.bubble"
-                    )
+                    if isProcessingStuck(since: sermon.updatedAt) {
+                        SermonErrorStateView(
+                            title: "Transcription Is Taking Too Long",
+                            subtitle: "This is taking longer than expected. You can retry now or check back later.",
+                            actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
+                            action: isRetryingTranscription ? nil : { retryTranscription(for: sermon) }
+                        )
+                    } else {
+                        ProcessingStateView(
+                            title: "Transcribing Audio",
+                            subtitle: "Converting your sermon audio to text. This may take a few minutes.",
+                            icon: "text.bubble"
+                        )
+                    }
                 case "failed", "pending":
                     SermonErrorStateView(
                         title: sermon.transcriptionStatus == "pending" ? "Transcription Pending" : "Transcription Failed",
@@ -817,6 +835,13 @@ struct SermonDetailView: View {
         let minutes = Int(interval) / 60
         let seconds = Int(interval) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    /// A "processing" state with no progress for this long is presumed stuck,
+    /// and the UI offers a Retry instead of an indefinite spinner.
+    private func isProcessingStuck(since lastUpdate: Date?) -> Bool {
+        guard let lastUpdate else { return true }
+        return Date().timeIntervalSince(lastUpdate) > TranscriptionRetryService.processingStuckTimeout
     }
 
     private func retryTranscription(for sermon: Sermon) {
