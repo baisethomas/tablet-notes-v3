@@ -712,15 +712,25 @@ struct RecordingView: View {
             date: date,
             serviceType: serviceType,
             notes: latestNotes
-        ) { savedId in
+        ) { result in
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.5)) {
-                    isProcessingTranscript = false
-                    transcriptProcessingError = nil
-                    transcript = ""
-                    detectedReferences = []
+                switch result {
+                case .success(let savedId):
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        isProcessingTranscript = false
+                        transcriptProcessingError = nil
+                        transcript = ""
+                        detectedReferences = []
+                    }
+                    onNext?(savedId)
+                case .failure(let error):
+                    // Keep the user on this screen: the audio file and note
+                    // session are intact, and the error banner offers Retry.
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        isProcessingTranscript = false
+                        transcriptProcessingError = error.localizedDescription
+                    }
                 }
-                onNext?(savedId)
             }
         }
     }

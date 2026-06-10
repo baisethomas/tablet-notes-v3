@@ -13,6 +13,23 @@ enum SortOption: String, CaseIterable {
     case oldest = "Oldest First"
 }
 
+enum SermonSaveError: LocalizedError {
+    case notAuthenticated
+    case recordingLimitReached(String)
+    case persistenceFailed(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .notAuthenticated:
+            return "Please sign in to save sermons."
+        case .recordingLimitReached(let message):
+            return message
+        case .persistenceFailed:
+            return "Couldn't save the sermon to this device. Your recording is safe — please try again."
+        }
+    }
+}
+
 @MainActor
 @Observable
 class SermonService {
@@ -387,7 +404,7 @@ class SermonService {
         return notesChanged
     }
 
-    func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil, completion: ((UUID) -> Void)? = nil) {
+    func saveSermon(title: String, audioFileURL: URL, date: Date, serviceType: String, speaker: String? = nil, transcript: Transcript?, notes: [Note], summary: Summary?, transcriptionStatus: String = "processing", summaryStatus: String = "processing", isArchived: Bool = false, id: UUID? = nil, completion: ((Result<UUID, Error>) -> Void)? = nil) {
         print("[SermonService] saveSermon called with title: \(title), date: \(date), serviceType: \(serviceType)")
         
         Task { @MainActor in
@@ -395,6 +412,7 @@ class SermonService {
             guard let currentUser = authManager.currentUser else {
                 print("[SermonService] ERROR: No authenticated user found. Cannot save sermon.")
                 limitReachedMessage = "Please sign in to save sermons"
+                completion?(.failure(SermonSaveError.notAuthenticated))
                 return
             }
             
@@ -406,11 +424,14 @@ class SermonService {
             
             // Check usage limits for new sermons
             if isNewSermon && !currentUser.canCreateNewRecording() {
+                let message: String
                 if let remaining = currentUser.remainingRecordings() {
-                    limitReachedMessage = "Recording limit reached! You have \(remaining) recordings remaining this month. Upgrade to Pro for unlimited recordings."
+                    message = "Recording limit reached! You have \(remaining) recordings remaining this month. Upgrade to Pro for unlimited recordings."
                 } else {
-                    limitReachedMessage = "Recording limit reached! Upgrade to Pro for unlimited recordings."
+                    message = "Recording limit reached! Upgrade to Pro for unlimited recordings."
                 }
+                limitReachedMessage = message
+                completion?(.failure(SermonSaveError.recordingLimitReached(message)))
                 return
             }
             
@@ -515,6 +536,13 @@ class SermonService {
                 }
             } catch {
                 print("[SermonService] ERROR: Failed to save modelContext: \(error)")
+                // Discard the partially-applied changes so the context stays
+                // consistent, and report the failure honestly. Callers must NOT
+                // clear the note session or navigate as if the save succeeded.
+                modelContext.rollback()
+                fetchSermons()
+                completion?(.failure(SermonSaveError.persistenceFailed(error)))
+                return
             }
 
             // Refresh the sermons array to ensure UI has latest data
@@ -548,7 +576,7 @@ class SermonService {
             fetchSermons()
 
             // Notify caller that save is complete
-            completion?(sermonID)
+            completion?(.success(sermonID))
         }
     }
 

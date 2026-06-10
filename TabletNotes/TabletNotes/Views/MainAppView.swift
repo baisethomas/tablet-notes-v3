@@ -39,7 +39,14 @@ struct MainAppView: View {
     @State private var showTrialPrompt = false
     @State private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
+    @State private var recordingSaveErrorMessage: String? = nil
+    @State private var pendingRecordingSave: PendingRecordingSave? = nil
     private let processingCoordinator = SermonProcessingCoordinator.shared
+
+    private struct PendingRecordingSave {
+        let audioURL: URL
+        let serviceType: String
+    }
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -118,11 +125,8 @@ struct MainAppView: View {
 
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
+                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
                                             }
-
-                                            // Clear recording state
-                                            currentRecordingServiceType = nil
                                         }
                                     }
                                 }
@@ -203,11 +207,8 @@ struct MainAppView: View {
 
                                 await MainActor.run {
                                     if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                        finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
+                                        saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
                                     }
-
-                                    // Clear recording state
-                                    currentRecordingServiceType = nil
                                 }
                             }
                         }
@@ -284,9 +285,29 @@ struct MainAppView: View {
                 guard wasAutoStopped else { return }
                 transcriptionService.stopTranscription()
                 if let audioURL, let serviceType = currentRecordingServiceType {
-                    finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
+                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
                 }
-                currentRecordingServiceType = nil
+            }
+            .alert(
+                "Couldn't Save Recording",
+                isPresented: Binding(
+                    get: { recordingSaveErrorMessage != nil },
+                    set: { if !$0 {
+                        recordingSaveErrorMessage = nil
+                        pendingRecordingSave = nil
+                    } }
+                )
+            ) {
+                Button("Cancel", role: .cancel) {}
+                if pendingRecordingSave != nil {
+                    Button("Retry") {
+                        guard let pending = pendingRecordingSave else { return }
+                        recordingSaveErrorMessage = nil
+                        saveCompletedRecording(audioURL: pending.audioURL, serviceType: pending.serviceType)
+                    }
+                }
+            } message: {
+                Text(recordingSaveErrorMessage ?? "")
             }
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
@@ -523,10 +544,11 @@ struct MainAppView: View {
         }
     }
 
-    private func finishRecordingFromMiniPlayer(audioURL: URL, serviceType: String) {
+    private func saveCompletedRecording(audioURL: URL, serviceType: String) {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
         let noteService = NoteService(sessionId: currentRecordingSessionId)
+        noteService.flushPersistedNotes()
         let notes = noteService.currentNotes
 
         processingCoordinator.handleCompletedRecording(
@@ -535,10 +557,19 @@ struct MainAppView: View {
             date: date,
             serviceType: serviceType,
             notes: notes
-        ) { _ in
-            noteService.clearSession()
-            currentRecordingSessionId = UUID().uuidString
-            sermonService.fetchSermons()
+        ) { result in
+            switch result {
+            case .success:
+                pendingRecordingSave = nil
+                noteService.clearSession()
+                currentRecordingSessionId = UUID().uuidString
+                currentRecordingServiceType = nil
+                sermonService.fetchSermons()
+            case .failure(let error):
+                print("[MainAppView] Failed to save recording from mini player: \(error)")
+                pendingRecordingSave = PendingRecordingSave(audioURL: audioURL, serviceType: serviceType)
+                recordingSaveErrorMessage = error.localizedDescription
+            }
         }
     }
 }

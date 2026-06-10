@@ -210,16 +210,20 @@ struct SermonProcessingCoordinatorTests {
         }
         retryService.summaryEnqueuer = { _, _ in }
 
-        let savedId = await withCheckedContinuation { continuation in
+        let saveResult = await withCheckedContinuation { continuation in
             coordinator.handleCompletedRecording(
                 audioURL: audioURL,
                 title: "Completed Recording",
                 date: Date(),
                 serviceType: "Sermon",
                 notes: []
-            ) { savedId in
-                continuation.resume(returning: savedId)
+            ) { result in
+                continuation.resume(returning: result)
             }
+        }
+        guard case .success(let savedId) = saveResult else {
+            Issue.record("Expected completed recording save to succeed, got \(saveResult)")
+            return
         }
 
         var savedSermon: Sermon?
