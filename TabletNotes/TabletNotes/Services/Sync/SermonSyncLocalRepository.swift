@@ -85,6 +85,11 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         syncedAt: Date = Date(),
         scopes: SermonSyncScopes
     ) throws {
+        guard !sermon.isDeleted else {
+            print("[SyncService] ⚠️ Skipping markSermonSynced for deleted sermon \(sermon.id)")
+            return
+        }
+
         if let remoteId, !remoteId.isEmpty {
             sermon.remoteId = remoteId
         }
@@ -520,19 +525,22 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     private func markChildEntitiesSynced(for sermon: Sermon, syncedAt: Date, scopes: SermonSyncScopes) {
+        // Guard every child with isDeleted: writing to a model whose backing data
+        // was invalidated (e.g. transcript replaced mid-sync) trips a SwiftData
+        // assertion and crashes the app (TAB-21).
         if scopes.notes {
-            for note in sermon.notes {
+            for note in sermon.notes where !note.isDeleted {
                 note.needsSync = false
                 note.updatedAt = syncedAt
             }
         }
 
-        if scopes.transcript, let transcript = sermon.transcript {
+        if scopes.transcript, let transcript = sermon.transcript, !transcript.isDeleted {
             transcript.needsSync = false
             transcript.updatedAt = syncedAt
         }
 
-        if scopes.summary, let summary = sermon.summary {
+        if scopes.summary, let summary = sermon.summary, !summary.isDeleted {
             summary.needsSync = false
             summary.updatedAt = syncedAt
         }
