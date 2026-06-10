@@ -5,6 +5,7 @@ import Supabase
 @MainActor
 class DeepLinkHandler: ObservableObject {
     @Published var shouldShowVerificationSuccess = false
+    @Published var shouldShowPasswordReset = false
     
     func handleURL(_ url: URL) {
         print("[DeepLinkHandler] Received URL: \(url)")
@@ -23,8 +24,43 @@ class DeepLinkHandler: ObservableObject {
         switch url.path {
         case "/callback":
             handleAuthCallback(url)
+        case "/reset-password":
+            handlePasswordResetLink(url)
         default:
             print("[DeepLinkHandler] Unknown path: \(url.path)")
+        }
+    }
+
+    /// Handles the password-recovery link: establishes the recovery session
+    /// from the link's code, then prompts the user for a new password.
+    private func handlePasswordResetLink(_ url: URL) {
+        print("[DeepLinkHandler] Handling password reset link")
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryItems = components?.queryItems ?? []
+
+        if let error = queryItems.first(where: { $0.name == "error" })?.value {
+            print("[DeepLinkHandler] Password reset error: \(error)")
+            return
+        }
+
+        guard let code = queryItems.first(where: { $0.name == "code" })?.value else {
+            print("[DeepLinkHandler] No recovery code found in reset link")
+            return
+        }
+
+        Task {
+            do {
+                // Use the shared client: the PKCE code verifier from
+                // resetPasswordForEmail lives in its session storage.
+                let supabase = SupabaseService.shared.client
+                _ = try await supabase.auth.exchangeCodeForSession(authCode: code)
+                try await AuthenticationManager.shared.refreshSession()
+                print("[DeepLinkHandler] Recovery session established, prompting for new password")
+                shouldShowPasswordReset = true
+            } catch {
+                print("[DeepLinkHandler] Failed to establish recovery session: \(error)")
+            }
         }
     }
     

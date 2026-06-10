@@ -299,12 +299,31 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         }
         
         do {
-            try await supabase.auth.resetPasswordForEmail(email)
+            try await supabase.auth.resetPasswordForEmail(
+                email,
+                redirectTo: URL(string: "tabletnotes://auth/reset-password")
+            )
             print("[SupabaseAuthService] Password reset email sent")
         } catch {
             print("[SupabaseAuthService] Password reset failed: \(error.localizedDescription)")
             let authError = mapSupabaseError(error)
             throw authError
+        }
+    }
+
+    func updatePassword(newPassword: String) async throws {
+        print("[SupabaseAuthService] Updating password")
+
+        guard newPassword.count >= 8 else {
+            throw AuthError.weakPassword
+        }
+
+        do {
+            try await supabase.auth.update(user: UserAttributes(password: newPassword))
+            print("[SupabaseAuthService] Password updated successfully")
+        } catch {
+            print("[SupabaseAuthService] Password update failed: \(error.localizedDescription)")
+            throw mapSupabaseError(error)
         }
     }
     

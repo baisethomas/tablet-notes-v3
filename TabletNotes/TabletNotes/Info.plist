@@ -5,6 +5,14 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tabletnotes.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tabletnotes</string>
+			</array>
+		</dict>
+		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.444277485322-vr2kkj6h7vo7t6es6jo3bsnogjjsfudd</string>
