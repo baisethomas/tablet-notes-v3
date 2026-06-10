@@ -7,8 +7,10 @@ struct SettingsView: View {
     @State private var showingResetAlert = false
     @State private var showingAbout = false
     @State private var showingSubscriptionPrompt = false
-    @State private var showingDeleteAllDataAlert = false
+    @State private var showingDeleteAccountAlert = false
     @State private var showingDataExportSheet = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -228,12 +230,13 @@ struct SettingsView: View {
                             SettingsDivider()
                             
                             SettingsButton(
-                                icon: "trash.circle",
-                                title: "Delete All Data",
-                                subtitle: "Permanently remove all recordings and personal data",
+                                icon: "person.crop.circle.badge.minus",
+                                title: isDeletingAccount ? "Deleting Account..." : "Delete Account",
+                                subtitle: "Permanently delete your account, recordings, and all personal data",
                                 style: .destructive
                             ) {
-                                showingDeleteAllDataAlert = true
+                                guard !isDeletingAccount else { return }
+                                showingDeleteAccountAlert = true
                             }
                         }
                     }
@@ -379,13 +382,21 @@ struct SettingsView: View {
         .sheet(isPresented: $showingDataExportSheet) {
             DataExportView()
         }
-        .alert("Delete All Data", isPresented: $showingDeleteAllDataAlert) {
+        .alert("Delete Account", isPresented: $showingDeleteAccountAlert) {
             Button("Cancel", role: .cancel) { }
-            Button("Delete Everything", role: .destructive) {
-                deleteAllUserData()
+            Button("Delete Account", role: .destructive) {
+                deleteAccount()
             }
         } message: {
-            Text("This will permanently delete all your recordings, notes, transcripts, and personal data. This action cannot be undone.")
+            Text("This will permanently delete your account along with all recordings, notes, transcripts, and personal data on this device and in the cloud. This action cannot be undone.")
+        }
+        .alert("Account Deletion Failed", isPresented: Binding(
+            get: { deleteAccountError != nil },
+            set: { if !$0 { deleteAccountError = nil } }
+        )) {
+            Button("OK", role: .cancel) { deleteAccountError = nil }
+        } message: {
+            Text(deleteAccountError ?? "")
         }
     }
     
@@ -403,24 +414,28 @@ struct SettingsView: View {
         showingDataExportSheet = true
     }
     
-    private func deleteAllUserData() {
+    private func deleteAccount() {
+        isDeletingAccount = true
+        
         Task {
-            // Delete all local data
-            sermonService?.deleteAllSermons()
-            
-            // Clear settings
-            settings.resetToDefaults()
-            
-            // Clear authentication data
             do {
-                try await authManager.signOut()
+                // Server-side wipe first: storage, database rows, then auth user.
+                // Local data is only cleared once the server confirms deletion.
+                try await authManager.deleteAccount()
+                
+                sermonService?.deleteAllSermons()
+                settings.resetToDefaults()
+                
+                let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
+                impactFeedback.impactOccurred()
+                // Navigation back to the auth screen happens automatically
+                // via the auth state change.
             } catch {
-                print("Failed to sign out during data deletion: \(error)")
+                print("Account deletion failed: \(error)")
+                deleteAccountError = error.localizedDescription
             }
             
-            // Provide haptic feedback
-            let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
-            impactFeedback.impactOccurred()
+            isDeletingAccount = false
         }
     }
 }
