@@ -277,6 +277,19 @@ struct MainAppView: View {
                     await processingCoordinator.handleAuthStateChange(userId: newUserId)
                 }
             }
+            .onReceive(recordingService.recordingStoppedPublisher) { audioURL, wasAutoStopped in
+                // RecordingView owns the auto-stop flow while it's on screen.
+                // If the duration limit trips while the user is on another
+                // screen (recording continues via the mini-player), nothing
+                // else subscribes — handle it here so the sermon is still
+                // saved and queued for processing instead of silently lost.
+                guard wasAutoStopped, !isRecordingScreen(currentScreen) else { return }
+                transcriptionService.stopTranscription()
+                if let audioURL, let serviceType = currentRecordingServiceType {
+                    finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
+                }
+                currentRecordingServiceType = nil
+            }
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
                     // Drag indicator

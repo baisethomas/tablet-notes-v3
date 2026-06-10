@@ -1116,49 +1116,64 @@ class SermonService {
         performRecovery(from: recoverableFiles, source: "migration")
     }
     
+    /// Recovery window for orphaned audio files. Old strays (e.g. files left
+    /// behind before sermon deletion started removing audio from disk) should
+    /// not be resurrected as new sermons.
+    private static let orphanedAudioRecoveryWindow: TimeInterval = 7 * 24 * 3600
+
+    /// Minimum age before a file counts as orphaned. A recording that just
+    /// stopped is briefly unmatched while the processing pipeline creates its
+    /// Sermon row; don't race it.
+    private static let orphanedAudioMinimumAge: TimeInterval = 10 * 60
+
     @MainActor
     private func checkForOrphanedAudioFiles() {
-        // Check if we have an empty database but audio files exist by querying database directly
+        // Recover any recent sermon audio file that has no matching Sermon row,
+        // regardless of how many sermons exist. Previously this only ran on an
+        // empty database, so a recording lost while other sermons existed
+        // (e.g. auto-stop with no handler) stayed orphaned on disk forever.
         do {
             let fetchDescriptor = FetchDescriptor<Sermon>()
             let allSermons = try modelContext.fetch(fetchDescriptor)
-            
-            if allSermons.isEmpty {
-                print("[SermonService] Empty database detected (direct query), checking for orphaned audio files...")
-                
-                let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("AudioRecordings")
-                
-                let audioFiles = try FileManager.default.contentsOfDirectory(
-                    at: audioDir,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey]
-                )
-                
-                let sermonFiles = audioFiles.filter { 
-                    $0.lastPathComponent.hasPrefix("sermon_") && $0.lastPathComponent.hasSuffix(".m4a") 
-                }
-                
-                if !sermonFiles.isEmpty {
-                    print("[SermonService] Found \(sermonFiles.count) orphaned audio files")
-                    
-                    // Convert to recovery format
-                    var recoverableFiles: [(filename: String, creationDate: Date, path: String)] = []
-                    
-                    for audioFile in sermonFiles {
-                        let resourceValues = try audioFile.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-                        let creationDate = resourceValues.creationDate ?? resourceValues.contentModificationDate ?? Date()
-                        
-                        recoverableFiles.append((
-                            filename: audioFile.lastPathComponent,
-                            creationDate: creationDate,
-                            path: audioFile.path
-                        ))
-                    }
-                    
-                    performRecovery(from: recoverableFiles, source: "orphaned files")
-                }
-            } else {
-                print("[SermonService] Database has \(allSermons.count) existing sermons, no recovery needed")
+            let knownAudioFileNames = Set(allSermons.map { $0.audioFileName })
+
+            // Never treat the in-flight recording as orphaned.
+            let activeRecordingFileName = InterruptedRecordingRecoveryStore.load()?.audioFileName
+
+            let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("AudioRecordings")
+
+            guard FileManager.default.fileExists(atPath: audioDir.path) else { return }
+
+            let audioFiles = try FileManager.default.contentsOfDirectory(
+                at: audioDir,
+                includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey]
+            )
+
+            var recoverableFiles: [(filename: String, creationDate: Date, path: String)] = []
+            let recoveryCutoff = Date().addingTimeInterval(-Self.orphanedAudioRecoveryWindow)
+            let minimumAgeCutoff = Date().addingTimeInterval(-Self.orphanedAudioMinimumAge)
+
+            for audioFile in audioFiles {
+                let filename = audioFile.lastPathComponent
+                guard filename.hasPrefix("sermon_"), filename.hasSuffix(".m4a"),
+                      !knownAudioFileNames.contains(filename),
+                      filename != activeRecordingFileName else { continue }
+
+                let resourceValues = try audioFile.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+                let creationDate = resourceValues.creationDate ?? resourceValues.contentModificationDate ?? Date()
+                guard creationDate >= recoveryCutoff, creationDate <= minimumAgeCutoff else { continue }
+
+                recoverableFiles.append((
+                    filename: filename,
+                    creationDate: creationDate,
+                    path: audioFile.path
+                ))
+            }
+
+            if !recoverableFiles.isEmpty {
+                print("[SermonService] Found \(recoverableFiles.count) orphaned audio files")
+                performRecovery(from: recoverableFiles, source: "orphaned files")
             }
         } catch {
             print("[SermonService] Error checking database or audio files: \(error)")
