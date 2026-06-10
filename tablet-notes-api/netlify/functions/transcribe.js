@@ -98,46 +98,44 @@ exports.handler = withLogging('transcribe', async (event, context) => {
         logger.info('File ownership verified', { userId: user.id, filePath });
 
         const bucketName = 'sermon-audio';
-        logger.info('Downloading file from storage', { bucket: bucketName, filePath });
-        
-        // Download file with timeout
-        const downloadWithTimeout = withTimeout(
-            () => supabase.storage.from(bucketName).download(filePath),
-            30000 // 30 second timeout
-        );
-        
-        const { data: blobData, error: downloadError } = await downloadWithTimeout();
 
-        if (downloadError) {
-            logger.error('File download failed', { 
+        // Hand AssemblyAI a signed URL instead of downloading the audio and
+        // re-uploading it through this function. Proxying the bytes of a long
+        // sermon (tens of MB) cannot finish inside Netlify's synchronous
+        // function limit (10-26s) and was killing invocations mid-flight.
+        logger.info('Creating signed URL for audio file', { bucket: bucketName, filePath });
+
+        const signedUrlWithTimeout = withTimeout(
+            () => supabase.storage.from(bucketName).createSignedUrl(filePath, 7200), // 2 hours
+            10000 // 10 second timeout
+        );
+
+        const { data: signedUrlData, error: signedUrlError } = await signedUrlWithTimeout();
+
+        if (signedUrlError || !signedUrlData?.signedUrl) {
+            logger.error('Signed URL creation failed', {
                 bucket: bucketName,
                 filePath,
-                userId: user.id 
-            }, downloadError);
+                userId: user.id
+            }, signedUrlError);
             return createErrorResponse(
-                new Error('Failed to download audio file from storage'), 
+                new Error('Failed to access audio file in storage'),
                 500
             );
         }
-
-        logger.info('File downloaded successfully', { 
-            bucket: bucketName,
-            filePath,
-            fileSize: blobData.size 
-        });
 
         const assembly = new AssemblyAI({
             apiKey: process.env.ASSEMBLYAI_API_KEY,
         });
 
         logger.info('Starting transcription with AssemblyAI', { userId: user.id });
-        logger.apiCall('AssemblyAI', 'transcripts.submit', { 
+        logger.apiCall('AssemblyAI', 'transcripts.submit', {
             speaker_labels: true,
-            fileSize: blobData.size 
+            audioSource: 'signed_url'
         });
-        
+
         const transcriptOptions = {
-            audio: blobData,
+            audio: signedUrlData.signedUrl,
             speaker_labels: true,
             auto_chapters: false,
             filter_profanity: false,
@@ -147,10 +145,12 @@ exports.handler = withLogging('transcribe', async (event, context) => {
         // AssemblyAI deprecated `word_boost` and will reject it starting May 11, 2026.
         // Keep the payload explicit so the deprecated parameter is not reintroduced.
 
-        // Submit transcription with circuit breaker and timeout
+        // Submit transcription with circuit breaker and timeout. Submission with
+        // a URL is a small JSON API call; keep the budget inside the platform's
+        // 26s ceiling so failures surface as clean 408s instead of opaque 502s.
         const transcriptWithTimeout = withTimeout(
             () => assemblyAIBreaker.execute(() => assembly.transcripts.submit(transcriptOptions)),
-            120000 // 2 minute timeout for submission
+            20000 // 20 second timeout for submission
         );
         
         const transcript = await transcriptWithTimeout();

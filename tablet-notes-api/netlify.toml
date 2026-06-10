@@ -2,6 +2,14 @@
   base = "tablet-notes-api"
   functions = "netlify/functions"
 
+# Netlify hard-caps synchronous functions at 10s by default; 26s is the
+# platform maximum and requires Netlify support to enable it for this site
+# (Pro plan). Request it referencing this config. Functions must still be
+# designed to finish inside 26s — long work (OpenAI, AssemblyAI) has to be
+# submitted asynchronously, not awaited.
+[functions]
+  timeout = 26
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
