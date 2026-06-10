@@ -423,7 +423,7 @@ struct SettingsView: View {
                 // Local data is only cleared once the server confirms deletion.
                 try await authManager.deleteAccount()
                 
-                sermonService?.deleteAllSermons()
+                sermonService?.deleteAllLocalUserData()
                 settings.resetToDefaults()
                 
                 let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)

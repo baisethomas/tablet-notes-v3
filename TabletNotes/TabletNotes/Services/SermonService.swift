@@ -819,6 +819,7 @@ class SermonService {
     }
 
     func deleteSermon(_ sermon: Sermon) {
+        deleteLocalAudioFile(for: sermon)
         if let index = sermons.firstIndex(where: { $0.id == sermon.id }) {
             let sermonToDelete = sermons[index]
             sermons.remove(at: index)
@@ -831,24 +832,77 @@ class SermonService {
             fetchSermons()
         }
     }
-    
+
+    /// Removes the sermon's local audio file so deleted sermons don't leave
+    /// orphaned recordings on disk (which orphan recovery would resurrect).
+    private func deleteLocalAudioFile(for sermon: Sermon) {
+        let audioURL = sermon.audioFileURL
+        guard FileManager.default.fileExists(atPath: audioURL.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: audioURL)
+            sermon.invalidateFileExistenceCache()
+            print("[SermonService] Deleted local audio file \(sermon.audioFileName)")
+        } catch {
+            print("[SermonService] Failed to delete local audio file \(sermon.audioFileName): \(error)")
+        }
+    }
+
     func deleteAllSermons() {
-        // Delete all sermons from the model context
         for sermon in sermons {
+            deleteLocalAudioFile(for: sermon)
             modelContext.delete(sermon)
         }
-        
-        // Save the context to persist the deletions
+
         do {
             try modelContext.save()
-            
-            // Clear the local arrays
+
             sermons.removeAll()
             filteredSermons.removeAll()
-            
+
             print("[SermonService] Successfully deleted all sermons")
         } catch {
             print("[SermonService] Failed to delete all sermons: \(error)")
+        }
+    }
+
+    /// Wipes all on-device user content after a confirmed server-side account
+    /// deletion: sermon rows, audio files (including orphans), recovery state,
+    /// and in-progress note sessions.
+    func deleteAllLocalUserData() {
+        deleteAllSermons()
+        removeAllRemainingLocalAudioFiles()
+        InterruptedRecordingRecoveryStore.clear()
+        clearRecordingNoteSessions()
+    }
+
+    private static var audioRecordingsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+    }
+
+    private func removeAllRemainingLocalAudioFiles() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: Self.audioRecordingsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for fileURL in files {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+                print("[SermonService] Deleted remaining audio file \(fileURL.lastPathComponent)")
+            } catch {
+                print("[SermonService] Failed to delete remaining audio file \(fileURL.lastPathComponent): \(error)")
+            }
+        }
+    }
+
+    private func clearRecordingNoteSessions() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("recordingSessionNotes") {
+            defaults.removeObject(forKey: key)
         }
     }
     
