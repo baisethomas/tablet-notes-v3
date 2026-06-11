@@ -8,6 +8,7 @@ protocol SyncUserProviding: AnyObject {
 @MainActor
 protocol SyncServiceProtocol: AnyObject {
     func syncAllData() async
+    func deleteRemoteSermon(remoteId: String) async throws
     func deleteAllCloudData() async
 }
 

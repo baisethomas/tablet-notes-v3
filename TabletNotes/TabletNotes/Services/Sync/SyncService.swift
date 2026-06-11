@@ -50,6 +50,10 @@ final class SermonSyncEngine {
         try localRepository.resetCloudSyncState()
     }
 
+    func deleteRemoteSermon(remoteId: String) async throws {
+        try await remoteGateway.deleteRemoteSermon(remoteId: remoteId)
+    }
+
     func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
         localRepository.updateLocalSermon(sermon, with: remoteData)
     }
@@ -255,6 +259,10 @@ final class SyncService: SyncServiceProtocol {
 
     func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
         engine.updateLocalSermon(sermon, with: remoteData)
+    }
+
+    func deleteRemoteSermon(remoteId: String) async throws {
+        try await engine.deleteRemoteSermon(remoteId: remoteId)
     }
 
     func syncAllData() async {

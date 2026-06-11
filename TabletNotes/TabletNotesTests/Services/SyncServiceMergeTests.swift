@@ -162,6 +162,11 @@ struct SyncServiceMergeTests {
             return url
         }
 
+        func deleteRemoteSermon(remoteId: String) async throws {
+            _ = remoteId
+            recorder.record("remote.deleteSermon")
+        }
+
         func deleteAllRemoteData(for userId: UUID) async throws {
             _ = userId
             recorder.record("remote.deleteAllRemoteData")
@@ -917,6 +922,8 @@ struct SyncServiceMergeTests {
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
             url
         }
+
+        func deleteRemoteSermon(remoteId: String) async throws {}
 
         func deleteAllRemoteData(for userId: UUID) async throws {}
     }
