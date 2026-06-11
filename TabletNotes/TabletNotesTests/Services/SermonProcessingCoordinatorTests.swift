@@ -8,6 +8,7 @@ struct SermonProcessingCoordinatorTests {
 
     @MainActor
     private func makeModelContext() throws -> ModelContext {
+        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -106,17 +107,24 @@ struct SermonProcessingCoordinatorTests {
 
         let noteService = NoteService(sessionId: "launch-recovery-session")
         noteService.addNote(text: "Recovered launch note", timestamp: 3)
+
+        let mockAuthService = MockAuthService()
+        let currentUser = MockAuthService.createMockUser()
+        mockAuthService.setAuthState(.authenticated(currentUser))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+
         InterruptedRecordingRecoveryStore.save(
             InterruptedRecordingManifest(
                 sessionId: "launch-recovery-session",
                 serviceType: "Sermon",
                 audioFileName: audioURL.lastPathComponent,
-                startedAt: Date().addingTimeInterval(-90)
+                startedAt: Date().addingTimeInterval(-90),
+                userId: currentUser.id
             )
         )
 
         let context = try makeModelContext()
-        let sermonService = SermonService(modelContext: context)
+        let sermonService = SermonService(modelContext: context, authManager: authManager)
         let coordinator = SermonProcessingCoordinator.shared
         let retryService = TranscriptionRetryService.shared
 

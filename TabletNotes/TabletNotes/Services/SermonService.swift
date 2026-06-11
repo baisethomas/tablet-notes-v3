@@ -63,7 +63,6 @@ class SermonService {
         self.authManager = authManager ?? AuthenticationManager.shared
         self.syncService = syncService
         self.subscriptionService = subscriptionService
-        recoverInterruptedRecordingIfNeeded()
         if case .authenticated = self.authManager.authState {
             wasAuthenticated = true
         }
@@ -88,19 +87,20 @@ class SermonService {
                 Task { @MainActor in
                     guard let self else { return }
 
-                    let isAuthenticated: Bool
-                    if case .authenticated = authState {
-                        isAuthenticated = true
-                    } else {
-                        isAuthenticated = false
+                    switch authState {
+                    case .authenticated:
+                        self.wasAuthenticated = true
+                    case .unauthenticated:
+                        if self.wasAuthenticated {
+                            print("[SermonService] User signed out — clearing local data")
+                            self.deleteAllLocalUserData()
+                        }
+                        self.wasAuthenticated = false
+                    case .loading, .error:
+                        // Preserve local data on transient auth errors (e.g. failed sign-out).
+                        break
                     }
 
-                    if self.wasAuthenticated && !isAuthenticated {
-                        print("[SermonService] User signed out — clearing local data")
-                        self.deleteAllLocalUserData()
-                    }
-
-                    self.wasAuthenticated = isAuthenticated
                     self.fetchSermons()
                 }
             }
@@ -110,6 +110,7 @@ class SermonService {
     private var cancellables = Set<AnyCancellable>()
     /// Tracks authenticated → unauthenticated transitions so sign-out wipes local data once.
     private var wasAuthenticated = false
+    private static let localDataOwnerUserIdKey = "SermonService.localDataOwnerUserId"
     private let interruptedRecordingMinimumSizeBytes: Int64 = 1024
 
     private struct TranscriptSegmentSnapshot {
@@ -627,6 +628,10 @@ class SermonService {
 
         print("[SermonService] Fetching sermons for user: \(currentUser.name) (ID: \(currentUser.id))")
 
+        ensureLocalDataBelongsToCurrentUser()
+
+        recoverInterruptedRecordingIfNeeded()
+
         // Migrate any sermons that still have absolute URLs to relative filenames
         migrateAudioFilePaths()
 
@@ -905,6 +910,46 @@ class SermonService {
         removeAllRemainingLocalAudioFiles()
         InterruptedRecordingRecoveryStore.clear()
         clearRecordingNoteSessions()
+        clearLocalDataOwnershipMarker()
+    }
+
+    /// Ensures leftover on-device content from a prior account cannot attach to
+    /// the newly signed-in user (e.g. after a failed sign-out or partial wipe).
+    private func ensureLocalDataBelongsToCurrentUser() {
+        guard let userId = activeUser?.id else { return }
+
+        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        if storedOwnerId != userId.uuidString {
+            let shouldWipe = storedOwnerId != nil
+                || hasSermonsOwnedByDifferentUser(than: userId)
+                || hasRecoveryManifestOwnedByDifferentUser(than: userId)
+
+            if shouldWipe {
+                print("[SermonService] Local data belongs to another user — wiping before continuing")
+                deleteAllLocalUserData()
+            }
+            UserDefaults.standard.set(userId.uuidString, forKey: Self.localDataOwnerUserIdKey)
+        }
+    }
+
+    private func hasSermonsOwnedByDifferentUser(than userId: UUID) -> Bool {
+        guard let sermons = try? modelContext.fetch(FetchDescriptor<Sermon>()) else { return false }
+        return sermons.contains { sermon in
+            guard let sermonUserId = sermon.userId else { return false }
+            return sermonUserId != userId
+        }
+    }
+
+    private func hasRecoveryManifestOwnedByDifferentUser(than userId: UUID) -> Bool {
+        guard let manifest = InterruptedRecordingRecoveryStore.load(),
+              let manifestUserId = manifest.userId else {
+            return false
+        }
+        return manifestUserId != userId
+    }
+
+    private func clearLocalDataOwnershipMarker() {
+        UserDefaults.standard.removeObject(forKey: Self.localDataOwnerUserIdKey)
     }
 
     private static var audioRecordingsDirectory: URL {
@@ -1072,6 +1117,23 @@ class SermonService {
 
         guard let manifest = InterruptedRecordingRecoveryStore.load() else { return }
 
+        guard let activeUserId = activeUser?.id else {
+            print("[SermonService] Skipping interrupted recording recovery — no signed-in user")
+            return
+        }
+
+        guard let manifestUserId = manifest.userId else {
+            print("[SermonService] Discarding legacy interrupted recording manifest without owner")
+            InterruptedRecordingRecoveryStore.clear()
+            return
+        }
+
+        guard manifestUserId == activeUserId else {
+            print("[SermonService] Skipping interrupted recording recovery — manifest belongs to another user")
+            InterruptedRecordingRecoveryStore.clear()
+            return
+        }
+
         let audioURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AudioRecordings")
             .appendingPathComponent(manifest.audioFileName)
@@ -1106,7 +1168,7 @@ class SermonService {
             transcriptionStatus: "pending",
             summaryStatus: "pending",
             isArchived: false,
-            userId: authManager.currentUser?.id
+            userId: activeUserId
         )
         sermon.markPendingSync(metadata: true, notes: !recoveredNotes.isEmpty)
 
@@ -1160,6 +1222,14 @@ class SermonService {
 
     @MainActor
     private func checkForOrphanedAudioFiles() {
+        guard let activeUserId = activeUser?.id else { return }
+
+        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        guard storedOwnerId == activeUserId.uuidString else {
+            print("[SermonService] Skipping orphan audio recovery — local data owner mismatch")
+            return
+        }
+
         // Recover any recent sermon audio file that has no matching Sermon row,
         // regardless of how many sermons exist. Previously this only ran on an
         // empty database, so a recording lost while other sermons existed
@@ -1214,6 +1284,8 @@ class SermonService {
     
     @MainActor
     private func performRecovery(from recoverableFiles: [(filename: String, creationDate: Date, path: String)], source: String) {
+        guard let activeUserId = activeUser?.id else { return }
+
         var recoveredCount = 0
         
         // Get backed-up notes if available
@@ -1273,7 +1345,7 @@ class SermonService {
                     transcriptionStatus: "pending",
                     summaryStatus: "pending",
                     isArchived: false,
-                    userId: authManager.currentUser?.id
+                    userId: activeUserId
                 )
                 sermon.markPendingSync(metadata: true, notes: !recoveredNotes.isEmpty)
 

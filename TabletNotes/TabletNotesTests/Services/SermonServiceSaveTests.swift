@@ -6,6 +6,7 @@ import Testing
 @MainActor
 struct SermonServiceSaveTests {
     private func makeModelContext() throws -> ModelContext {
+        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -188,7 +189,8 @@ struct SermonServiceSaveTests {
                 sessionId: "interrupted-session",
                 serviceType: "Bible Study",
                 audioFileName: audioURL.lastPathComponent,
-                startedAt: Date().addingTimeInterval(-120)
+                startedAt: Date().addingTimeInterval(-120),
+                userId: currentUser.id
             )
         )
 
@@ -315,7 +317,8 @@ struct SermonServiceSaveTests {
                 sessionId: "delete-account-session",
                 serviceType: "Sunday Service",
                 audioFileName: orphanAudioURL.lastPathComponent,
-                startedAt: Date()
+                startedAt: Date(),
+                userId: currentUser.id
             )
         )
 
@@ -380,5 +383,79 @@ struct SermonServiceSaveTests {
 
         let orphanAfterUserB = try modelContext.fetch(FetchDescriptor<Sermon>())
         #expect(orphanAfterUserB.isEmpty)
+    }
+
+    @Test func failedSignOutDoesNotWipeLocalData() async throws {
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let currentUser = MockAuthService.createMockUser()
+        mockAuthService.setAuthState(.authenticated(currentUser))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+
+        let sermon = Sermon(
+            title: "Keep Me",
+            audioFileName: "keep-me.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            userId: currentUser.id
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        #expect(sermonService.sermons.count == 1)
+
+        mockAuthService.setShouldFailNextCall(true, error: .networkError)
+        do {
+            try await authManager.signOut()
+        } catch {
+            // Expected failed sign-out
+        }
+
+        let preserved = await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            sermonService.sermons.count == 1
+        }
+        #expect(preserved == true)
+
+        let remaining = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.title == "Keep Me")
+    }
+
+    @Test func interruptedRecordingManifestFromAnotherUserIsNotRecovered() async throws {
+        InterruptedRecordingRecoveryStore.clear()
+        defer { InterruptedRecordingRecoveryStore.clear() }
+
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let userA = MockAuthService.createMockUser(email: "user-a@test.com", name: "User A")
+        let userB = MockAuthService.createMockUser(email: "user-b@test.com", name: "User B")
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent("foreign-\(UUID().uuidString).m4a")
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x03, count: 4096))
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        InterruptedRecordingRecoveryStore.save(
+            InterruptedRecordingManifest(
+                sessionId: "foreign-session",
+                serviceType: "Sermon",
+                audioFileName: audioURL.lastPathComponent,
+                startedAt: Date(),
+                userId: userA.id
+            )
+        )
+
+        mockAuthService.setAuthState(.authenticated(userB))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+
+        #expect(sermonService.sermons.isEmpty)
+        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+
+        let sermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(sermons.isEmpty)
     }
 }
