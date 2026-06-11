@@ -277,6 +277,17 @@ struct MainAppView: View {
                     await processingCoordinator.handleAuthStateChange(userId: newUserId)
                 }
             }
+            .onReceive(recordingService.recordingStoppedPublisher) { audioURL, wasAutoStopped in
+                // Auto-stop is handled here exclusively so a duration-limit
+                // stop isn't lost while navigating to/from RecordingView
+                // (PassthroughSubject does not replay to late subscribers).
+                guard wasAutoStopped else { return }
+                transcriptionService.stopTranscription()
+                if let audioURL, let serviceType = currentRecordingServiceType {
+                    finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
+                }
+                currentRecordingServiceType = nil
+            }
             .sheet(isPresented: $showServiceTypeModal) {
                 VStack(spacing: 0) {
                     // Drag indicator
