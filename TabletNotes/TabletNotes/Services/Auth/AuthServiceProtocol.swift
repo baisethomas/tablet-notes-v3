@@ -30,6 +30,8 @@ protocol AuthServiceProtocol: ObservableObject {
     func signInWithApple(idToken: String, nonce: String?, fullName: String?) async throws -> User
     func signOut() async throws
     func resetPassword(email: String) async throws
+    func updatePassword(newPassword: String) async throws
+    func exchangeAuthCode(_ code: String) async throws
     func updateProfile(name: String, email: String?) async throws -> User
     func deleteAccount() async throws
     

@@ -299,13 +299,40 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         }
         
         do {
-            try await supabase.auth.resetPasswordForEmail(email)
+            try await supabase.auth.resetPasswordForEmail(
+                email,
+                redirectTo: URL(string: "tabletnotes://auth/reset-password")
+            )
             print("[SupabaseAuthService] Password reset email sent")
         } catch {
             print("[SupabaseAuthService] Password reset failed: \(error.localizedDescription)")
             let authError = mapSupabaseError(error)
             throw authError
         }
+    }
+
+    func updatePassword(newPassword: String) async throws {
+        print("[SupabaseAuthService] Updating password")
+
+        guard newPassword.count >= 8 else {
+            throw AuthError.weakPassword
+        }
+
+        do {
+            try await supabase.auth.update(user: UserAttributes(password: newPassword))
+            print("[SupabaseAuthService] Password updated successfully")
+        } catch {
+            print("[SupabaseAuthService] Password update failed: \(error.localizedDescription)")
+            throw mapSupabaseError(error)
+        }
+    }
+
+    /// Exchanges a PKCE auth code on the same Supabase client that sent the
+    /// reset/verification email, so the recovery session is visible to
+    /// updatePassword and refreshSession.
+    func exchangeAuthCode(_ code: String) async throws {
+        print("[SupabaseAuthService] Exchanging auth code for session")
+        _ = try await supabase.auth.exchangeCodeForSession(authCode: code)
     }
     
     func updateProfile(name: String, email: String?) async throws -> User {

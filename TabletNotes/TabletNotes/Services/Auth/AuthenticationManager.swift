@@ -89,6 +89,14 @@ final class AuthenticationManager {
     func resetPassword(email: String) async throws {
         try await authService.resetPassword(email: email)
     }
+
+    func updatePassword(newPassword: String) async throws {
+        try await authService.updatePassword(newPassword: newPassword)
+    }
+
+    func exchangeAuthCode(_ code: String) async throws {
+        try await authService.exchangeAuthCode(code)
+    }
     
     func updateProfile(name: String, email: String? = nil) async throws -> User {
         return try await authService.updateProfile(name: name, email: email)

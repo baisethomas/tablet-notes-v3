@@ -98,6 +98,11 @@ struct TabletNotesApp: App {
                     #endif
                     deepLinkHandler.handleURL(url)
                 }
+                .sheet(isPresented: $deepLinkHandler.shouldShowPasswordReset) {
+                    ResetPasswordView {
+                        deepLinkHandler.shouldShowPasswordReset = false
+                    }
+                }
                 .overlay(
                     // Show verification success message
                     Group {

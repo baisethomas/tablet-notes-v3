@@ -5,6 +5,7 @@ import Supabase
 @MainActor
 class DeepLinkHandler: ObservableObject {
     @Published var shouldShowVerificationSuccess = false
+    @Published var shouldShowPasswordReset = false
     
     func handleURL(_ url: URL) {
         print("[DeepLinkHandler] Received URL: \(url)")
@@ -23,8 +24,40 @@ class DeepLinkHandler: ObservableObject {
         switch url.path {
         case "/callback":
             handleAuthCallback(url)
+        case "/reset-password":
+            handlePasswordResetLink(url)
         default:
             print("[DeepLinkHandler] Unknown path: \(url.path)")
+        }
+    }
+
+    /// Handles the password-recovery link: establishes the recovery session
+    /// from the link's code, then prompts the user for a new password.
+    private func handlePasswordResetLink(_ url: URL) {
+        print("[DeepLinkHandler] Handling password reset link")
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryItems = components?.queryItems ?? []
+
+        if let error = queryItems.first(where: { $0.name == "error" })?.value {
+            print("[DeepLinkHandler] Password reset error: \(error)")
+            return
+        }
+
+        guard let code = queryItems.first(where: { $0.name == "code" })?.value else {
+            print("[DeepLinkHandler] No recovery code found in reset link")
+            return
+        }
+
+        Task {
+            do {
+                try await AuthenticationManager.shared.exchangeAuthCode(code)
+                try await AuthenticationManager.shared.refreshSession()
+                print("[DeepLinkHandler] Recovery session established, prompting for new password")
+                shouldShowPasswordReset = true
+            } catch {
+                print("[DeepLinkHandler] Failed to establish recovery session: \(error)")
+            }
         }
     }
     
@@ -82,34 +115,18 @@ class DeepLinkHandler: ObservableObject {
     private func handleAuthCode(_ authCode: String) async {
         do {
             print("[DeepLinkHandler] Exchanging auth code for session")
-            
-            // Get the Supabase client from the auth service
+
             let authManager = AuthenticationManager.shared
-            
-            // Access the private supabase client through the auth service
-            // We need to create a new client instance for this operation
-            let supabase = SupabaseClient(
-                supabaseURL: URL(string: SupabaseConfig.projectURL)!,
-                supabaseKey: SupabaseConfig.anonKey
-            )
-            
-            // Exchange the code for a session
-            let session = try await supabase.auth.exchangeCodeForSession(authCode: authCode)
-            
-            print("[DeepLinkHandler] Successfully exchanged code for session")
-            print("[DeepLinkHandler] User ID: \(session.user.id)")
-            
-            // Now refresh the auth manager session
+            try await authManager.exchangeAuthCode(authCode)
             try await authManager.refreshSession()
-            
+
             print("[DeepLinkHandler] Email verification successful via deep link")
             shouldShowVerificationSuccess = true
-            
-            // Hide success message after 3 seconds
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 self.shouldShowVerificationSuccess = false
             }
-            
+
         } catch {
             print("[DeepLinkHandler] Failed to exchange auth code: \(error)")
         }
