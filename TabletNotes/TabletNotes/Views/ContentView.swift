@@ -16,6 +16,10 @@ func sermonStatusText(transcriptionStatus: String, summaryStatus: String) -> (St
         return ("Failed", .red)
     } else if transcriptionStatus == "processing" || summaryStatus == "processing" {
         return ("Processing...", .orange)
+    } else if transcriptionStatus == "pending" {
+        return ("Transcribing...", .orange)
+    } else if summaryStatus == "pending" {
+        return ("Processing...", .orange)
     } else {
         return ("Ready", .green)
     }

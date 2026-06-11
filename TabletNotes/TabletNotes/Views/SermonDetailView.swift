@@ -431,6 +431,20 @@ struct SermonDetailView: View {
                             generateSummaryForSermon(sermon)
                         }
                     )
+                case "pending":
+                    if sermon.transcriptionStatus != "complete" {
+                        ProcessingStateView(
+                            title: "Waiting for Transcription",
+                            subtitle: "Your summary will be generated once transcription finishes.",
+                            icon: "waveform"
+                        )
+                    } else {
+                        ProcessingStateView(
+                            title: "Preparing Summary",
+                            subtitle: "Transcription is complete. Summary generation will begin shortly.",
+                            icon: "doc.text"
+                        )
+                    }
                 default:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
