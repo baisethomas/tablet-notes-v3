@@ -122,10 +122,8 @@ struct RecordingView: View {
                     isRecordingStarted = false
                 }
                 transcriptionService.stopTranscription()
-                if let url = audioURL {
-                    let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
-                    processTranscription(title: title, date: Date(), url: url)
-                }
+                // MainAppView owns auto-stop save/processing so the sermon
+                // isn't lost during navigation transitions to this screen.
             }
         }
         .onReceive(recordingService.audioFileURLPublisher) { url in

@@ -278,12 +278,10 @@ struct MainAppView: View {
                 }
             }
             .onReceive(recordingService.recordingStoppedPublisher) { audioURL, wasAutoStopped in
-                // RecordingView owns the auto-stop flow while it's on screen.
-                // If the duration limit trips while the user is on another
-                // screen (recording continues via the mini-player), nothing
-                // else subscribes — handle it here so the sermon is still
-                // saved and queued for processing instead of silently lost.
-                guard wasAutoStopped, !isRecordingScreen(currentScreen) else { return }
+                // Auto-stop is handled here exclusively so a duration-limit
+                // stop isn't lost while navigating to/from RecordingView
+                // (PassthroughSubject does not replay to late subscribers).
+                guard wasAutoStopped else { return }
                 transcriptionService.stopTranscription()
                 if let audioURL, let serviceType = currentRecordingServiceType {
                     finishRecordingFromMiniPlayer(audioURL: audioURL, serviceType: serviceType)
