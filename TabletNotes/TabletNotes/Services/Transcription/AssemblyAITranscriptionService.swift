@@ -302,6 +302,28 @@ class AssemblyAITranscriptionService: ObservableObject {
         }
     }
 
+    /// Resume polling an in-flight AssemblyAI job instead of re-submitting audio.
+    func resumePollingTranscription(
+        jobId: String,
+        audioURL: URL,
+        completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void
+    ) {
+        do {
+            let fileSize = (try FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            let audioDurationSeconds = try validateAudioFileForTranscription(url: audioURL, fileSize: fileSize)
+            let budget = Self.pollingBudget(forAudioDuration: audioDurationSeconds)
+            print("[API] Resuming polling for job \(jobId) with budget \(Int(budget))s")
+            pollTranscriptionStatus(
+                jobId: jobId,
+                startedAt: Date(),
+                deadline: Date().addingTimeInterval(budget),
+                completion: completion
+            )
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
     // Polling logic for transcription status
     private func pollTranscriptionStatus(jobId: String, startedAt: Date, deadline: Date, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
 

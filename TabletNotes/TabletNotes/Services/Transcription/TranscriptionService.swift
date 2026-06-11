@@ -269,4 +269,12 @@ class TranscriptionService: NSObject, ObservableObject {
     func transcribeAudioFileWithResult(url: URL, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         assemblyAITranscriptionService.transcribeAudioFile(url: url, completion: completion)
     }
+
+    func resumeAssemblyAITranscription(
+        jobId: String,
+        audioURL: URL,
+        completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void
+    ) {
+        assemblyAITranscriptionService.resumePollingTranscription(jobId: jobId, audioURL: audioURL, completion: completion)
+    }
 }
