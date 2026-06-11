@@ -25,6 +25,7 @@ class TranscriptionRetryService: ObservableObject {
     private let pendingTranscriptionsKey = "PendingTranscriptions"
     private var modelContext: ModelContext?
     private let maxRetries = 3
+    private static let assemblyJobIdPrefix = "assemblyJobId:"
     private let automaticRecoveryWindow: TimeInterval = 7 * 24 * 60 * 60
     var transcriptionRunner: ((URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void)?
     var summaryEnqueuer: (@MainActor (UUID, String) -> Void)?
@@ -232,14 +233,29 @@ class TranscriptionRetryService: ObservableObject {
 
     private func startProcessing(job nextJob: ProcessingJob, sermon: Sermon, in context: ModelContext) {
         isProcessingQueue = true
+        let assemblyJobId = Self.storedAssemblyJobId(from: nextJob)
         nextJob.markRunning()
         sermon.transcriptionStatus = "processing"
         sermon.markPendingSync(metadata: true)
         try? context.save()
 
-        let runner = transcriptionRunner ?? { url, completion in
+        let defaultRunner = transcriptionRunner ?? { url, completion in
             let transcriptionService = TranscriptionService()
             transcriptionService.transcribeAudioFileWithResult(url: url, completion: completion)
+        }
+
+        let runner: (URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void
+        if let assemblyJobId {
+            runner = { url, completion in
+                let transcriptionService = TranscriptionService()
+                transcriptionService.resumeAssemblyAITranscription(
+                    jobId: assemblyJobId,
+                    audioURL: url,
+                    completion: completion
+                )
+            }
+        } else {
+            runner = defaultRunner
         }
 
         runner(sermon.audioFileURL) { [weak self] result in
@@ -284,23 +300,36 @@ class TranscriptionRetryService: ObservableObject {
                     }
 
                 case .failure(let error):
-                    let nextAttemptAt: Date?
-                    if refreshedJob.attemptCount + 1 >= self.maxRetries {
-                        nextAttemptAt = nil
-                        refreshedSermon.transcriptionStatus = "failed"
+                    if Self.isPollingTimeout(error), let jobId = Self.assemblyJobId(from: error) {
+                        // AssemblyAI may still be processing — keep polling later
+                        // without re-uploading or counting this as a failed attempt.
+                        refreshedSermon.transcriptionStatus = "processing"
+                        refreshedJob.status = .queued
+                        refreshedJob.lastError = "\(Self.assemblyJobIdPrefix)\(jobId)"
+                        refreshedJob.nextAttemptAt = Date().addingTimeInterval(60)
+                        refreshedJob.updatedAt = Date()
+                        refreshedSermon.markPendingSync(metadata: true)
+                        try? context.save()
+                        self.scheduleQueueProcessing(after: 60)
                     } else {
-                        let retryDelayMinutes = pow(2.0, Double(refreshedJob.attemptCount + 1))
-                        nextAttemptAt = Date().addingTimeInterval(retryDelayMinutes * 60)
-                        refreshedSermon.transcriptionStatus = "pending"
-                        self.scheduleQueueProcessing(after: retryDelayMinutes * 60)
-                    }
+                        let nextAttemptAt: Date?
+                        if refreshedJob.attemptCount + 1 >= self.maxRetries {
+                            nextAttemptAt = nil
+                            refreshedSermon.transcriptionStatus = "failed"
+                        } else {
+                            let retryDelayMinutes = pow(2.0, Double(refreshedJob.attemptCount + 1))
+                            nextAttemptAt = Date().addingTimeInterval(retryDelayMinutes * 60)
+                            refreshedSermon.transcriptionStatus = "pending"
+                            self.scheduleQueueProcessing(after: retryDelayMinutes * 60)
+                        }
 
-                    refreshedSermon.markPendingSync(metadata: true)
-                    refreshedJob.markFailed(
-                        error: error.localizedDescription,
-                        nextAttemptAt: nextAttemptAt
-                    )
-                    try? context.save()
+                        refreshedSermon.markPendingSync(metadata: true)
+                        refreshedJob.markFailed(
+                            error: error.localizedDescription,
+                            nextAttemptAt: nextAttemptAt
+                        )
+                        try? context.save()
+                    }
                 }
 
                 self.isProcessingQueue = false
@@ -359,6 +388,19 @@ class TranscriptionRetryService: ObservableObject {
         ]
         .compactMap { $0 }
         .max() ?? sermon.date
+    }
+
+    private static func isPollingTimeout(_ error: Error) -> Bool {
+        (error as NSError).domain == "TranscriptionPollingTimeout"
+    }
+
+    private static func assemblyJobId(from error: Error) -> String? {
+        (error as NSError).userInfo["jobId"] as? String
+    }
+
+    private static func storedAssemblyJobId(from job: ProcessingJob) -> String? {
+        guard let lastError = job.lastError, lastError.hasPrefix(assemblyJobIdPrefix) else { return nil }
+        return String(lastError.dropFirst(assemblyJobIdPrefix.count))
     }
 
     private func job(for sermonId: UUID) -> ProcessingJob? {

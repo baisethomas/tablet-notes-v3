@@ -209,7 +209,7 @@ class AssemblyAITranscriptionService: ObservableObject {
     }
 
     // 3. Start Transcription via backend
-    private func startTranscription(filePath: String, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+    private func startTranscription(filePath: String, audioDurationSeconds: TimeInterval, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
         print("[API] Starting transcription for path: \(filePath)")
 
         Task {
@@ -259,8 +259,10 @@ class AssemblyAITranscriptionService: ObservableObject {
                             let segments = self.convertAssemblyAIWordsToTranscriptSegments(decodedResponse.data.segments)
                             completion(.success((text, segments)))
                         } else if decodedResponse.data.status == "queued" || decodedResponse.data.status == "processing" {
-                            // Start polling
-                            self.pollTranscriptionStatus(jobId: decodedResponse.data.id, attempt: 0, completion: completion)
+                            // Start polling with a budget that scales with the recording length
+                            let budget = Self.pollingBudget(forAudioDuration: audioDurationSeconds)
+                            print("[API] Transcription queued (job \(decodedResponse.data.id)). Polling for up to \(Int(budget))s")
+                            self.pollTranscriptionStatus(jobId: decodedResponse.data.id, startedAt: Date(), deadline: Date().addingTimeInterval(budget), completion: completion)
                         } else {
                             completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription did not complete. Status: \(decodedResponse.data.status)"])))
                         }
@@ -276,8 +278,54 @@ class AssemblyAITranscriptionService: ObservableObject {
         }
     }
 
+    // MARK: - Polling budget
+
+    /// Minimum time we keep polling before declaring a timeout (10 minutes).
+    static let minimumPollingBudget: TimeInterval = 600
+
+    /// AssemblyAI typically transcribes faster than realtime, so one full audio
+    /// duration of polling is a generous upper bound. A 90-minute sermon gets a
+    /// 90-minute budget instead of the old fixed ~5 minutes that systematically
+    /// failed long recordings.
+    static func pollingBudget(forAudioDuration duration: TimeInterval) -> TimeInterval {
+        guard duration.isFinite, duration > 0 else { return minimumPollingBudget }
+        return max(minimumPollingBudget, duration)
+    }
+
+    /// Back off the polling interval as the job runs: 3s for the first minute,
+    /// 10s until five minutes, then 30s.
+    static func pollInterval(elapsed: TimeInterval) -> TimeInterval {
+        switch elapsed {
+        case ..<60: return 3
+        case ..<300: return 10
+        default: return 30
+        }
+    }
+
+    /// Resume polling an in-flight AssemblyAI job instead of re-submitting audio.
+    func resumePollingTranscription(
+        jobId: String,
+        audioURL: URL,
+        completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void
+    ) {
+        do {
+            let fileSize = (try FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            let audioDurationSeconds = try validateAudioFileForTranscription(url: audioURL, fileSize: fileSize)
+            let budget = Self.pollingBudget(forAudioDuration: audioDurationSeconds)
+            print("[API] Resuming polling for job \(jobId) with budget \(Int(budget))s")
+            pollTranscriptionStatus(
+                jobId: jobId,
+                startedAt: Date(),
+                deadline: Date().addingTimeInterval(budget),
+                completion: completion
+            )
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
     // Polling logic for transcription status
-    private func pollTranscriptionStatus(jobId: String, attempt: Int = 0, maxAttempts: Int = 100, pollInterval: TimeInterval = 3.0, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
+    private func pollTranscriptionStatus(jobId: String, startedAt: Date, deadline: Date, completion: @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) {
 
         Task {
             do {
@@ -317,12 +365,19 @@ class AssemblyAITranscriptionService: ObservableObject {
                             completion(.success((text, segments)))
                         } else if decodedResponse.data.status == "failed" {
                             completion(.failure(NSError(domain: "TranscriptionFailed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Transcription failed."])))
-                        } else if attempt < maxAttempts {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
-                                self.pollTranscriptionStatus(jobId: jobId, attempt: attempt + 1, maxAttempts: maxAttempts, pollInterval: pollInterval, completion: completion)
+                        } else if Date() < deadline {
+                            let interval = Self.pollInterval(elapsed: Date().timeIntervalSince(startedAt))
+                            DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
+                                self.pollTranscriptionStatus(jobId: jobId, startedAt: startedAt, deadline: deadline, completion: completion)
                             }
                         } else {
-                            completion(.failure(NSError(domain: "Timeout", code: 0, userInfo: [NSLocalizedDescriptionKey: "Polling timed out."])))
+                            // The AssemblyAI job may well still be running server-side;
+                            // surface that instead of a generic failure, and don't
+                            // restart from upload (see isRetryableError).
+                            completion(.failure(NSError(domain: "TranscriptionPollingTimeout", code: 0, userInfo: [
+                                NSLocalizedDescriptionKey: "Transcription is taking longer than expected. It may still be processing — please try again in a few minutes.",
+                                "jobId": jobId
+                            ])))
                         }
                     } catch {
                         completion(.failure(error))
@@ -370,7 +425,10 @@ class AssemblyAITranscriptionService: ObservableObject {
         transcribeAudioFileWithRetry(url: url, maxRetries: 3, currentAttempt: 1, completion: completion)
     }
 
-    private func validateAudioFileForTranscription(url: URL, fileSize: Int) throws {
+    /// Validates the local audio file and returns its duration in seconds
+    /// (0 when the duration can't be determined).
+    @discardableResult
+    private func validateAudioFileForTranscription(url: URL, fileSize: Int) throws -> TimeInterval {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw NSError(domain: "AudioFileValidation", code: 1000, userInfo: [
                 NSLocalizedDescriptionKey: "Audio file not found at \(url.lastPathComponent)"
@@ -407,8 +465,10 @@ class AssemblyAITranscriptionService: ObservableObject {
         }
 
         print("[API] Local audio preflight passed: \(url.lastPathComponent), size=\(fileSize) bytes, duration=\(String(format: "%.2f", durationSeconds))s, tracks=\(audioTracks.count)")
+        return durationSeconds
 #else
         print("[API] Local audio preflight passed: \(url.lastPathComponent), size=\(fileSize) bytes")
+        return 0
 #endif
     }
     
@@ -421,7 +481,7 @@ class AssemblyAITranscriptionService: ObservableObject {
         do {
             let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
             let fileSize = resourceValues.fileSize ?? 0
-            try validateAudioFileForTranscription(url: url, fileSize: fileSize)
+            let audioDurationSeconds = try validateAudioFileForTranscription(url: url, fileSize: fileSize)
             
             // Determine content type from file extension
             let pathExtension = url.pathExtension.lowercased()
@@ -445,7 +505,7 @@ class AssemblyAITranscriptionService: ObservableObject {
                     self.uploadFile(to: uploadInfo.data.uploadUrl, fileURL: url) { uploadResult in
                         switch uploadResult {
                         case .success:
-                            self.startTranscription(filePath: uploadInfo.data.path) { transcriptionResult in
+                            self.startTranscription(filePath: uploadInfo.data.path, audioDurationSeconds: audioDurationSeconds) { transcriptionResult in
                                 switch transcriptionResult {
                                 case .success:
                                     completion(transcriptionResult)
@@ -488,6 +548,12 @@ class AssemblyAITranscriptionService: ObservableObject {
     private func isRetryableError(_ error: Error) -> Bool {
         // Network errors, timeouts, auth errors, and server errors are retryable
         let nsError = error as NSError
+
+        // A polling timeout means the AssemblyAI job is likely still running.
+        // Retrying would re-upload the file and start a duplicate job, so don't.
+        if nsError.domain == "TranscriptionPollingTimeout" {
+            return false
+        }
 
         // Auth errors are now retryable since we have auto-refresh
         if nsError.domain == "AuthError" && nsError.code == 401 {
@@ -556,6 +622,8 @@ class AssemblyAITranscriptionService: ObservableObject {
             userMessage = "This recording file looks invalid or empty. Please try recording again."
         } else if nsError.domain == "TranscriptionError" {
             userMessage = "Transcription service is temporarily unavailable. Please try again later."
+        } else if nsError.domain == "TranscriptionPollingTimeout" {
+            userMessage = "Transcription is taking longer than expected. It may still be processing — please try again in a few minutes."
         } else {
             userMessage = "Processing failed after \(maxRetries) attempts. Please try again later."
         }
