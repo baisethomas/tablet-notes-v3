@@ -30,6 +30,20 @@ enum SermonSaveError: LocalizedError {
     }
 }
 
+enum SermonDeleteError: LocalizedError {
+    case cloudDeleteFailed
+    case syncUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .cloudDeleteFailed:
+            return "Couldn't remove this sermon from the cloud, so it wasn't deleted. Check your connection and try again."
+        case .syncUnavailable:
+            return "Couldn't remove this sermon from the cloud, so it wasn't deleted. Please try again later."
+        }
+    }
+}
+
 @MainActor
 @Observable
 class SermonService {
@@ -843,16 +857,40 @@ class SermonService {
         applyFilters()
     }
 
-    func deleteSermon(_ sermon: Sermon) {
-        deleteLocalAudioFile(for: sermon)
-        if let index = sermons.firstIndex(where: { $0.id == sermon.id }) {
-            let sermonToDelete = sermons[index]
+    func deleteSermon(_ sermon: Sermon) async throws {
+        let sermonId = sermon.id
+
+        // Delete the cloud copy first: removing the local row alone leaves a
+        // remote row that the next pull resurrects on every device (TAB-32).
+        if let remoteId = sermon.remoteId, !remoteId.isEmpty {
+            guard let syncService else {
+                print("[SermonService] ❌ Sync service unavailable; refusing local-only delete of synced sermon \(sermonId)")
+                throw SermonDeleteError.syncUnavailable
+            }
+            do {
+                try await syncService.deleteRemoteSermon(remoteId: remoteId)
+            } catch {
+                print("[SermonService] ❌ Cloud delete failed for sermon \(sermonId): \(error.localizedDescription)")
+                throw SermonDeleteError.cloudDeleteFailed
+            }
+        }
+
+        // Re-resolve after the await — the model may have been deleted or
+        // invalidated while the network call was suspended (TAB-21).
+        guard let sermonToDelete = findSermon(by: sermonId) else {
+            sermons.removeAll { $0.id == sermonId }
+            applyFilters()
+            return
+        }
+
+        deleteLocalAudioFile(for: sermonToDelete)
+        if let index = sermons.firstIndex(where: { $0.id == sermonId }) {
             sermons.remove(at: index)
             modelContext.delete(sermonToDelete)
             try? modelContext.save()
             applyFilters()
         } else {
-            modelContext.delete(sermon)
+            modelContext.delete(sermonToDelete)
             try? modelContext.save()
             fetchSermons()
         }

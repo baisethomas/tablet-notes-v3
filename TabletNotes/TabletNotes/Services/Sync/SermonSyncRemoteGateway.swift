@@ -5,6 +5,7 @@ protocol SermonSyncRemoteGatewayProtocol {
     func createRemoteSermon(data: SermonSyncData) async throws -> String
     func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws
     func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL
+    func deleteRemoteSermon(remoteId: String) async throws
     func deleteAllRemoteData(for userId: UUID) async throws
 }
 
@@ -203,6 +204,44 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             localURL: localURL,
             remotePath: remotePath
         )
+    }
+
+    func deleteRemoteSermon(remoteId: String) async throws {
+        print("[SyncService] Deleting remote sermon: \(remoteId)")
+
+        let token = try await getAuthToken()
+
+        var components = URLComponents(string: "\(apiBaseURL)/.netlify/functions/delete-sermon")!
+        components.queryItems = [URLQueryItem(name: "sermonId", value: remoteId)]
+
+        guard let url = components.url else {
+            throw SyncError.networkError
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SyncError.networkError
+        }
+
+        // Already gone remotely — safe to proceed with the local delete.
+        if httpResponse.statusCode == 404 {
+            print("[SyncService] ⚠️ Remote sermon \(remoteId) not found, treating as deleted")
+            return
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let responseString = String(data: responseData, encoding: .utf8) {
+                print("[SyncService] ❌ Delete error response: \(responseString)")
+            }
+            throw SyncError.networkError
+        }
+
+        print("[SyncService] ✅ Remote sermon deleted: \(remoteId)")
     }
 
     func deleteAllRemoteData(for userId: UUID) async throws {

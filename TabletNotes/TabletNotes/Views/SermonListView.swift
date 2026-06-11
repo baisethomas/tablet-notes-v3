@@ -102,6 +102,7 @@ struct SermonListView: View {
     @State private var isLoading = true
     @State private var showingDeleteAlert = false
     @State private var sermonToDelete: Sermon?
+    @State private var deleteErrorMessage: String?
     @State private var sortOrder: SortOrder = .newestFirst
     @State private var showingSortOptions = false
     @State private var showingSearch = false
@@ -178,12 +179,16 @@ struct SermonListView: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 if let sermon = sermonToDelete {
-                    withAnimation { sermonService.deleteSermon(sermon) }
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    deleteSermon(sermon)
                 }
             }
         } message: {
             Text("This action cannot be undone.")
+        }
+        .alert("Couldn't Delete Sermon", isPresented: showingDeleteError) {
+            Button("OK", role: .cancel) { deleteErrorMessage = nil }
+        } message: {
+            Text(deleteErrorMessage ?? "")
         }
         .confirmationDialog("Sort by", isPresented: $showingSortOptions, titleVisibility: .visible) {
             ForEach(SortOrder.allCases, id: \.self) { order in
@@ -193,6 +198,27 @@ struct SermonListView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    // MARK: - Delete
+
+    private var showingDeleteError: Binding<Bool> {
+        Binding(
+            get: { deleteErrorMessage != nil },
+            set: { if !$0 { deleteErrorMessage = nil } }
+        )
+    }
+
+    private func deleteSermon(_ sermon: Sermon) {
+        Task {
+            do {
+                try await sermonService.deleteSermon(sermon)
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            } catch {
+                deleteErrorMessage = error.localizedDescription
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
         }
     }
 
