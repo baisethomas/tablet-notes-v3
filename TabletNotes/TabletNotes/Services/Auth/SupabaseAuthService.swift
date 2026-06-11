@@ -352,32 +352,53 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
     }
     
     func deleteAccount() async throws {
-        guard let currentUser = currentUser else {
+        guard currentUser != nil else {
             throw AuthError.userNotFound
         }
         
-        print("[SupabaseAuthService] Deleting account")
+        print("[SupabaseAuthService] Deleting account via server endpoint")
         
+        let session: Session
         do {
-            // Delete user data from database
-            try await deleteUserData(currentUser.id.uuidString)
-            
-            // Delete auth user
-            // Note: Supabase doesn't have a direct delete user method
-            // This typically requires admin API or server-side function
-            
-            // Update local state
-            self.currentUser = nil
-            self.authState = .unauthenticated
-            
-            print("[SupabaseAuthService] Account deletion successful")
-            
+            session = try await supabase.auth.session
         } catch {
-            print("[SupabaseAuthService] Account deletion failed: \(error.localizedDescription)")
-            let authError = mapSupabaseError(error)
-            throw authError
+            throw AuthError.sessionExpired
         }
+        
+        guard let endpointURL = URL(string: Self.deleteAccountEndpoint) else {
+            throw AuthError.unknownError("Invalid delete account endpoint")
+        }
+        
+        var request = URLRequest(url: endpointURL)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+        
+        let response: URLResponse
+        do {
+            (_, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            print("[SupabaseAuthService] Account deletion request failed: \(error.localizedDescription)")
+            throw AuthError.networkError
+        }
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            print("[SupabaseAuthService] Account deletion failed with status: \(statusCode)")
+            throw AuthError.unknownError("Account deletion failed. Please try again or contact support.")
+        }
+        
+        // The auth user no longer exists server-side; clear the local session.
+        // signOut may fail since the user is already deleted — that's fine.
+        try? await supabase.auth.signOut()
+        
+        self.currentUser = nil
+        self.authState = .unauthenticated
+        
+        print("[SupabaseAuthService] Account deletion successful")
     }
+    
+    private static let deleteAccountEndpoint = "https://comfy-daffodil-7ecc55.netlify.app/api/delete-account"
     
     func refreshSession() async throws {
         print("[SupabaseAuthService] Refreshing session")
@@ -696,25 +717,6 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             
         } catch {
             print("[SupabaseAuthService] Failed to save user profile: \(error.localizedDescription)")
-            throw mapSupabaseError(error)
-        }
-    }
-    
-    private func deleteUserData(_ userId: String) async throws {
-        print("[SupabaseAuthService] Deleting user data for: \(userId)")
-        
-        do {
-            // Delete user profile (notification settings will be deleted via cascade)
-            try await supabase
-                .from("profiles")
-                .delete()
-                .eq("id", value: userId)
-                .execute()
-            
-            print("[SupabaseAuthService] Successfully deleted user data for: \(userId)")
-            
-        } catch {
-            print("[SupabaseAuthService] Failed to delete user data: \(error.localizedDescription)")
             throw mapSupabaseError(error)
         }
     }

@@ -275,4 +275,57 @@ struct SermonServiceSaveTests {
 
         try? FileManager.default.removeItem(at: audioURL)
     }
+
+    @Test func deleteAllLocalUserDataRemovesSermonRowsAudioOrphansAndNoteSessions() async throws {
+        InterruptedRecordingRecoveryStore.clear()
+
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let currentUser = MockAuthService.createMockUser()
+        mockAuthService.setAuthState(.authenticated(currentUser))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+
+        let sermonAudioURL = audioDirectory.appendingPathComponent("sermon-\(UUID().uuidString).m4a")
+        let orphanAudioURL = audioDirectory.appendingPathComponent("orphan-\(UUID().uuidString).m4a")
+        #expect(FileManager.default.createFile(atPath: sermonAudioURL.path, contents: Data(repeating: 0x01, count: 1024)))
+        #expect(FileManager.default.createFile(atPath: orphanAudioURL.path, contents: Data(repeating: 0x02, count: 1024)))
+
+        let sermon = Sermon(
+            title: "Delete Me",
+            audioFileName: sermonAudioURL.lastPathComponent,
+            date: Date(),
+            serviceType: "Sunday Service",
+            userId: currentUser.id
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        let noteService = NoteService(sessionId: "delete-account-session")
+        noteService.addNote(text: "Pending note", timestamp: 1)
+        InterruptedRecordingRecoveryStore.save(
+            InterruptedRecordingManifest(
+                sessionId: "delete-account-session",
+                serviceType: "Sunday Service",
+                audioFileName: orphanAudioURL.lastPathComponent,
+                startedAt: Date()
+            )
+        )
+
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        #expect(sermonService.sermons.count == 1)
+
+        sermonService.deleteAllLocalUserData()
+
+        let remainingSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(remainingSermons.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: sermonAudioURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: orphanAudioURL.path) == false)
+        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(NoteService(sessionId: "delete-account-session").currentNotes.isEmpty)
+        #expect(sermonService.sermons.isEmpty)
+    }
 }
