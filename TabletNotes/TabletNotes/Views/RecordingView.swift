@@ -574,6 +574,7 @@ struct RecordingView: View {
         } else if !trimmed.isEmpty {
             noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
         }
+        noteService.flushPersistedNotes()
     }
 
     private func insertScriptureIntoNotes(reference: ScriptureReference, content: String) {
