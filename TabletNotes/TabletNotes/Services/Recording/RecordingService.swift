@@ -10,6 +10,8 @@ struct InterruptedRecordingManifest: Codable, Equatable {
     let serviceType: String
     let audioFileName: String
     let startedAt: Date
+    /// Owner at recording time; recovery is only allowed for the same signed-in user.
+    let userId: UUID?
 }
 
 enum InterruptedRecordingRecoveryStore {
@@ -370,12 +372,17 @@ class RecordingService: NSObject {
             return
         }
 
+        let recordingUserId: UUID? = MainActor.assumeIsolated {
+            AuthenticationManager.shared.currentUser?.id
+        }
+
         InterruptedRecordingRecoveryStore.save(
             InterruptedRecordingManifest(
                 sessionId: activeRecoverySessionId,
                 serviceType: serviceType,
                 audioFileName: audioFileName,
-                startedAt: recordingStartTime ?? Date()
+                startedAt: recordingStartTime ?? Date(),
+                userId: recordingUserId
             )
         )
     }

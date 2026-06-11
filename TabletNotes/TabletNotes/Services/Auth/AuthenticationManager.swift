@@ -117,6 +117,13 @@ final class AuthenticationManager {
     // MARK: - Private Methods
     
     private func setupBindings() {
+        authState = authService.authState
+        authStatePublished = authService.authState
+        if let user = authService.currentUser {
+            user.fixSubscriptionDataInconsistency()
+            currentUser = user
+        }
+
         // Bind auth service state to manager state
         authService.authStatePublisher
             .receive(on: DispatchQueue.main)
