@@ -202,38 +202,24 @@ final class SermonSyncEngine {
 
         if let initialSermon = try localRepository.findSermon(remoteId: remoteSermon.id) {
             print("[SyncService] Found existing local sermon with remoteId: \(remoteSermon.id)")
-            let localSermonId = initialSermon.id
+            try await mergeRemoteSermon(remoteSermon, into: initialSermon)
+            return
+        }
 
-            if !initialSermon.audioFileExists {
-                print("[SyncService] Audio file missing locally, attempting download...")
-                do {
-                    let localAudioURL = try await remoteGateway.downloadAudioFile(
-                        from: remoteSermon.audioFileURL,
-                        remotePath: remoteSermon.audioFilePath
-                    )
-                    try localRepository.markAudioDownloaded(
-                        fileName: localAudioURL.lastPathComponent,
-                        for: localSermonId
-                    )
-                    print("[SyncService] ✅ Audio file downloaded successfully")
-                } catch {
-                    print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
-                }
-            }
-
-            guard let existingSermon = try localRepository.refreshSermon(id: localSermonId) else {
-                print("[SyncService] ⚠️ Local sermon disappeared during sync, skipping update")
+        // A local row can share the localId without a remoteId yet (failed
+        // push, race with create, restored backup). Creating a new row would
+        // collide on the same id — link the remote row onto the existing one
+        // instead, mirroring the push-side 409 resolution (TAB-35).
+        if let unlinkedSermon = try localRepository.refreshSermon(id: remoteSermon.localId) {
+            guard unlinkedSermon.remoteId?.isEmpty != false else {
+                print("[SyncService] ⚠️ Local sermon \(remoteSermon.localId) is already linked to remote \(unlinkedSermon.remoteId ?? ""); skipping conflicting remote sermon \(remoteSermon.id)")
                 return
             }
 
-            if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
-                print("[SyncService] Remote sermon is newer, updating local copy")
-                localRepository.updateLocalSermon(existingSermon, with: remoteSermon)
-                try localRepository.save()
-            } else {
-                print("[SyncService] Local sermon is up to date")
-            }
-
+            print("[SyncService] 🔗 Linking remote sermon \(remoteSermon.id) to existing local sermon \(remoteSermon.localId)")
+            unlinkedSermon.remoteId = remoteSermon.id
+            try localRepository.save()
+            try await mergeRemoteSermon(remoteSermon, into: unlinkedSermon)
             return
         }
 
@@ -243,6 +229,40 @@ final class SermonSyncEngine {
             remotePath: remoteSermon.audioFilePath
         )
         try localRepository.createLocalSermon(from: remoteSermon, audioFileURL: localAudioURL)
+    }
+
+    private func mergeRemoteSermon(_ remoteSermon: RemoteSermonData, into initialSermon: Sermon) async throws {
+        let localSermonId = initialSermon.id
+
+        if !initialSermon.audioFileExists {
+            print("[SyncService] Audio file missing locally, attempting download...")
+            do {
+                let localAudioURL = try await remoteGateway.downloadAudioFile(
+                    from: remoteSermon.audioFileURL,
+                    remotePath: remoteSermon.audioFilePath
+                )
+                try localRepository.markAudioDownloaded(
+                    fileName: localAudioURL.lastPathComponent,
+                    for: localSermonId
+                )
+                print("[SyncService] ✅ Audio file downloaded successfully")
+            } catch {
+                print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
+            }
+        }
+
+        guard let existingSermon = try localRepository.refreshSermon(id: localSermonId) else {
+            print("[SyncService] ⚠️ Local sermon disappeared during sync, skipping update")
+            return
+        }
+
+        if remoteSermon.updatedAt > (existingSermon.updatedAt ?? Date.distantPast) {
+            print("[SyncService] Remote sermon is newer, updating local copy")
+            localRepository.updateLocalSermon(existingSermon, with: remoteSermon)
+            try localRepository.save()
+        } else {
+            print("[SyncService] Local sermon is up to date")
+        }
     }
 }
 
