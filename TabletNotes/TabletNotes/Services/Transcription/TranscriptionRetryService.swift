@@ -26,7 +26,10 @@ class TranscriptionRetryService: ObservableObject {
     private var modelContext: ModelContext?
     private let maxRetries = 3
     private static let assemblyJobIdPrefix = "assemblyJobId:"
-    private let automaticRecoveryWindow: TimeInterval = 7 * 24 * 60 * 60
+    private let automaticRecoveryWindow: TimeInterval = 30 * 24 * 60 * 60
+    /// How long a sermon may sit in "processing" with no live job before
+    /// it's considered stuck. Actively running work is never swept.
+    static let processingStuckTimeout: TimeInterval = 15 * 60
     var transcriptionRunner: ((URL, @escaping (Result<(String, [TranscriptSegment]), Error>) -> Void) -> Void)?
     var summaryEnqueuer: (@MainActor (UUID, String) -> Void)?
 
@@ -161,6 +164,42 @@ class TranscriptionRetryService: ObservableObject {
             try? context.save()
         } catch {
             print("[TranscriptionRetryService] Failed to recover incomplete transcriptions: \(error)")
+        }
+    }
+
+    /// Mirrors SummaryRetryService.checkForStuckProcessingSummaries: a sermon
+    /// frozen in "processing" with no live job would otherwise stay stuck
+    /// forever, since automatic recovery only runs at app bootstrap.
+    func checkForStuckProcessingTranscriptions() {
+        guard let context = modelContext else { return }
+
+        let timeoutThreshold = Date().addingTimeInterval(-Self.processingStuckTimeout)
+
+        do {
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            for sermon in sermons where sermon.transcriptionStatus == "processing" {
+                guard sermon.audioFileExists else { continue }
+
+                let existingJob = job(for: sermon.id)
+
+                // Never sweep work that is genuinely running right now.
+                if isProcessingQueue, existingJob?.status == .running { continue }
+
+                guard transcriptionProcessingAnchorDate(for: sermon, job: existingJob) < timeoutThreshold else { continue }
+                guard isWithinAutomaticRecoveryWindow(for: sermon, job: existingJob) else { continue }
+
+                print("[TranscriptionRetryService] Recovering stuck transcription for sermon \(sermon.id)")
+                upsertJob(for: sermon.id, resetAttempts: false)
+                sermon.transcriptionStatus = "pending"
+                sermon.markPendingSync(metadata: true)
+            }
+            try? context.save()
+        } catch {
+            print("[TranscriptionRetryService] Failed to recover stuck transcriptions: \(error)")
+        }
+
+        if isNetworkAvailable {
+            processQueue()
         }
     }
 
@@ -401,6 +440,25 @@ class TranscriptionRetryService: ObservableObject {
     private static func storedAssemblyJobId(from job: ProcessingJob) -> String? {
         guard let lastError = job.lastError, lastError.hasPrefix(assemblyJobIdPrefix) else { return nil }
         return String(lastError.dropFirst(assemblyJobIdPrefix.count))
+    }
+
+    /// When detecting a stuck transcription, ignore sermon.updatedAt — metadata
+    /// edits would otherwise reset the stuck timer indefinitely.
+    static func transcriptionProcessingAnchorDate(for sermon: Sermon, job: ProcessingJob?) -> Date {
+        [
+            job?.lastAttemptAt,
+            job?.updatedAt,
+            sermon.date
+        ]
+        .compactMap { $0 }
+        .max() ?? sermon.date
+    }
+
+    private func transcriptionProcessingAnchorDate(
+        for sermon: Sermon,
+        job: ProcessingJob? = nil
+    ) -> Date {
+        Self.transcriptionProcessingAnchorDate(for: sermon, job: job)
     }
 
     private func job(for sermonId: UUID) -> ProcessingJob? {

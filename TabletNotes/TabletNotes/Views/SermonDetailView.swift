@@ -102,6 +102,7 @@ struct SermonDetailView: View {
     let sermonID: UUID
     var onBack: (() -> Void)?
 
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: Tab = .summary
     @State private var audioPlayer: AVAudioPlayer? = nil
     @State private var isPlaying: Bool = false
@@ -406,11 +407,20 @@ struct SermonDetailView: View {
             if let sermon {
                 switch sermon.summaryStatus {
                 case "processing":
-                    ProcessingStateView(
-                        title: "Generating Summary",
-                        subtitle: "AI is analyzing your sermon content to create a comprehensive summary.",
-                        icon: "doc.text"
-                    )
+                    if isProcessingStuck(since: processingAnchor(for: sermon, kind: .summary)) {
+                        SermonErrorStateView(
+                            title: "Summary Is Taking Too Long",
+                            subtitle: "This is taking longer than expected. You can retry now or check back later.",
+                            actionTitle: "Retry",
+                            action: { generateSummaryForSermon(sermon) }
+                        )
+                    } else {
+                        ProcessingStateView(
+                            title: "Generating Summary",
+                            subtitle: "AI is analyzing your sermon content to create a comprehensive summary.",
+                            icon: "doc.text"
+                        )
+                    }
                 case "failed":
                     SermonErrorStateView(
                         title: "Summary Generation Failed",
@@ -451,11 +461,20 @@ struct SermonDetailView: View {
 
                 switch sermon.transcriptionStatus {
                 case "processing":
-                    ProcessingStateView(
-                        title: "Transcribing Audio",
-                        subtitle: "Converting your sermon audio to text. This may take a few minutes.",
-                        icon: "text.bubble"
-                    )
+                    if isProcessingStuck(since: processingAnchor(for: sermon, kind: .transcription)) {
+                        SermonErrorStateView(
+                            title: "Transcription Is Taking Too Long",
+                            subtitle: "This is taking longer than expected. You can retry now or check back later.",
+                            actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
+                            action: isRetryingTranscription ? nil : { retryTranscription(for: sermon) }
+                        )
+                    } else {
+                        ProcessingStateView(
+                            title: "Transcribing Audio",
+                            subtitle: "Converting your sermon audio to text. This may take a few minutes.",
+                            icon: "text.bubble"
+                        )
+                    }
                 case "failed", "pending":
                     SermonErrorStateView(
                         title: sermon.transcriptionStatus == "pending" ? "Transcription Pending" : "Transcription Failed",
@@ -817,6 +836,28 @@ struct SermonDetailView: View {
         let minutes = Int(interval) / 60
         let seconds = Int(interval) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    /// A "processing" state with no progress for this long is presumed stuck,
+    /// and the UI offers a Retry instead of an indefinite spinner.
+    private func isProcessingStuck(since lastUpdate: Date?) -> Bool {
+        guard let lastUpdate else { return true }
+        return Date().timeIntervalSince(lastUpdate) > TranscriptionRetryService.processingStuckTimeout
+    }
+
+    private func processingJob(for sermon: Sermon, kind: ProcessingJobKind) -> ProcessingJob? {
+        let descriptor = FetchDescriptor<ProcessingJob>(sortBy: [SortDescriptor(\.createdAt)])
+        return (try? modelContext.fetch(descriptor))?.first(where: {
+            $0.sermonId == sermon.id && $0.kind == kind && $0.status != .complete
+        })
+    }
+
+    private func processingAnchor(for sermon: Sermon, kind: ProcessingJobKind) -> Date {
+        let job = processingJob(for: sermon, kind: kind)
+        if kind == .transcription {
+            return TranscriptionRetryService.transcriptionProcessingAnchorDate(for: sermon, job: job)
+        }
+        return [job?.lastAttemptAt, job?.updatedAt, sermon.date].compactMap { $0 }.max() ?? sermon.date
     }
 
     private func retryTranscription(for sermon: Sermon) {
