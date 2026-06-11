@@ -9,6 +9,9 @@ import Foundation
 import SwiftData
 
 struct DataMigration {
+
+    private static let recoveryOwnerUserIdKey = "DataMigration.recoveryOwnerUserId"
+    private static let localDataOwnerUserIdKey = "SermonService.localDataOwnerUserId"
     
     /// Backup existing sermon-note relationships before migration
     static func backupSermonNotesBeforeMigration(modelContext: ModelContext) {
@@ -61,6 +64,13 @@ struct DataMigration {
     /// Attempt to recover audio files and notes after SwiftData migration failure
     static func recoverAudioFilesAfterMigration() {
         print("[DataMigration] Starting audio file and notes recovery process...")
+
+        guard let ownerId = UserDefaults.standard.string(forKey: localDataOwnerUserIdKey) else {
+            print("[DataMigration] Skipping recoverable audio catalog — no local data owner")
+            return
+        }
+
+        UserDefaults.standard.set(ownerId, forKey: recoveryOwnerUserIdKey)
         
         let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AudioRecordings")
@@ -141,12 +151,19 @@ struct DataMigration {
         return UserDefaults.standard.bool(forKey: "has_notes_backup")
     }
     
+    /// Owner recorded when migration recovery was cataloged; must match the
+    /// signed-in user before SermonService may import those files.
+    static func recoveryOwnerUserId() -> String? {
+        UserDefaults.standard.string(forKey: recoveryOwnerUserIdKey)
+    }
+
     /// Clear recovery flags after successful recovery
     static func clearRecoveryFlags() {
         UserDefaults.standard.removeObject(forKey: "has_recoverable_audio_files")
         UserDefaults.standard.removeObject(forKey: "has_recoverable_notes")
         UserDefaults.standard.removeObject(forKey: "has_notes_backup")
         UserDefaults.standard.removeObject(forKey: "sermon_notes_backup")
+        UserDefaults.standard.removeObject(forKey: recoveryOwnerUserIdKey)
         
         // Clear individual recovery entries
         let keys = UserDefaults.standard.dictionaryRepresentation().keys

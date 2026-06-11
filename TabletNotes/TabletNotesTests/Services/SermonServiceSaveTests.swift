@@ -458,4 +458,27 @@ struct SermonServiceSaveTests {
         let sermons = try modelContext.fetch(FetchDescriptor<Sermon>())
         #expect(sermons.isEmpty)
     }
+
+    @Test func migrationRecoveryRequiresMatchingOwnership() async throws {
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let userA = MockAuthService.createMockUser(email: "user-a@test.com", name: "User A")
+        let userB = MockAuthService.createMockUser(email: "user-b@test.com", name: "User B")
+
+        UserDefaults.standard.set(userB.id.uuidString, forKey: "SermonService.localDataOwnerUserId")
+        UserDefaults.standard.set(userA.id.uuidString, forKey: "DataMigration.recoveryOwnerUserId")
+        UserDefaults.standard.set(true, forKey: "has_recoverable_audio_files")
+        defer {
+            DataMigration.clearRecoveryFlags()
+            UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
+        }
+
+        mockAuthService.setAuthState(.authenticated(userB))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+
+        #expect(sermonService.sermons.isEmpty)
+        #expect(DataMigration.hasRecoverableAudioFiles() == false)
+        #expect(DataMigration.recoveryOwnerUserId() == nil)
+    }
 }

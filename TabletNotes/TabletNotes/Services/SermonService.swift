@@ -910,6 +910,7 @@ class SermonService {
         removeAllRemainingLocalAudioFiles()
         InterruptedRecordingRecoveryStore.clear()
         clearRecordingNoteSessions()
+        DataMigration.clearRecoveryFlags()
         clearLocalDataOwnershipMarker()
     }
 
@@ -1202,6 +1203,22 @@ class SermonService {
     
     @MainActor
     private func recoverFromMigration() {
+        guard let activeUserId = activeUser?.id else { return }
+
+        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        guard storedOwnerId == activeUserId.uuidString else {
+            print("[SermonService] Skipping migration recovery — local data owner mismatch")
+            DataMigration.clearRecoveryFlags()
+            return
+        }
+
+        guard let recoveryOwnerId = DataMigration.recoveryOwnerUserId(),
+              recoveryOwnerId == activeUserId.uuidString else {
+            print("[SermonService] Skipping migration recovery — catalog has no ownership proof for current user")
+            DataMigration.clearRecoveryFlags()
+            return
+        }
+
         guard DataMigration.hasRecoverableAudioFiles() else { return }
         
         print("[SermonService] Found recoverable audio files after migration, attempting recovery...")
