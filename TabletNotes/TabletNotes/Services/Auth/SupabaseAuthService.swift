@@ -326,6 +326,14 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
             throw mapSupabaseError(error)
         }
     }
+
+    /// Exchanges a PKCE auth code on the same Supabase client that sent the
+    /// reset/verification email, so the recovery session is visible to
+    /// updatePassword and refreshSession.
+    func exchangeAuthCode(_ code: String) async throws {
+        print("[SupabaseAuthService] Exchanging auth code for session")
+        _ = try await supabase.auth.exchangeCodeForSession(authCode: code)
+    }
     
     func updateProfile(name: String, email: String?) async throws -> User {
         guard let currentUser = currentUser else {

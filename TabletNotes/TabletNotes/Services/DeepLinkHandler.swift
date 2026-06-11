@@ -51,10 +51,7 @@ class DeepLinkHandler: ObservableObject {
 
         Task {
             do {
-                // Use the shared client: the PKCE code verifier from
-                // resetPasswordForEmail lives in its session storage.
-                let supabase = SupabaseService.shared.client
-                _ = try await supabase.auth.exchangeCodeForSession(authCode: code)
+                try await AuthenticationManager.shared.exchangeAuthCode(code)
                 try await AuthenticationManager.shared.refreshSession()
                 print("[DeepLinkHandler] Recovery session established, prompting for new password")
                 shouldShowPasswordReset = true
@@ -118,34 +115,18 @@ class DeepLinkHandler: ObservableObject {
     private func handleAuthCode(_ authCode: String) async {
         do {
             print("[DeepLinkHandler] Exchanging auth code for session")
-            
-            // Get the Supabase client from the auth service
+
             let authManager = AuthenticationManager.shared
-            
-            // Access the private supabase client through the auth service
-            // We need to create a new client instance for this operation
-            let supabase = SupabaseClient(
-                supabaseURL: URL(string: SupabaseConfig.projectURL)!,
-                supabaseKey: SupabaseConfig.anonKey
-            )
-            
-            // Exchange the code for a session
-            let session = try await supabase.auth.exchangeCodeForSession(authCode: authCode)
-            
-            print("[DeepLinkHandler] Successfully exchanged code for session")
-            print("[DeepLinkHandler] User ID: \(session.user.id)")
-            
-            // Now refresh the auth manager session
+            try await authManager.exchangeAuthCode(authCode)
             try await authManager.refreshSession()
-            
+
             print("[DeepLinkHandler] Email verification successful via deep link")
             shouldShowVerificationSuccess = true
-            
-            // Hide success message after 3 seconds
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 self.shouldShowVerificationSuccess = false
             }
-            
+
         } catch {
             print("[DeepLinkHandler] Failed to exchange auth code: \(error)")
         }

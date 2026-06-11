@@ -189,6 +189,15 @@ class MockAuthService: AuthServiceProtocol, ObservableObject {
         // Mock password update - no-op for testing
     }
 
+    func exchangeAuthCode(_ code: String) async throws {
+        if shouldFailNextCall {
+            shouldFailNextCall = false
+            throw mockError ?? .networkError
+        }
+
+        _ = code
+    }
+
     func updateProfile(name: String, email: String?) async throws -> User {
         if shouldFailNextCall {
             shouldFailNextCall = false
