@@ -69,15 +69,28 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
     }
     
-    private func saveNotesToPersistence() {
+    private func saveNotesToPersistence(synchronously: Bool = false) {
         let key = "\(notesKey)_\(sessionId)"
         let snapshots = notes.map(PersistedNote.init)
 
-        persistenceQueue.async { [userDefaults] in
+        let write = { [userDefaults] in
             if let data = try? JSONEncoder().encode(snapshots) {
                 userDefaults.set(data, forKey: key)
             }
         }
+
+        if synchronously {
+            persistenceQueue.sync(execute: write)
+        } else {
+            persistenceQueue.async(execute: write)
+        }
+    }
+
+    /// Blocks until the current in-memory notes are written to UserDefaults.
+    /// Use before leaving the recording screen or stopping from the mini-player
+    /// so a fresh NoteService(sessionId:) sees the latest text.
+    func flushPersistedNotes() {
+        saveNotesToPersistence(synchronously: true)
     }
 
     func addNote(text: String, timestamp: TimeInterval) {
