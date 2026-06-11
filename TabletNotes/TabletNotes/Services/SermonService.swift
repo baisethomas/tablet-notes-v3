@@ -64,6 +64,9 @@ class SermonService {
         self.syncService = syncService
         self.subscriptionService = subscriptionService
         recoverInterruptedRecordingIfNeeded()
+        if case .authenticated = self.authManager.authState {
+            wasAuthenticated = true
+        }
         fetchSermons()
 
         // Listen for auth state changes to refresh sermons
@@ -80,17 +83,33 @@ class SermonService {
     
     @MainActor
     private func setupAuthStateObserver() {
-        // Refresh sermons when auth state changes
         authManager.$authStatePublished
             .sink { [weak self] authState in
                 Task { @MainActor in
-                    self?.fetchSermons()
+                    guard let self else { return }
+
+                    let isAuthenticated: Bool
+                    if case .authenticated = authState {
+                        isAuthenticated = true
+                    } else {
+                        isAuthenticated = false
+                    }
+
+                    if self.wasAuthenticated && !isAuthenticated {
+                        print("[SermonService] User signed out — clearing local data")
+                        self.deleteAllLocalUserData()
+                    }
+
+                    self.wasAuthenticated = isAuthenticated
+                    self.fetchSermons()
                 }
             }
             .store(in: &cancellables)
     }
     
     private var cancellables = Set<AnyCancellable>()
+    /// Tracks authenticated → unauthenticated transitions so sign-out wipes local data once.
+    private var wasAuthenticated = false
     private let interruptedRecordingMinimumSizeBytes: Int64 = 1024
 
     private struct TranscriptSegmentSnapshot {
@@ -580,6 +599,16 @@ class SermonService {
         }
     }
 
+    private var activeUser: User? {
+        if let currentUser = authManager.currentUser {
+            return currentUser
+        }
+        if case .authenticated(let user) = authManager.authState {
+            return user
+        }
+        return nil
+    }
+
     func fetchSermons() {
         print("[SermonService] fetchSermons called.")
 
@@ -587,30 +616,16 @@ class SermonService {
         // notes relationships are force-loaded BEFORE any @Observable-triggered re-render.
         // A deferred Task would allow the view to re-render with faulted/empty notes first.
 
-        // If no user is authenticated, show all sermons (for migration compatibility)
-        guard let currentUser = authManager.currentUser else {
-            print("[SermonService] No authenticated user - fetching all sermons")
-            let fetchDescriptor = FetchDescriptor<Sermon>()
-            if let results = try? modelContext.fetch(fetchDescriptor) {
-                // Force-load relationship-backed data BEFORE assigning to sermons.
-                // Assignment triggers @Observable, and views must see loaded relationships.
-                for sermon in results {
-                    let _ = sermon.notes.count
-                    let _ = Array(sermon.notes)
-                }
-                sermons = results
-                print("[SermonService] sermons fetched (no user filter): \(sermons.map { $0.title })")
-            } else {
-                sermons = []
-            }
+        // Never show another user's local rows while signed out.
+        guard let currentUser = activeUser else {
+            print("[SermonService] No authenticated user — empty sermon list")
+            sermons = []
+            filteredSermons = []
             applyFilters()
             return
         }
 
         print("[SermonService] Fetching sermons for user: \(currentUser.name) (ID: \(currentUser.id))")
-
-        // First, migrate any existing sermons without userId to current user
-        migrateExistingSermons(to: currentUser.id)
 
         // Migrate any sermons that still have absolute URLs to relative filenames
         migrateAudioFilePaths()
@@ -653,29 +668,6 @@ class SermonService {
             print("[SermonService] fetch failed for user \(currentUser.id).")
             sermons = []
             applyFilters()
-        }
-    }
-    
-    @MainActor
-    private func migrateExistingSermons(to userId: UUID) {
-        print("[SermonService] Checking for sermons without userId to migrate...")
-        
-        // Fetch sermons without userId
-        let fetchDescriptor = FetchDescriptor<Sermon>()
-        guard let allSermons = try? modelContext.fetch(fetchDescriptor) else { return }
-        
-        let sermonsToMigrate = allSermons.filter { $0.userId == nil }
-        
-        if !sermonsToMigrate.isEmpty {
-            print("[SermonService] Migrating \(sermonsToMigrate.count) sermons to user \(userId)")
-            
-            for sermon in sermonsToMigrate {
-                sermon.userId = userId
-                print("[SermonService] Migrated sermon: \(sermon.title)")
-            }
-            
-            try? modelContext.save()
-            print("[SermonService] Migration completed")
         }
     }
     
@@ -876,9 +868,21 @@ class SermonService {
     }
 
     func deleteAllSermons() {
-        for sermon in sermons {
+        guard let allSermons = try? modelContext.fetch(FetchDescriptor<Sermon>()) else {
+            sermons.removeAll()
+            filteredSermons.removeAll()
+            return
+        }
+
+        for sermon in allSermons {
             deleteLocalAudioFile(for: sermon)
             modelContext.delete(sermon)
+        }
+
+        if let jobs = try? modelContext.fetch(FetchDescriptor<ProcessingJob>()) {
+            for job in jobs {
+                modelContext.delete(job)
+            }
         }
 
         do {

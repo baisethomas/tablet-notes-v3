@@ -150,6 +150,7 @@ struct SermonServiceSaveTests {
 
     @Test func interruptedRecordingRecoveryCreatesDraftEvenWhenExistingSermonsArePresent() async throws {
         InterruptedRecordingRecoveryStore.clear()
+        defer { InterruptedRecordingRecoveryStore.clear() }
 
         let modelContext = try makeModelContext()
         let mockAuthService = MockAuthService()
@@ -304,6 +305,9 @@ struct SermonServiceSaveTests {
         modelContext.insert(sermon)
         try modelContext.save()
 
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        #expect(sermonService.sermons.count == 1)
+
         let noteService = NoteService(sessionId: "delete-account-session")
         noteService.addNote(text: "Pending note", timestamp: 1)
         InterruptedRecordingRecoveryStore.save(
@@ -315,9 +319,6 @@ struct SermonServiceSaveTests {
             )
         )
 
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
-        #expect(sermonService.sermons.count == 1)
-
         sermonService.deleteAllLocalUserData()
 
         let remainingSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
@@ -327,5 +328,57 @@ struct SermonServiceSaveTests {
         #expect(InterruptedRecordingRecoveryStore.load() == nil)
         #expect(NoteService(sessionId: "delete-account-session").currentNotes.isEmpty)
         #expect(sermonService.sermons.isEmpty)
+    }
+
+    @Test func signOutClearsLocalDataAndDoesNotReassignOrphansToNextUser() async throws {
+        let modelContext = try makeModelContext()
+        let mockAuthService = MockAuthService()
+        let userA = MockAuthService.createMockUser(email: "user-a@test.com", name: "User A")
+        mockAuthService.setAuthState(.authenticated(userA))
+        let authManager = AuthenticationManager(authService: mockAuthService)
+
+        let userASermon = Sermon(
+            title: "User A Sermon",
+            audioFileName: "user-a.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            userId: userA.id
+        )
+        let orphanSermon = Sermon(
+            title: "Orphan Sermon",
+            audioFileName: "orphan.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            userId: nil
+        )
+        modelContext.insert(userASermon)
+        modelContext.insert(orphanSermon)
+        try modelContext.save()
+
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        #expect(sermonService.sermons.count == 1)
+        #expect(sermonService.sermons.first?.title == "User A Sermon")
+
+        try await authManager.signOut()
+
+        let signOutFinished = await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            sermonService.sermons.isEmpty
+        }
+        #expect(signOutFinished == true)
+
+        let remainingAfterSignOut = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(remainingAfterSignOut.isEmpty)
+
+        let userB = MockAuthService.createMockUser(email: "user-b@test.com", name: "User B")
+        mockAuthService.setAuthState(.authenticated(userB))
+
+        let userBLoaded = await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            authManager.currentUser?.id == userB.id
+        }
+        #expect(userBLoaded == true)
+        #expect(sermonService.sermons.isEmpty)
+
+        let orphanAfterUserB = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(orphanAfterUserB.isEmpty)
     }
 }
