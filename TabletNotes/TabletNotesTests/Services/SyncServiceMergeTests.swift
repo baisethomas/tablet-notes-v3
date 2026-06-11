@@ -113,9 +113,13 @@ struct SyncServiceMergeTests {
         private let createResult: Result<String, Error>
         private(set) var createCallCount = 0
         private(set) var fetchCallCount = 0
+        private(set) var deleteCallCount = 0
+        private(set) var deletedRemoteIds: [String] = []
         private var blockedCreateContinuation: CheckedContinuation<Void, Never>?
+        private var blockedFetchContinuation: CheckedContinuation<Void, Never>?
 
         var shouldBlockCreate = false
+        var shouldBlockFetch = false
 
         init(
             recorder: CallRecorder,
@@ -131,6 +135,12 @@ struct SyncServiceMergeTests {
             _ = userId
             fetchCallCount += 1
             recorder.record("remote.fetch")
+
+            if shouldBlockFetch {
+                await withCheckedContinuation { continuation in
+                    blockedFetchContinuation = continuation
+                }
+            }
 
             guard !fetchedRemoteSermonPages.isEmpty else { return [] }
             return fetchedRemoteSermonPages.removeFirst()
@@ -163,7 +173,8 @@ struct SyncServiceMergeTests {
         }
 
         func deleteRemoteSermon(remoteId: String) async throws {
-            _ = remoteId
+            deleteCallCount += 1
+            deletedRemoteIds.append(remoteId)
             recorder.record("remote.deleteSermon")
         }
 
@@ -176,6 +187,12 @@ struct SyncServiceMergeTests {
             blockedCreateContinuation?.resume()
             blockedCreateContinuation = nil
             shouldBlockCreate = false
+        }
+
+        func releaseBlockedFetch() {
+            blockedFetchContinuation?.resume()
+            blockedFetchContinuation = nil
+            shouldBlockFetch = false
         }
     }
 
@@ -896,6 +913,83 @@ struct SyncServiceMergeTests {
             "local.markSermonSynced",
             "remote.fetch"
         ])
+    }
+
+    // MARK: - TAB-32: deletes must not race the pull phase
+
+    @Test func deleteRemoteSermonWaitsForInFlightSync() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let remoteSermonId = "remote-to-delete"
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [],
+            syncDataBySermonId: [:]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[makeRemoteSermon(id: remoteSermonId, localId: UUID(), userId: user.id)]]
+        )
+        remoteGateway.shouldBlockFetch = true
+
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        let syncRun = Task {
+            try await engine.sync(userId: user.id)
+        }
+
+        let fetchStarted = await waitUntil {
+            remoteGateway.fetchCallCount == 1
+        }
+        #expect(fetchStarted == true)
+
+        let deleteRun = Task {
+            try await engine.deleteRemoteSermon(remoteId: remoteSermonId)
+        }
+
+        // The delete must not reach the gateway while the pull is in flight.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(remoteGateway.deleteCallCount == 0)
+
+        remoteGateway.releaseBlockedFetch()
+
+        try await syncRun.value
+        try await deleteRun.value
+
+        #expect(remoteGateway.deleteCallCount == 1)
+        guard let deleteIndex = recorder.events.lastIndex(of: "remote.deleteSermon"),
+              let createIndex = recorder.events.lastIndex(of: "local.createLocalSermon") else {
+            Issue.record("Expected both pull create and remote delete to be recorded")
+            return
+        }
+        #expect(deleteIndex > createIndex)
+    }
+
+    @Test func pullSkipsRemoteSermonDeletedThisSession() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let remoteSermonId = "remote-deleted"
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [],
+            syncDataBySermonId: [:]
+        )
+        // The fetch page still contains the deleted sermon, simulating a pull
+        // whose snapshot was taken before the delete completed.
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[makeRemoteSermon(id: remoteSermonId, localId: UUID(), userId: user.id)]]
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        try await engine.deleteRemoteSermon(remoteId: remoteSermonId)
+        try await engine.sync(userId: user.id)
+
+        #expect(remoteGateway.deletedRemoteIds == [remoteSermonId])
+        #expect(recorder.events.contains("local.createLocalSermon") == false)
+        #expect(recorder.events.contains("remote.download") == false)
     }
 
     // MARK: - TAB-21: deletion during in-flight push must not crash

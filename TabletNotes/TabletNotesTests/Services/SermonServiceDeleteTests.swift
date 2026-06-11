@@ -120,10 +120,24 @@ struct SermonServiceDeleteTests {
         #expect(remaining.isEmpty)
     }
 
-    @Test func deleteSermonWithoutSyncServiceStillDeletesLocally() async throws {
+    @Test func deleteSyncedSermonWithoutSyncServiceFailsClosed() async throws {
         let modelContext = try makeModelContext()
         let sermonService = makeSermonService(modelContext: modelContext, syncService: nil)
         let sermon = try insertSermon(modelContext: modelContext, remoteId: "remote-123")
+
+        await #expect(throws: SermonDeleteError.self) {
+            try await sermonService.deleteSermon(sermon)
+        }
+
+        let remaining = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.remoteId == "remote-123")
+    }
+
+    @Test func deleteLocalOnlySermonWithoutSyncServiceStillDeletes() async throws {
+        let modelContext = try makeModelContext()
+        let sermonService = makeSermonService(modelContext: modelContext, syncService: nil)
+        let sermon = try insertSermon(modelContext: modelContext, remoteId: nil)
 
         try await sermonService.deleteSermon(sermon)
 

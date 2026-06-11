@@ -21,6 +21,10 @@ final class SermonSyncEngine {
     private let remoteGateway: any SermonSyncRemoteGatewayProtocol
     private var currentSyncTask: Task<Void, Error>?
 
+    /// Remote IDs deleted this session. A pull whose fetch snapshot predates a
+    /// delete would otherwise recreate the sermon locally (ghost resurrection).
+    private var deletedRemoteIds: Set<String> = []
+
     init(
         localRepository: any SermonSyncLocalRepositoryProtocol,
         remoteGateway: any SermonSyncRemoteGatewayProtocol
@@ -51,7 +55,23 @@ final class SermonSyncEngine {
     }
 
     func deleteRemoteSermon(remoteId: String) async throws {
-        try await remoteGateway.deleteRemoteSermon(remoteId: remoteId)
+        // Wait for any in-flight sync: its pull phase may hold a fetch snapshot
+        // that still contains this sermon and would recreate it locally.
+        if let currentSyncTask {
+            try? await currentSyncTask.value
+        }
+
+        // Tombstone before the network call so a sync that starts while the
+        // delete is in flight skips this sermon during pull.
+        deletedRemoteIds.insert(remoteId)
+        do {
+            try await remoteGateway.deleteRemoteSermon(remoteId: remoteId)
+        } catch {
+            // Delete failed — the remote row still exists and the local row is
+            // kept, so resume syncing it normally.
+            deletedRemoteIds.remove(remoteId)
+            throw error
+        }
     }
 
     func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) {
@@ -168,6 +188,10 @@ final class SermonSyncEngine {
         print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
 
         for remoteSermon in remoteSermons {
+            guard !deletedRemoteIds.contains(remoteSermon.id) else {
+                print("[SyncService] ⏭️ Skipping remote sermon deleted this session: \(remoteSermon.id)")
+                continue
+            }
             print("[SyncService] Syncing remote sermon: \(remoteSermon.title)")
             try await pullSermonFromCloud(remoteSermon)
         }

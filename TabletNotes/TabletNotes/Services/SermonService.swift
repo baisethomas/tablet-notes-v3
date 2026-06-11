@@ -32,11 +32,14 @@ enum SermonSaveError: LocalizedError {
 
 enum SermonDeleteError: LocalizedError {
     case cloudDeleteFailed
+    case syncUnavailable
 
     var errorDescription: String? {
         switch self {
         case .cloudDeleteFailed:
             return "Couldn't remove this sermon from the cloud, so it wasn't deleted. Check your connection and try again."
+        case .syncUnavailable:
+            return "Couldn't remove this sermon from the cloud, so it wasn't deleted. Please try again later."
         }
     }
 }
@@ -860,15 +863,15 @@ class SermonService {
         // Delete the cloud copy first: removing the local row alone leaves a
         // remote row that the next pull resurrects on every device (TAB-32).
         if let remoteId = sermon.remoteId, !remoteId.isEmpty {
-            if let syncService {
-                do {
-                    try await syncService.deleteRemoteSermon(remoteId: remoteId)
-                } catch {
-                    print("[SermonService] ❌ Cloud delete failed for sermon \(sermonId): \(error.localizedDescription)")
-                    throw SermonDeleteError.cloudDeleteFailed
-                }
-            } else {
-                print("[SermonService] ⚠️ Sync service unavailable; deleting synced sermon \(sermonId) locally only")
+            guard let syncService else {
+                print("[SermonService] ❌ Sync service unavailable; refusing local-only delete of synced sermon \(sermonId)")
+                throw SermonDeleteError.syncUnavailable
+            }
+            do {
+                try await syncService.deleteRemoteSermon(remoteId: remoteId)
+            } catch {
+                print("[SermonService] ❌ Cloud delete failed for sermon \(sermonId): \(error.localizedDescription)")
+                throw SermonDeleteError.cloudDeleteFailed
             }
         }
 
