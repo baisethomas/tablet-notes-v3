@@ -1,6 +1,17 @@
 import Foundation
 import SwiftData
 
+enum SermonProcessingError: LocalizedError {
+    case notConfigured
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            return "The app isn't ready to save recordings yet. Please try again."
+        }
+    }
+}
+
 @MainActor
 final class SermonProcessingCoordinator {
     static let shared = SermonProcessingCoordinator()
@@ -145,10 +156,11 @@ final class SermonProcessingCoordinator {
         date: Date,
         serviceType: String,
         notes: [Note],
-        completion: ((UUID) -> Void)? = nil
+        completion: ((Result<UUID, Error>) -> Void)? = nil
     ) {
         guard let sermonService else {
             print("[SermonProcessingCoordinator] SermonService not configured")
+            completion?(.failure(SermonProcessingError.notConfigured))
             return
         }
 
@@ -165,11 +177,13 @@ final class SermonProcessingCoordinator {
             transcriptionStatus: "pending",
             summaryStatus: "pending",
             id: sermonId
-        ) { savedId in
-            DispatchQueue.main.async {
-                _ = self.retryTranscription(for: savedId)
+        ) { result in
+            if case .success(let savedId) = result {
+                DispatchQueue.main.async {
+                    _ = self.retryTranscription(for: savedId)
+                }
             }
-            completion?(savedId)
+            completion?(result)
         }
     }
 
