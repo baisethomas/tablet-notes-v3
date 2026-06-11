@@ -408,7 +408,11 @@ Before finalizing, ensure that everything in your summary can be directly traced
         max_tokens: length === 'short' ? 1000 : length === 'long' ? 3000 : 2000,
         temperature: tone === 'formal' ? 0.3 : tone === 'academic' ? 0.2 : 0.7
       })),
-      120000 // 2 minute timeout
+      // Netlify's synchronous execution limit is 60s (not configurable).
+      // The previous 120s budget could never be honored. Abort just under
+      // the platform ceiling so the client gets a clean, retryable 408
+      // instead of an opaque 502.
+      55000
     );
     
     const completion = await completionWithTimeout();

@@ -2,6 +2,10 @@
   base = "tablet-notes-api"
   functions = "netlify/functions"
 
+# Netlify synchronous functions run up to 60 seconds (not configurable via
+# this file). Keep each handler's internal timeouts just under that ceiling
+# so slow work returns a clean 408 instead of an opaque platform 502.
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
