@@ -45,6 +45,14 @@ struct SermonSyncScopes: Equatable {
     )
 }
 
+/// Outcome of a remote sermon create. `syncedScopes` reports which scopes the
+/// backend actually persisted — a failed child insert stays dirty locally and
+/// is re-pushed via update on the next sync (TAB-34).
+struct RemoteSermonCreateResult {
+    let remoteId: String
+    let syncedScopes: SermonSyncScopes
+}
+
 struct NoteSyncPayload {
     let id: UUID
     let text: String

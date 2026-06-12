@@ -7,6 +7,38 @@ const {
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
 const { Validator } = require('./utils/validator');
+const { createSermonChildren } = require('./utils/createSermonChildren');
+
+/**
+ * Removes the audio object the client uploaded for this create attempt.
+ * Upload paths are unique per attempt (generate-upload-url uses randomUUID),
+ * so when the sermon row insert fails the object is unreachable garbage —
+ * including on 409, where the existing row references its own earlier path.
+ */
+async function cleanupUploadedAudio(supabase, audioFilePath, logger) {
+  if (!audioFilePath) return;
+
+  try {
+    const { error } = await supabase
+      .storage
+      .from('sermon-audio')
+      .remove([audioFilePath]);
+
+    if (error) {
+      logger.warn('Failed to clean up orphan audio upload', {
+        audioFilePath,
+        error: error.message
+      });
+    } else {
+      logger.info('Cleaned up orphan audio upload', { audioFilePath });
+    }
+  } catch (cleanupError) {
+    logger.warn('Error cleaning up orphan audio upload', {
+      audioFilePath,
+      error: cleanupError.message
+    });
+  }
+}
 
 exports.handler = withLogging('create-sermon', async (event, context) => {
   const logger = event.logger;
@@ -90,6 +122,10 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
         code: insertError.code
       });
 
+      // The row doesn't exist, so the audio uploaded for this attempt is
+      // orphaned — remove it before reporting the failure (TAB-34).
+      await cleanupUploadedAudio(supabase, sermonData.audio_file_path, logger);
+
       // Handle unique constraint violation (sermon already exists)
       if (insertError.code === '23505') {
         return createErrorResponse(new Error('Sermon with this ID already exists'), 409);
@@ -98,132 +134,36 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
       return createErrorResponse(new Error(insertError.message), 500);
     }
 
-    // Create related records if provided
-    if (body.notes && Array.isArray(body.notes) && body.notes.length > 0) {
-      logger.info('Creating notes', { count: body.notes.length, sermonId: sermon.id });
-      const notesData = body.notes.map(note => ({
-        local_id: note.id,
-        sermon_id: sermon.id,
-        user_id: user.id,
-        text: note.text,
-        timestamp: note.timestamp ?? 0
-      }));
-
-      const { data: insertedNotes, error: notesError } = await supabase
-        .from('notes')
-        .insert(notesData)
-        .select();
-
-      if (notesError) {
-        logger.error('Failed to create notes', {
-          sermonId: sermon.id,
-          error: notesError.message,
-          code: notesError.code,
-          details: notesError.details
-        });
-      } else {
-        logger.info('Successfully created notes', {
-          sermonId: sermon.id,
-          count: insertedNotes?.length || 0
-        });
-      }
-    }
-
-    if (body.transcript && body.transcript.text) {
-      logger.info('Creating transcript', {
-        sermonId: sermon.id,
-        textLength: body.transcript.text?.length || 0,
-        hasId: !!body.transcript.id
-      });
-      const transcriptData = {
-        local_id: body.transcript.id,
-        sermon_id: sermon.id,
-        user_id: user.id,
-        text: body.transcript.text,
-        segments: body.transcript.segments || null,
-        status: body.transcript.status || 'complete'
-      };
-
-      const { data: insertedTranscript, error: transcriptError } = await supabase
-        .from('transcripts')
-        .insert(transcriptData)
-        .select();
-
-      if (transcriptError) {
-        logger.error('Failed to create transcript', {
-          sermonId: sermon.id,
-          error: transcriptError.message,
-          code: transcriptError.code,
-          details: transcriptError.details
-        });
-      } else {
-        logger.info('Successfully created transcript', {
-          sermonId: sermon.id,
-          transcriptId: insertedTranscript?.[0]?.id
-        });
-      }
-    } else {
-      logger.info('No transcript to create', {
-        sermonId: sermon.id,
-        hasTranscript: !!body.transcript,
-        hasText: !!(body.transcript && body.transcript.text)
-      });
-    }
-
-    if (body.summary && body.summary.text) {
-      logger.info('Creating summary', {
-        sermonId: sermon.id,
-        textLength: body.summary.text?.length || 0,
-        title: body.summary.title || '(no title)',
-        hasId: !!body.summary.id
-      });
-      const summaryData = {
-        local_id: body.summary.id,
-        sermon_id: sermon.id,
-        user_id: user.id,
-        title: body.summary.title || '',
-        text: body.summary.text,
-        type: body.summary.type || 'devotional',
-        status: body.summary.status || 'complete'
-      };
-
-      const { data: insertedSummary, error: summaryError } = await supabase
-        .from('summaries')
-        .insert(summaryData)
-        .select();
-
-      if (summaryError) {
-        logger.error('Failed to create summary', {
-          sermonId: sermon.id,
-          error: summaryError.message,
-          code: summaryError.code,
-          details: summaryError.details
-        });
-      } else {
-        logger.info('Successfully created summary', {
-          sermonId: sermon.id,
-          summaryId: insertedSummary?.[0]?.id
-        });
-      }
-    } else {
-      logger.info('No summary to create', {
-        sermonId: sermon.id,
-        hasSummary: !!body.summary,
-        hasText: !!(body.summary && body.summary.text)
-      });
-    }
-
-    logger.info('Sermon created successfully', {
-      userId: user.id,
+    // Create related records if provided. Failed scopes are reported back so
+    // the client keeps them dirty and re-pushes via update-sermon (TAB-34).
+    const syncedScopes = await createSermonChildren({
+      supabase,
+      body,
       sermonId: sermon.id,
-      remoteId: sermon.id
+      userId: user.id,
+      logger
     });
+
+    if (!syncedScopes.notes || !syncedScopes.transcript || !syncedScopes.summary) {
+      logger.warn('Sermon created with partial child inserts', {
+        userId: user.id,
+        sermonId: sermon.id,
+        syncedScopes
+      });
+    } else {
+      logger.info('Sermon created successfully', {
+        userId: user.id,
+        sermonId: sermon.id,
+        remoteId: sermon.id
+      });
+    }
 
     return createSuccessResponse({
       id: sermon.id,
       localId: sermon.local_id,
       createdAt: sermon.created_at,
-      updatedAt: sermon.updated_at
+      updatedAt: sermon.updated_at,
+      syncedScopes
     }, 201);
 
   } catch (error) {

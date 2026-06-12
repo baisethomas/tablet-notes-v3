@@ -128,17 +128,19 @@ final class SermonSyncEngine {
         }
 
         do {
-            let newRemoteId = try await remoteGateway.createRemoteSermon(data: syncData)
-            guard !newRemoteId.isEmpty else {
+            let createResult = try await remoteGateway.createRemoteSermon(data: syncData)
+            guard !createResult.remoteId.isEmpty else {
                 print("[SyncService] ❌ createRemoteSermon returned empty remoteId")
                 throw SyncError.conflictResolution
             }
 
+            // Clear only the scopes the backend acknowledged — a failed child
+            // insert stays dirty and is re-pushed via update (TAB-34).
             try markSermonSyncedIfStillPresent(
                 sermonId: sermonId,
-                remoteId: newRemoteId,
+                remoteId: createResult.remoteId,
                 syncedAt: syncedAt,
-                scopes: .all
+                scopes: createResult.syncedScopes
             )
         } catch SyncError.remoteAlreadyExists {
             let resolvedRemoteId = try await resolveExistingRemoteId(for: sermonId, userId: userId)

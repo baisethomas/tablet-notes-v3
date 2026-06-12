@@ -2,7 +2,7 @@ import Foundation
 
 protocol SermonSyncRemoteGatewayProtocol {
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData]
-    func createRemoteSermon(data: SermonSyncData) async throws -> String
+    func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult
     func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws
     func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL
     func deleteRemoteSermon(remoteId: String) async throws
@@ -21,7 +21,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         try await supabaseService.fetchRemoteSermons(for: userId)
     }
 
-    func createRemoteSermon(data: SermonSyncData) async throws -> String {
+    func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
         print("[SyncService] Creating remote sermon: \(data.title)")
 
         let token = try await getAuthToken()
@@ -118,8 +118,26 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             throw SyncError.dataCorruption
         }
 
-        print("[SyncService] ✅ Sermon created with ID: \(sermonId)")
-        return sermonId
+        let syncedScopes = parseSyncedScopes(data["syncedScopes"])
+        if syncedScopes != .all {
+            print("[SyncService] ⚠️ Sermon created with partial child inserts: \(sermonId)")
+        } else {
+            print("[SyncService] ✅ Sermon created with ID: \(sermonId)")
+        }
+
+        return RemoteSermonCreateResult(remoteId: sermonId, syncedScopes: syncedScopes)
+    }
+
+    /// Older backend deployments omit syncedScopes — treat as fully synced,
+    /// which matches the previous clear-everything behavior.
+    private func parseSyncedScopes(_ value: Any?) -> SermonSyncScopes {
+        guard let dict = value as? [String: Any] else { return .all }
+        return SermonSyncScopes(
+            metadata: dict["metadata"] as? Bool ?? true,
+            notes: dict["notes"] as? Bool ?? true,
+            transcript: dict["transcript"] as? Bool ?? true,
+            summary: dict["summary"] as? Bool ?? true
+        )
     }
 
     func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
