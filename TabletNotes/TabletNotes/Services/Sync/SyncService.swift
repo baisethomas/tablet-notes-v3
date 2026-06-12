@@ -217,8 +217,15 @@ final class SermonSyncEngine {
             }
 
             print("[SyncService] 🔗 Linking remote sermon \(remoteSermon.id) to existing local sermon \(remoteSermon.localId)")
-            unlinkedSermon.remoteId = remoteSermon.id
-            try localRepository.save()
+            // Full sync bookkeeping, not just remoteId: a row left with
+            // syncStatus == "localOnly" would get re-marked for a full push
+            // (e.g. by MigrationSafety) and overwrite the remote copy.
+            try localRepository.markSermonSynced(
+                unlinkedSermon,
+                remoteId: remoteSermon.id,
+                syncedAt: Date(),
+                scopes: .none
+            )
             try await mergeRemoteSermon(remoteSermon, into: unlinkedSermon)
             return
         }

@@ -1037,6 +1037,52 @@ struct SyncServiceMergeTests {
         #expect(allSermons.first?.title == "Remote Title")
     }
 
+    @Test func pullLinkingMarksSermonSyncedWhenLocalRowIsNewerThanRemote() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        // Local row is newer than remote, so the merge takes the
+        // "local is up to date" branch — the link alone must still record
+        // full sync bookkeeping, or the row stays "localOnly" and gets
+        // re-marked for a full push (e.g. by MigrationSafety).
+        let sermon = Sermon(
+            title: "Local Title",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "localOnly",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            updatedAt: Date().addingTimeInterval(600)
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        let remoteSermon = makeRemoteSermon(
+            id: "remote-existing",
+            localId: sermon.id,
+            userId: user.id,
+            title: "Remote Title"
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[remoteSermon]]
+        )
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 1)
+        #expect(allSermons.first?.remoteId == "remote-existing")
+        #expect(allSermons.first?.syncStatus == "synced")
+        #expect(allSermons.first?.lastSyncedAt != nil)
+        // Local fields win because the local row is newer.
+        #expect(allSermons.first?.title == "Local Title")
+    }
+
     @Test func pullSkipsConflictingRemoteSermonWhenLocalIdAlreadyLinkedElsewhere() async throws {
         let user = makeSyncUser()
         let recorder = CallRecorder()
