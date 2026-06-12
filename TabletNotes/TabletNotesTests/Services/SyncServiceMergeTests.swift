@@ -120,6 +120,7 @@ struct SyncServiceMergeTests {
 
         var shouldBlockCreate = false
         var shouldBlockFetch = false
+        var createSyncedScopes: SermonSyncScopes = .all
 
         init(
             recorder: CallRecorder,
@@ -146,7 +147,7 @@ struct SyncServiceMergeTests {
             return fetchedRemoteSermonPages.removeFirst()
         }
 
-        func createRemoteSermon(data: SermonSyncData) async throws -> String {
+        func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
             _ = data
             createCallCount += 1
             recorder.record("remote.create")
@@ -157,7 +158,10 @@ struct SyncServiceMergeTests {
                 }
             }
 
-            return try createResult.get()
+            return RemoteSermonCreateResult(
+                remoteId: try createResult.get(),
+                syncedScopes: createSyncedScopes
+            )
         }
 
         func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
@@ -992,6 +996,52 @@ struct SyncServiceMergeTests {
         #expect(recorder.events.contains("remote.download") == false)
     }
 
+    // MARK: - TAB-34: create clears only server-acknowledged scopes
+
+    @Test func createKeepsUnacknowledgedScopesDirtyForRepush() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Partial Create Sermon",
+            audioFileName: "partial.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true,
+            notesNeedSync: true,
+            transcriptNeedsSync: true,
+            summaryNeedsSync: true
+        )
+
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        // Backend persisted the row and notes, but the transcript and summary
+        // inserts failed.
+        let partialScopes = SermonSyncScopes(metadata: true, notes: true, transcript: false, summary: false)
+        let remoteGateway = SyncRemoteGatewaySpy(recorder: recorder)
+        remoteGateway.createSyncedScopes = partialScopes
+
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        #expect(localRepository.markedScopes == [partialScopes])
+        #expect(localRepository.markedRemoteIds == ["remote-created"])
+        // Unacknowledged scopes stay dirty so the next sync re-pushes them.
+        #expect(sermon.metadataNeedsSync == false)
+        #expect(sermon.notesNeedSync == false)
+        #expect(sermon.transcriptNeedsSync == true)
+        #expect(sermon.summaryNeedsSync == true)
+        #expect(sermon.hasPendingSyncWork == true)
+    }
+
     // MARK: - TAB-35: pull must dedup by localId when remoteId is unset
 
     @Test func pullLinksRemoteIdOntoUnlinkedLocalSermonWithSameLocalId() async throws {
@@ -1137,9 +1187,9 @@ struct SyncServiceMergeTests {
             []
         }
 
-        func createRemoteSermon(data: SermonSyncData) async throws -> String {
+        func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
             onCreate?()
-            return "remote-created"
+            return RemoteSermonCreateResult(remoteId: "remote-created", syncedScopes: .all)
         }
 
         func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
