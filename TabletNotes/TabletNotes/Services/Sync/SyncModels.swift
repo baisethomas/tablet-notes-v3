@@ -34,6 +34,15 @@ struct SermonSyncScopes: Equatable {
         transcript: true,
         summary: true
     )
+
+    /// Sync bookkeeping only (remoteId/lastSyncedAt/syncStatus) — clears no
+    /// dirty scopes, so pending local changes still push afterwards.
+    static let none = SermonSyncScopes(
+        metadata: false,
+        notes: false,
+        transcript: false,
+        summary: false
+    )
 }
 
 struct NoteSyncPayload {

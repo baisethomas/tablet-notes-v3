@@ -992,6 +992,139 @@ struct SyncServiceMergeTests {
         #expect(recorder.events.contains("remote.download") == false)
     }
 
+    // MARK: - TAB-35: pull must dedup by localId when remoteId is unset
+
+    @Test func pullLinksRemoteIdOntoUnlinkedLocalSermonWithSameLocalId() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        // Local sermon with no remoteId (failed push / restored backup) and no
+        // pending sync work, so the push phase leaves it alone.
+        let sermon = Sermon(
+            title: "Local Title",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "localOnly",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            updatedAt: Date().addingTimeInterval(-600)
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        let remoteSermon = makeRemoteSermon(
+            id: "remote-existing",
+            localId: sermon.id,
+            userId: user.id,
+            title: "Remote Title"
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[remoteSermon]]
+        )
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 1)
+        #expect(allSermons.first?.id == sermon.id)
+        #expect(allSermons.first?.remoteId == "remote-existing")
+        // Remote is newer and local is clean, so remote fields win.
+        #expect(allSermons.first?.title == "Remote Title")
+    }
+
+    @Test func pullLinkingMarksSermonSyncedWhenLocalRowIsNewerThanRemote() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        // Local row is newer than remote, so the merge takes the
+        // "local is up to date" branch — the link alone must still record
+        // full sync bookkeeping, or the row stays "localOnly" and gets
+        // re-marked for a full push (e.g. by MigrationSafety).
+        let sermon = Sermon(
+            title: "Local Title",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "localOnly",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            updatedAt: Date().addingTimeInterval(600)
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        let remoteSermon = makeRemoteSermon(
+            id: "remote-existing",
+            localId: sermon.id,
+            userId: user.id,
+            title: "Remote Title"
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[remoteSermon]]
+        )
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 1)
+        #expect(allSermons.first?.remoteId == "remote-existing")
+        #expect(allSermons.first?.syncStatus == "synced")
+        #expect(allSermons.first?.lastSyncedAt != nil)
+        // Local fields win because the local row is newer.
+        #expect(allSermons.first?.title == "Local Title")
+    }
+
+    @Test func pullSkipsConflictingRemoteSermonWhenLocalIdAlreadyLinkedElsewhere() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Local Title",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "synced",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-other",
+            updatedAt: Date().addingTimeInterval(-600)
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+
+        // A different remote row claims the same localId — pulling it must not
+        // relink the local sermon or insert a duplicate row with the same id.
+        let conflictingRemote = makeRemoteSermon(
+            id: "remote-conflicting",
+            localId: sermon.id,
+            userId: user.id,
+            title: "Conflicting Remote Title"
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[conflictingRemote]]
+        )
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 1)
+        #expect(allSermons.first?.remoteId == "remote-other")
+        #expect(allSermons.first?.title == "Local Title")
+    }
+
     // MARK: - TAB-21: deletion during in-flight push must not crash
 
     /// Remote gateway that runs a caller-supplied action while the push is
