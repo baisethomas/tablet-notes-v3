@@ -11,6 +11,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { getSubscriptionState } = require('./utils/subscriptionTier');
 
 // Circuit breaker for OpenAI API
 const openAIBreaker = new CircuitBreaker(5, 30000); // 5 failures, 30 second timeout
@@ -143,40 +144,15 @@ exports.handler = withLogging('summarize', async (event, context) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    // Fetch user profile to get subscription tier
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('subscription_tier, subscription_status, subscription_expiry')
-      .eq('id', user.id)
-      .single();
-    
-    if (profileError) {
-      logger.warn('Could not fetch user profile, defaulting to basic tier', {
-        userId: user.id,
-        error: profileError.message
-      });
-    }
-    
-    // Determine user tier - check if they have an active paid subscription
-    let userTier = 'basic';
-    if (profile) {
-      const tier = profile.subscription_tier || 'free';
-      const status = profile.subscription_status || 'free';
-      const expiry = profile.subscription_expiry ? new Date(profile.subscription_expiry) : null;
-      
-      // Check if subscription is active and not expired
-      if (tier !== 'free' && status === 'active') {
-        if (!expiry || expiry > new Date()) {
-          userTier = tier === 'premium' ? 'premium' : 'premium'; // Treat both pro and premium as premium for testing
-        }
-      }
-    }
-    
+    // Resolve subscription via the shared helper (single source of truth for
+    // server-side tier checks). Paid + active + unexpired → premium summary.
+    const subscription = await getSubscriptionState({ supabase, userId: user.id, logger });
+    const userTier = subscription.isPaid ? 'premium' : 'basic';
+
     logger.info('Processing summary request', {
       userId: user.id,
       detectedTier: userTier,
-      profileTier: profile?.subscription_tier,
-      profileStatus: profile?.subscription_status,
+      profileTier: subscription.tier,
       serviceType: actualServiceType,
       transcriptLength: text.length
     });

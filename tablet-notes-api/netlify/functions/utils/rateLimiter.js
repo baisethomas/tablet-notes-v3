@@ -52,15 +52,73 @@ const RATE_LIMITS = {
   }
 };
 
+/**
+ * Per-container fixed-window counters used when Redis is unavailable.
+ * Counters reset on cold start and are not shared across containers, so the
+ * effective ceiling is (maxRequests × warm containers) — far better than the
+ * previous behavior of allowing everything when Redis was missing or erroring.
+ */
+class InMemoryCounterStore {
+  constructor(maxEntries = 10000) {
+    this.counters = new Map();
+    this.maxEntries = maxEntries;
+  }
+
+  /**
+   * @returns {number|null} The new count for the key, or null when the store
+   * is at capacity and cannot admit a new key — maxEntries is a hard cap, so
+   * high-cardinality traffic can't grow the Map without bound. Callers must
+   * treat null as a denied request (fail closed); existing keys keep counting.
+   */
+  increment(key, expiresAt) {
+    const now = Date.now();
+    const entry = this.counters.get(key);
+
+    if (entry && entry.expiresAt > now) {
+      entry.count += 1;
+      return entry.count;
+    }
+
+    // Expired entry: replace in place, capacity unchanged.
+    if (entry) {
+      this.counters.set(key, { count: 1, expiresAt });
+      return 1;
+    }
+
+    if (this.counters.size >= this.maxEntries) {
+      this.prune(now);
+    }
+
+    if (this.counters.size >= this.maxEntries) {
+      return null;
+    }
+
+    this.counters.set(key, { count: 1, expiresAt });
+    return 1;
+  }
+
+  prune(now) {
+    for (const [key, entry] of this.counters) {
+      if (entry.expiresAt <= now) {
+        this.counters.delete(key);
+      }
+    }
+  }
+}
+
 class RateLimiter {
   constructor() {
     // Initialize Redis client only if URL is provided
     this.redis = null;
+    this.memory = new InMemoryCounterStore();
+    this.warnedAboutMissingRedis = false;
     if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
       this.redis = new Redis({
         url: process.env.UPSTASH_REDIS_REST_URL,
         token: process.env.UPSTASH_REDIS_REST_TOKEN,
       });
+    } else {
+      console.warn('[RateLimiter] ⚠️ UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN not configured — falling back to per-container in-memory rate limiting. Configure Upstash Redis for production.');
     }
   }
 
@@ -72,25 +130,27 @@ class RateLimiter {
    * @returns {Promise<{allowed: boolean, remaining: number, resetTime: number, error?: string}>}
    */
   async checkLimit(identifier, limitType = 'general', ip = null) {
+    const config = RATE_LIMITS[limitType];
+    if (!config) {
+      throw new Error(`Invalid rate limit type: ${limitType}`);
+    }
+
+    if (!this.redis) {
+      if (!this.warnedAboutMissingRedis) {
+        console.warn('[RateLimiter] Redis not configured, using in-memory rate limiting');
+        this.warnedAboutMissingRedis = true;
+      }
+      return this.checkLimitInMemory(identifier, config, ip);
+    }
+
     try {
-      // If Redis is not configured, allow all requests (fallback)
-      if (!this.redis) {
-        console.warn('[RateLimiter] Redis not configured, allowing all requests');
-        return { allowed: true, remaining: Infinity, resetTime: Date.now() };
-      }
-
-      const config = RATE_LIMITS[limitType];
-      if (!config) {
-        throw new Error(`Invalid rate limit type: ${limitType}`);
-      }
-
       const now = Date.now();
       const window = Math.floor(now / config.windowMs);
-      
+
       // Check user-based rate limit
       const userKey = `${config.keyPrefix}${identifier}:${window}`;
       const userCount = await this.redis.incr(userKey);
-      
+
       // Set expiration for the key
       if (userCount === 1) {
         await this.redis.expire(userKey, Math.ceil(config.windowMs / 1000));
@@ -103,43 +163,76 @@ class RateLimiter {
         const ipWindow = Math.floor(now / ipConfig.windowMs);
         const ipKey = `${ipConfig.keyPrefix}${ip}:${ipWindow}`;
         const ipCount = await this.redis.incr(ipKey);
-        
+
         if (ipCount === 1) {
           await this.redis.expire(ipKey, Math.ceil(ipConfig.windowMs / 1000));
         }
-        
+
         ipAllowed = ipCount <= ipConfig.maxRequests;
       }
 
       const userAllowed = userCount <= config.maxRequests;
-      const allowed = userAllowed && ipAllowed;
-      
-      const result = {
-        allowed,
-        remaining: Math.max(0, config.maxRequests - userCount),
-        resetTime: (window + 1) * config.windowMs,
-        currentCount: userCount,
-        maxRequests: config.maxRequests
-      };
-
-      if (!allowed) {
-        result.error = !userAllowed 
-          ? `Rate limit exceeded for user. ${userCount}/${config.maxRequests} requests in window.`
-          : `Rate limit exceeded for IP address.`;
-      }
-
-      return result;
+      return this.buildResult(config, window, userCount, userAllowed, ipAllowed);
 
     } catch (error) {
-      console.error('[RateLimiter] Error checking rate limit:', error);
-      // In case of Redis errors, allow the request but log the error
-      return { 
-        allowed: true, 
-        remaining: 0, 
-        resetTime: Date.now(),
-        error: `Rate limiter error: ${error.message}`
+      // Redis is configured but failing — degrade to the in-memory limiter
+      // instead of allowing unlimited requests.
+      console.error('[RateLimiter] Redis error, falling back to in-memory limiting:', error);
+      return this.checkLimitInMemory(identifier, config, ip);
+    }
+  }
+
+  checkLimitInMemory(identifier, config, ip = null) {
+    const now = Date.now();
+    const window = Math.floor(now / config.windowMs);
+    const windowEnd = (window + 1) * config.windowMs;
+
+    const userKey = `${config.keyPrefix}${identifier}:${window}`;
+    const userCount = this.memory.increment(userKey, windowEnd);
+
+    if (userCount === null) {
+      console.warn('[RateLimiter] In-memory store at capacity; rejecting request for untracked key');
+      return {
+        allowed: false,
+        remaining: 0,
+        resetTime: windowEnd,
+        currentCount: 0,
+        maxRequests: config.maxRequests,
+        error: 'Rate limiter at capacity. Please retry later.'
       };
     }
+
+    let ipAllowed = true;
+    if (ip) {
+      const ipConfig = RATE_LIMITS.ip;
+      const ipWindow = Math.floor(now / ipConfig.windowMs);
+      const ipKey = `${ipConfig.keyPrefix}${ip}:${ipWindow}`;
+      const ipCount = this.memory.increment(ipKey, (ipWindow + 1) * ipConfig.windowMs);
+      // null = store full: fail closed for the untracked IP as well.
+      ipAllowed = ipCount !== null && ipCount <= ipConfig.maxRequests;
+    }
+
+    const userAllowed = userCount <= config.maxRequests;
+    return this.buildResult(config, window, userCount, userAllowed, ipAllowed);
+  }
+
+  buildResult(config, window, userCount, userAllowed, ipAllowed) {
+    const allowed = userAllowed && ipAllowed;
+    const result = {
+      allowed,
+      remaining: Math.max(0, config.maxRequests - userCount),
+      resetTime: (window + 1) * config.windowMs,
+      currentCount: userCount,
+      maxRequests: config.maxRequests
+    };
+
+    if (!allowed) {
+      result.error = !userAllowed
+        ? `Rate limit exceeded for user. ${userCount}/${config.maxRequests} requests in window.`
+        : `Rate limit exceeded for IP address.`;
+    }
+
+    return result;
   }
 
   /**
@@ -281,5 +374,7 @@ function createRateLimitMiddleware(limitType = 'general') {
 module.exports = {
   rateLimiter,
   createRateLimitMiddleware,
-  RATE_LIMITS
+  RATE_LIMITS,
+  RateLimiter,
+  InMemoryCounterStore
 };
