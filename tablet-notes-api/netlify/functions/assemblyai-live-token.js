@@ -10,16 +10,10 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { getSubscriptionState } = require('./utils/subscriptionTier');
 
 // Circuit breaker for AssemblyAI API
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
-
-// Helper function to check if user has pro/premium subscription
-function hasLiveTranscriptionAccess(user) {
-  // Check if user has pro or premium tier (default to pro for new users)
-  const tier = user.user_metadata?.subscription_tier || 'pro';
-  return tier === 'pro' || tier === 'premium';
-}
 
 exports.handler = withLogging('assemblyai-live-token', async (event, context) => {
   const logger = event.logger;
@@ -55,14 +49,27 @@ exports.handler = withLogging('assemblyai-live-token', async (event, context) =>
     const user = event.user; // User was authenticated by middleware
     logger.info('User authenticated successfully', { userId: user.id });
 
-    // Check if user has access to live transcription
-    if (!hasLiveTranscriptionAccess(user)) {
+    // Live transcription is paid-only. Tier comes from profiles (the same
+    // source summarize uses) and defaults to free — previously this read
+    // user_metadata and defaulted missing metadata to 'pro' (TAB-37).
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      logger.error('Missing Supabase configuration; cannot verify subscription tier');
+      return createErrorResponse(new Error('Live transcription service not available'), 503);
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const subscription = await getSubscriptionState({ supabase, userId: user.id, logger });
+
+    if (!subscription.isPaid) {
       logger.warn('Live transcription access denied', {
         userId: user.id,
-        tier: user.user_metadata?.subscription_tier || 'unknown'
+        tier: subscription.tier
       });
       return createErrorResponse(
-        new Error('Live transcription requires Pro or Premium subscription'), 
+        new Error('Live transcription requires an active Pro or Premium subscription'),
         403
       );
     }

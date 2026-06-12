@@ -27,7 +27,17 @@ The Tablet Notes API has been enhanced with comprehensive security measures to p
 
 **Setup**: 
 1. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` environment variables
-2. If Redis is unavailable, system falls back to allowing all requests with warnings
+2. If Redis is missing or erroring, the limiter falls back to per-container
+   in-memory counters with the same limits (counters reset on cold start and
+   are not shared across containers). Redis is required for accurate
+   cross-container limits in production — a startup warning is logged when
+   it is not configured.
+
+**Subscription tier enforcement**: server-side tier checks read
+`profiles.subscription_tier` / `subscription_status` / `subscription_expiry`
+via `utils/subscriptionTier.js` and default to `free` (fail closed). Live
+transcription tokens (`assemblyai-live-token`) require an active paid
+subscription.
 
 ### 2. Input Validation
 
