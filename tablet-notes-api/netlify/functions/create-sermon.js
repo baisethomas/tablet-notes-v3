@@ -8,37 +8,7 @@ const {
 const { withLogging } = require('./utils/logger');
 const { Validator } = require('./utils/validator');
 const { createSermonChildren } = require('./utils/createSermonChildren');
-
-/**
- * Removes the audio object the client uploaded for this create attempt.
- * Upload paths are unique per attempt (generate-upload-url uses randomUUID),
- * so when the sermon row insert fails the object is unreachable garbage —
- * including on 409, where the existing row references its own earlier path.
- */
-async function cleanupUploadedAudio(supabase, audioFilePath, logger) {
-  if (!audioFilePath) return;
-
-  try {
-    const { error } = await supabase
-      .storage
-      .from('sermon-audio')
-      .remove([audioFilePath]);
-
-    if (error) {
-      logger.warn('Failed to clean up orphan audio upload', {
-        audioFilePath,
-        error: error.message
-      });
-    } else {
-      logger.info('Cleaned up orphan audio upload', { audioFilePath });
-    }
-  } catch (cleanupError) {
-    logger.warn('Error cleaning up orphan audio upload', {
-      audioFilePath,
-      error: cleanupError.message
-    });
-  }
-}
+const { cleanupOrphanAudioUpload } = require('./utils/storageCleanup');
 
 exports.handler = withLogging('create-sermon', async (event, context) => {
   const logger = event.logger;
@@ -123,8 +93,14 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
       });
 
       // The row doesn't exist, so the audio uploaded for this attempt is
-      // orphaned — remove it before reporting the failure (TAB-34).
-      await cleanupUploadedAudio(supabase, sermonData.audio_file_path, logger);
+      // orphaned — remove it before reporting the failure (TAB-34). The
+      // helper validates the path is the user's own and unreferenced.
+      await cleanupOrphanAudioUpload({
+        supabase,
+        audioFilePath: sermonData.audio_file_path,
+        userId: user.id,
+        logger
+      });
 
       // Handle unique constraint violation (sermon already exists)
       if (insertError.code === '23505') {
