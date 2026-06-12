@@ -64,22 +64,40 @@ class InMemoryCounterStore {
     this.maxEntries = maxEntries;
   }
 
+  /**
+   * @returns {number|null} The new count for the key, or null when the store
+   * is at capacity and cannot admit a new key — maxEntries is a hard cap, so
+   * high-cardinality traffic can't grow the Map without bound. Callers must
+   * treat null as a denied request (fail closed); existing keys keep counting.
+   */
   increment(key, expiresAt) {
     const now = Date.now();
     const entry = this.counters.get(key);
 
-    if (!entry || entry.expiresAt <= now) {
-      this.prune(now);
+    if (entry && entry.expiresAt > now) {
+      entry.count += 1;
+      return entry.count;
+    }
+
+    // Expired entry: replace in place, capacity unchanged.
+    if (entry) {
       this.counters.set(key, { count: 1, expiresAt });
       return 1;
     }
 
-    entry.count += 1;
-    return entry.count;
+    if (this.counters.size >= this.maxEntries) {
+      this.prune(now);
+    }
+
+    if (this.counters.size >= this.maxEntries) {
+      return null;
+    }
+
+    this.counters.set(key, { count: 1, expiresAt });
+    return 1;
   }
 
   prune(now) {
-    if (this.counters.size < this.maxEntries) return;
     for (const [key, entry] of this.counters) {
       if (entry.expiresAt <= now) {
         this.counters.delete(key);
@@ -172,13 +190,26 @@ class RateLimiter {
     const userKey = `${config.keyPrefix}${identifier}:${window}`;
     const userCount = this.memory.increment(userKey, windowEnd);
 
+    if (userCount === null) {
+      console.warn('[RateLimiter] In-memory store at capacity; rejecting request for untracked key');
+      return {
+        allowed: false,
+        remaining: 0,
+        resetTime: windowEnd,
+        currentCount: 0,
+        maxRequests: config.maxRequests,
+        error: 'Rate limiter at capacity. Please retry later.'
+      };
+    }
+
     let ipAllowed = true;
     if (ip) {
       const ipConfig = RATE_LIMITS.ip;
       const ipWindow = Math.floor(now / ipConfig.windowMs);
       const ipKey = `${ipConfig.keyPrefix}${ip}:${ipWindow}`;
       const ipCount = this.memory.increment(ipKey, (ipWindow + 1) * ipConfig.windowMs);
-      ipAllowed = ipCount <= ipConfig.maxRequests;
+      // null = store full: fail closed for the untracked IP as well.
+      ipAllowed = ipCount !== null && ipCount <= ipConfig.maxRequests;
     }
 
     const userAllowed = userCount <= config.maxRequests;
@@ -344,5 +375,6 @@ module.exports = {
   rateLimiter,
   createRateLimitMiddleware,
   RATE_LIMITS,
-  RateLimiter
+  RateLimiter,
+  InMemoryCounterStore
 };
