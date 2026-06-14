@@ -75,17 +75,27 @@ async function fetchBucket(supabase, description, filters, cutoffIso) {
   return data;
 }
 
-async function applyUpdate(supabase, ids, patch) {
+async function applyUpdate(supabase, ids, patch, guard, cutoffIso) {
   // Chunk to stay well under URL length limits for the id list.
   const chunkSize = 50;
+  let updated = 0;
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize);
-    const { error } = await supabase
+    let query = supabase
       .from('sermons')
       .update({ ...patch, updated_at: new Date().toISOString() })
-      .in('id', chunk);
+      .in('id', chunk)
+      // Re-check the expected status + cutoff at write time so a row that
+      // changed between the dry-run selection and now is left untouched.
+      .lt('updated_at', cutoffIso);
+    for (const [column, value] of Object.entries(guard)) {
+      query = query.eq(column, value);
+    }
+    const { data, error } = await query.select('id');
     if (error) throw new Error(`Update failed for chunk starting at ${i}: ${error.message}`);
+    updated += data.length;
   }
+  return updated;
 }
 
 async function main() {
@@ -135,21 +145,35 @@ async function main() {
   }
 
   if (stuckTranscription.length > 0) {
-    await applyUpdate(
+    // Only normalize transcription. Once the client re-transcribes and the
+    // row reaches 'complete', SummaryRetryService re-queues the summary
+    // (it acts on summary status processing/pending) — so we never rewrite
+    // summary_status here and can't clobber an unrelated summary state.
+    const updated = await applyUpdate(
       supabase,
       stuckTranscription.map(r => r.id),
-      { transcription_status: 'failed', summary_status: 'pending' }
+      { transcription_status: 'failed' },
+      { transcription_status: 'processing' },
+      cutoffIso
     );
-    console.log(`\nUpdated ${stuckTranscription.length} stuck transcription rows`);
+    console.log(`\nUpdated ${updated} stuck transcription rows` +
+      (updated < stuckTranscription.length
+        ? ` (${stuckTranscription.length - updated} skipped — changed since selection)`
+        : ''));
   }
 
   if (stuckSummaries.length > 0) {
-    await applyUpdate(
+    const updated = await applyUpdate(
       supabase,
       stuckSummaries.map(r => r.id),
-      { summary_status: 'pending' }
+      { summary_status: 'pending' },
+      { transcription_status: 'complete', summary_status: 'processing' },
+      cutoffIso
     );
-    console.log(`Updated ${stuckSummaries.length} stuck summary rows`);
+    console.log(`Updated ${updated} stuck summary rows` +
+      (updated < stuckSummaries.length
+        ? ` (${stuckSummaries.length - updated} skipped — changed since selection)`
+        : ''));
   }
 
   await printStatusBreakdown(supabase, 'Status breakdown AFTER');
