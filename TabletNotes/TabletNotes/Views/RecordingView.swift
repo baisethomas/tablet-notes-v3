@@ -134,8 +134,16 @@ struct RecordingView: View {
             transcript = newTranscript
             scheduleTranscriptAnalysis(newTranscript)
         }
-        .onReceive(transcriptionService.$liveStartupError.compactMap { $0 }) { message in
-            withAnimation { transcriptProcessingError = message }
+        .onReceive(transcriptionService.$liveStartupError) { message in
+            withAnimation {
+                if let message {
+                    transcriptProcessingError = message
+                } else if transcriptProcessingError == TranscriptionService.liveCaptionsUnavailableMessage {
+                    // Live captions recovered — clear only our own banner, never
+                    // an unrelated notice (e.g. "Recording was interrupted").
+                    transcriptProcessingError = nil
+                }
+            }
         }
         .onReceive(noteService.notesPublisher) { updatedNotes in
             notes = updatedNotes

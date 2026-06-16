@@ -14,10 +14,16 @@ class TranscriptionService: NSObject, ObservableObject {
     private let transcriptSubject = CurrentValueSubject<String, Never>("")
     var transcriptPublisher: AnyPublisher<String, Never> { transcriptSubject.eraseToAnyPublisher() }
 
+    /// User-facing notice shown when live captions can't start. Exposed as a
+    /// constant so the view can tell *its* live-caption banner apart from
+    /// other transcript notices and clear only that one.
+    static let liveCaptionsUnavailableMessage = "Live captions couldn't start. Your recording is still being saved and will be transcribed when you finish."
+
     /// Set when live transcription startup fails (e.g. the backend token
-    /// endpoint denies a free-tier user or is unavailable). Recording is
-    /// unaffected — the audio is still saved and transcribed after recording —
-    /// so the UI surfaces this as a non-blocking notice rather than an error.
+    /// endpoint denies a free-tier user or is unavailable), cleared on a
+    /// successful start. Recording is unaffected — the audio is still saved and
+    /// transcribed after recording — so the UI surfaces this as a non-blocking
+    /// notice rather than an error.
     @Published var liveStartupError: String?
     private var timer: Timer?
     private let sessionLimit: TimeInterval = 59 // seconds
@@ -104,7 +110,7 @@ class TranscriptionService: NSObject, ObservableObject {
                 liveStartupError = nil
             } catch {
                 print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
-                liveStartupError = "Live captions couldn't start. Your recording is still being saved and will be transcribed when you finish."
+                liveStartupError = Self.liveCaptionsUnavailableMessage
             }
         }
     }

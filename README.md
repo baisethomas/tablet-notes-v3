@@ -178,7 +178,7 @@ XAI_API_KEY=your_xai_key
 
 Update hardcoded values in appropriate config files:
 - Netlify API base URL (currently hardcoded)
-- Supabase credentials (should move to Config.plist)
+- Supabase credentials (in `SupabaseConfig.swift`; the anon key is client-safe)
 
 ## Getting Started
 
@@ -290,7 +290,7 @@ See `Documentation/` for complete schema definitions.
 
 ### Known Security Considerations
 - ⚠️ Netlify API base URL currently hardcoded in app (should use environment-specific config)
-- ⚠️ Supabase credentials in app code (consider moving to secure Config.plist)
+- ✅ Supabase anon key in app code is client-safe (restricted by Row Level Security; not a secret)
 - ✅ No sensitive data logged to console in production builds
 - ✅ Rate limiting on chat endpoint prevents abuse
 
