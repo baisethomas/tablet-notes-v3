@@ -128,9 +128,13 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
             switch result {
             case .success(let verification):
                 let transaction = try await checkVerified(verification)
-                
-                // Update user subscription in database
-                await updateUserSubscription(for: transaction, product: product)
+
+                // Update user subscription in database (verified server-side)
+                await updateUserSubscription(
+                    signedTransaction: verification.jwsRepresentation,
+                    transaction: transaction,
+                    product: product
+                )
                 
                 // Finish the transaction
                 await transaction.finish()
@@ -197,10 +201,11 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
             for await result in Transaction.updates {
                 do {
                     let transaction = try await self?.checkVerified(result)
-                    
+                    let signedTransaction = result.jwsRepresentation
+
                     await MainActor.run { [weak self] in
                         Task {
-                            await self?.handleTransaction(transaction)
+                            await self?.handleTransaction(transaction, signedTransaction: signedTransaction)
                         }
                     }
                 } catch {
@@ -210,14 +215,18 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
         }
     }
     
-    private func handleTransaction(_ transaction: Transaction?) async {
-        guard let transaction = transaction else { return }
-        
+    private func handleTransaction(_ transaction: Transaction?, signedTransaction: String?) async {
+        guard let transaction = transaction, let signedTransaction = signedTransaction else { return }
+
         // Find the product for this transaction
         if let product = availableProducts.first(where: { $0.id == transaction.productID }) {
-            await updateUserSubscription(for: transaction, product: product)
+            await updateUserSubscription(
+                signedTransaction: signedTransaction,
+                transaction: transaction,
+                product: product
+            )
         }
-        
+
         await loadPurchasedProducts()
         await transaction.finish()
     }
@@ -272,37 +281,49 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
         }
     }
     
-    private func updateUserSubscription(for transaction: Transaction, product: Product) async {
+    private func updateUserSubscription(signedTransaction: String, transaction: Transaction, product: Product) async {
         guard let user = authManager.currentUser else { return }
-        
-        // Find the subscription plan
-        guard let plan = SubscriptionPlan.allPlans.first(where: { $0.productId == product.id }) else {
-            return
-        }
-        
-        // Update user subscription details
-        user.subscriptionTier = plan.tier.rawValue
-        user.subscriptionStatus = SubscriptionStatus.active.rawValue
-        user.subscriptionProductId = product.id
-        user.subscriptionPurchaseDate = transaction.purchaseDate
-        user.subscriptionExpiry = transaction.expirationDate
-        user.subscriptionRenewalDate = transaction.expirationDate
-        
-        // Reset monthly usage if upgrading from free
-        if user.shouldResetMonthlyUsage() {
-            user.resetMonthlyUsage()
-        }
-        
-        // Update in database
+
         do {
-            try await supabaseService.updateUserProfile(user)
+            // Persist via the backend, which verifies the signed transaction
+            // with Apple and returns the authoritative entitlement. The client
+            // never asserts its own tier — that would let anyone self-grant
+            // premium (TAB-47, protects the TAB-37 server-side tier checks).
+            let verified = try await supabaseService.verifyPurchase(
+                signedTransaction: signedTransaction
+            )
+
+            user.subscriptionTier = verified.subscriptionTier
+            user.subscriptionStatus = verified.subscriptionStatus
+            user.subscriptionProductId = verified.subscriptionProductId ?? product.id
+            user.subscriptionPurchaseDate = Self.parseISODate(verified.subscriptionPurchaseDate) ?? transaction.purchaseDate
+            user.subscriptionExpiry = Self.parseISODate(verified.subscriptionExpiry) ?? transaction.expirationDate
+            user.subscriptionRenewalDate = Self.parseISODate(verified.subscriptionRenewalDate) ?? transaction.expirationDate
+
+            if user.shouldResetMonthlyUsage() {
+                user.resetMonthlyUsage()
+            }
+
+            currentTier = user.subscriptionTierEnum
+            subscriptionStatus = user.subscriptionStatusEnum
         } catch {
-            print("Failed to update user subscription in database: \(error)")
+            // Leave local state unchanged on failure. StoreKit will resurface
+            // the entitlement via Transaction.updates / currentEntitlements, so
+            // verification is retried on the next purchase event or app launch.
+            print("[SubscriptionService] Failed to verify/persist purchase: \(error)")
         }
-        
-        // Update local state
-        currentTier = plan.tier
-        subscriptionStatus = .active
+    }
+
+    /// Parses an ISO-8601 timestamp from the backend, tolerating the fractional
+    /// seconds that `Date.toISOString()` emits.
+    private static func parseISODate(_ string: String?) -> Date? {
+        guard let string else { return nil }
+        let withFractional = ISO8601DateFormatter()
+        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractional.date(from: string) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: string)
     }
     
     // MARK: - Helper Methods
