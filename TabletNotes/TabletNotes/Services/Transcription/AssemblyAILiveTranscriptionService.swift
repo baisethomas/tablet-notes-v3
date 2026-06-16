@@ -100,21 +100,18 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
             self.transcriptSubject.send("")
         }
 
+        // Get a temporary session token from our backend token endpoint. There
+        // is intentionally NO direct-key fallback: a bundled AssemblyAI key
+        // would ship in the IPA and bypass the server-side subscription tier
+        // gate in assemblyai-live-token (TAB-45 / TAB-37).
         do {
-            // First, try to get a temporary session token from our Netlify function
             try await getSessionToken()
         } catch {
-            print("[AssemblyAI Live] Failed to get session token from Netlify function: \(error)")
-            do {
-                // Fallback: use direct API key access
-                try await getSessionTokenDirect()
-            } catch let directError {
-                print("[AssemblyAI Live] Direct API key access also failed: \(directError)")
-                DispatchQueue.main.async {
-                    self.error = "AssemblyAI Live transcription is not available. Please check your configuration."
-                }
-                throw directError
+            print("[AssemblyAI Live] Failed to get session token: \(error)")
+            DispatchQueue.main.async {
+                self.error = "Live transcription is not available right now. Please try again."
             }
+            throw error
         }
 
         // Start WebSocket connection
@@ -180,42 +177,6 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
 
         self.sessionToken = try decodeSessionToken(from: data)
-    }
-
-    private func getSessionTokenDirect() async throws {
-        print("[AssemblyAI Live] Using direct API key for session token")
-
-        // Check if API key is configured
-        guard AssemblyAIConfig.apiKey != "YOUR_ASSEMBLYAI_API_KEY_HERE" && !AssemblyAIConfig.apiKey.isEmpty else {
-            throw NSError(domain: "APIKeyError", code: 1, userInfo: [NSLocalizedDescriptionKey: "AssemblyAI API key not configured. Set ASSEMBLYAI_API_KEY for direct fallback token flow."])
-        }
-
-        // Use v3 streaming API endpoint with query parameters
-        guard let url = URL(string: "https://streaming.assemblyai.com/v3/token?expires_in_seconds=600&max_session_duration_seconds=10800") else {
-            throw NSError(domain: "InvalidURL", code: 1, userInfo: nil)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(AssemblyAIConfig.apiKey, forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 10 // 10 second timeout to prevent hanging
-
-        let (data, response) = try await NetworkRetry.withExponentialBackoff(maxAttempts: 2) {
-            try await URLSession.shared.data(for: request)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "InvalidResponse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
-        }
-
-        if httpResponse.statusCode != 200 {
-            let responseBody = String(data: data, encoding: .utf8) ?? "No response body"
-            print("[AssemblyAI Live] Direct token request failed with status: \(httpResponse.statusCode), body: \(responseBody)")
-            throw NSError(domain: "TokenError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get session token directly: \(responseBody)"])
-        }
-
-        let tokenResponse = try JSONDecoder().decode(DirectTokenResponse.self, from: data)
-        self.sessionToken = tokenResponse.token
     }
 
     private func decodeSessionToken(from data: Data) throws -> String {
@@ -800,10 +761,6 @@ private struct SessionTokenEnvelopeResponse: Codable {
     let success: Bool?
     let data: SessionTokenResponse?
     let timestamp: String?
-}
-
-private struct DirectTokenResponse: Codable {
-    let token: String
 }
 
 private struct TranscriptResponse: Codable {
