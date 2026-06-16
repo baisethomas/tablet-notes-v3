@@ -320,6 +320,39 @@ class SupabaseService: SupabaseServiceProtocol {
         }
     }
 
+    /// Sends a StoreKit signed transaction to the backend, which verifies it
+    /// with Apple and persists the resulting entitlement. The returned state is
+    /// authoritative (server-derived from the verified transaction).
+    func verifyPurchase(signedTransaction: String) async throws -> SubscriptionVerificationData {
+        let url = URL(string: "\(apiBaseUrl)/api/verify-purchase")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let accessToken = try await getAuthToken()
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["signedTransaction": signedTransaction])
+        request.timeoutInterval = 30
+
+        let (data, response) = try await NetworkRetry.withExponentialBackoff {
+            try await URLSession.shared.data(for: request)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            if let body = String(data: data, encoding: .utf8) {
+                print("[SupabaseService] verify-purchase failed (\(httpResponse.statusCode)): \(body)")
+            }
+            throw URLError(.badServerResponse)
+        }
+
+        struct Envelope: Decodable { let data: SubscriptionVerificationData }
+        return try JSONDecoder().decode(Envelope.self, from: data).data
+    }
+
     /// Downloads an audio file from Supabase storage to a local URL
     func downloadAudioFile(filename: String, localURL: URL, remotePath: String? = nil) async throws -> URL {
         print("[SupabaseService] Downloading file directly from Supabase storage: \(filename)")

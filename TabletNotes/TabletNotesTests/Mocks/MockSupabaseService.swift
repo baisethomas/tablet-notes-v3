@@ -148,6 +148,22 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         storedUsers[user.id] = user
     }
 
+    var verifyPurchaseResult: SubscriptionVerificationData?
+    private(set) var verifiedTransactions: [String] = []
+
+    func verifyPurchase(signedTransaction: String) async throws -> SubscriptionVerificationData {
+        try throwIfNeeded(for: [.authenticationRequired, .networkError, .updateFailed])
+        verifiedTransactions.append(signedTransaction)
+        return verifyPurchaseResult ?? SubscriptionVerificationData(
+            subscriptionTier: "premium",
+            subscriptionStatus: "active",
+            subscriptionProductId: "com.tabletnotes.premium.monthly",
+            subscriptionPurchaseDate: nil,
+            subscriptionExpiry: nil,
+            subscriptionRenewalDate: nil
+        )
+    }
+
     private func throwIfNeeded(for supportedErrors: [MockSupabaseError]) throws {
         guard let pendingError else { return }
         self.pendingError = nil
