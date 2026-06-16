@@ -77,6 +77,12 @@ function resolveEntitlement(payload, {
   // appAccountToken = the user's id at purchase; without this check a user
   // could replay their own signed transaction against another account to grant
   // it premium. Apple lowercases the token, so compare case-insensitively.
+  //
+  // A token-less transaction (purchased on a build before account binding) is
+  // rejected on purpose: there's nothing in the JWS to bind it to an account,
+  // and production has zero legacy paid purchases (see verify-purchase-setup.md).
+  // Do NOT relax this to allow missing tokens — that re-opens cross-account
+  // replay. Handle any genuine legacy purchase with a one-off service-role write.
   if (expectedAccountToken) {
     const token = (payload.appAccountToken || '').toLowerCase();
     if (token !== String(expectedAccountToken).toLowerCase()) {

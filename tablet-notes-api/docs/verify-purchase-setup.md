@@ -65,6 +65,24 @@ netlify deploy --prod
 Sandbox purchases are signed in the **Sandbox** environment; the verifier
 tries Production first, then Sandbox, so both work without config changes.
 
+## Legacy purchases (pre-this-build)
+
+Purchases require `appAccountToken == user id`, which the client only started
+setting in this build. A transaction bought on an older build has no token and
+is **rejected** on reconciliation ("not bound to this account") — it cannot
+self-heal. This is an intentional decision, not an oversight:
+
+- Production has **zero** recorded StoreKit purchases (every `profiles` row is
+  the 14-day trial default; none has a `subscription_product_id`), so there is
+  no legacy paid data to migrate.
+- Accepting token-less transactions to support legacy purchases would re-open
+  cross-account replay for any token-less JWS — weakening security for data
+  that doesn't exist.
+
+If a real legacy paid purchase ever surfaces, handle it with a one-off
+service-role write rather than relaxing the binding. **Sandbox testers:**
+purchase on a build that includes this change so the token is set.
+
 ## Notes / follow-ups
 
 - This is **purchase-time** verification. Lifecycle events (renewals, refunds,
@@ -73,5 +91,7 @@ tries Production first, then Sandbox, so both work without config changes.
   events (App Store Server Notifications V2) is a possible follow-up and would
   require an App Store Connect API key.
 - Subscription fields are writable **only** through this verified endpoint.
-  `update-profile` (usage counters) explicitly ignores any `subscription_*`
-  fields a client might send.
+- Usage counters (`monthly_recording_*`, etc.) are **not** persisted
+  server-side yet — that's intentionally deferred to TAB-49, which will add
+  governed, server-side usage tracking. The previous draft `update-profile`
+  endpoint was removed because it let clients write arbitrary usage values.
