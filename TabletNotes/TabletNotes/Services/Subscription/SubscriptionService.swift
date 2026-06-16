@@ -99,21 +99,50 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
     
     private func loadPurchasedProducts() async {
         var purchased: [Product] = []
-        
+        var activeReconcile: (jws: String, transaction: Transaction, product: Product)?
+
         for await result in Transaction.currentEntitlements {
             do {
                 let transaction = try await checkVerified(result)
-                
+
                 if let product = availableProducts.first(where: { $0.id == transaction.productID }) {
                     purchased.append(product)
+
+                    let unexpired = transaction.revocationDate == nil
+                        && (transaction.expirationDate == nil || transaction.expirationDate! > Date())
+                    if unexpired {
+                        activeReconcile = (result.jwsRepresentation, transaction, product)
+                    }
                 }
             } catch {
                 print("Failed to verify transaction: \(error)")
             }
         }
-        
+
         purchasedProducts = purchased
+
+        // Reconcile the active entitlement with the backend so the server catches
+        // up if an earlier purchase's verification didn't persist (backend was
+        // unconfigured or down at purchase time). Skip when the profile already
+        // reflects it, to avoid re-verifying on every launch.
+        if let active = activeReconcile, !serverReflectsActiveEntitlement(active.product) {
+            await updateUserSubscription(
+                signedTransaction: active.jws,
+                transaction: active.transaction,
+                product: active.product
+            )
+        }
+
         await updateSubscriptionStatus()
+    }
+
+    /// Whether the persisted profile already reflects an active entitlement for
+    /// the given product, so re-verification can be skipped this launch.
+    private func serverReflectsActiveEntitlement(_ product: Product) -> Bool {
+        guard let user = authManager.currentUser else { return false }
+        return user.subscriptionStatusEnum == .active
+            && user.subscriptionProductId == product.id
+            && (user.subscriptionExpiry == nil || user.subscriptionExpiry! > Date())
     }
     
     // MARK: - Purchase Flow
@@ -123,8 +152,15 @@ class SubscriptionService: ObservableObject, SubscriptionServiceProtocol {
         errorMessage = nil
         
         do {
-            let result = try await product.purchase()
-            
+            // Bind the purchase to the signed-in account. The backend rejects a
+            // transaction whose appAccountToken doesn't match the authenticated
+            // user, preventing cross-account replay of a signed transaction.
+            var options: Set<Product.PurchaseOption> = []
+            if let userId = authManager.currentUser?.id {
+                options.insert(.appAccountToken(userId))
+            }
+            let result = try await product.purchase(options: options)
+
             switch result {
             case .success(let verification):
                 let transaction = try await checkVerified(verification)

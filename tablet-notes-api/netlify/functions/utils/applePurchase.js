@@ -66,10 +66,22 @@ async function verifySignedTransaction(signedTransaction, {
 function resolveEntitlement(payload, {
   bundleId = DEFAULT_BUNDLE_ID,
   productTiers = PRODUCT_TIERS,
-  now = Date.now()
+  now = Date.now(),
+  expectedAccountToken = null
 } = {}) {
   if (payload.bundleId !== bundleId) {
     throw new Error(`Bundle ID mismatch: ${payload.bundleId}`);
+  }
+
+  // Bind the transaction to the authenticated account. The client sets
+  // appAccountToken = the user's id at purchase; without this check a user
+  // could replay their own signed transaction against another account to grant
+  // it premium. Apple lowercases the token, so compare case-insensitively.
+  if (expectedAccountToken) {
+    const token = (payload.appAccountToken || '').toLowerCase();
+    if (token !== String(expectedAccountToken).toLowerCase()) {
+      throw new Error('Transaction is not bound to this account');
+    }
   }
 
   const tier = productTiers[payload.productId];

@@ -11,11 +11,24 @@ marked premium without a verified purchase.
 | Var | Required | Value |
 |-----|----------|-------|
 | `APPLE_ROOT_CA_G3` | **Yes** | Base64 of Apple Root CA - G3 (DER `.cer`) |
+| `APPLE_APP_APPLE_ID` | **Yes** | Numeric App Store app ID (Apple ID) for the app |
 | `APPLE_ROOT_CA_G2` | Optional | Base64 of Apple Root CA - G2 (older chains) |
 | `APPLE_BUNDLE_ID` | Optional | Defaults to `Creative-Native.TabletNotes` |
-| `APPLE_APP_APPLE_ID` | Optional | Numeric App Store app ID (only needed if online checks are enabled later) |
+
+`APPLE_APP_APPLE_ID` is required because Apple's library mandates it to build a
+Production verifier, and real App Store transactions are signed in Production —
+without it every production purchase fails verification. Find it in App Store
+Connect → your app → App Information → "Apple ID" (a number). The function
+**fails closed (503)** until both required vars are set.
 
 `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are already configured.
+
+## Account binding
+
+The iOS client sets `appAccountToken = <Supabase user id>` on every purchase,
+and `verify-purchase` rejects any transaction whose token doesn't match the
+authenticated user. This prevents replaying one account's signed transaction to
+grant premium to another. No setup needed — it's automatic.
 
 ## Obtaining the root cert (public)
 
@@ -34,6 +47,7 @@ Set them with the Netlify CLI (from `tablet-notes-api/`, already linked):
 
 ```bash
 netlify env:set APPLE_ROOT_CA_G3 "$(cat approotg3.b64)"
+netlify env:set APPLE_APP_APPLE_ID "1234567890"   # your numeric App Store Apple ID
 netlify deploy --prod
 ```
 

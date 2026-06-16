@@ -48,17 +48,20 @@ exports.handler = withLogging('verify-purchase', async (event, context) => {
     }
 
     // Fail closed if the verifier isn't provisioned — never grant entitlement
-    // without a real Apple-verified transaction.
+    // without a real Apple-verified transaction. appAppleId is required: the
+    // library mandates it to construct a Production verifier, and real App
+    // Store transactions are signed in Production.
     const rootCerts = loadAppleRootCerts(process.env);
-    if (rootCerts.length === 0) {
-      logger.error('Apple root certificates not configured (APPLE_ROOT_CA_G3); cannot verify purchases');
+    const appAppleId = Number(process.env.APPLE_APP_APPLE_ID);
+    if (rootCerts.length === 0 || !Number.isFinite(appAppleId)) {
+      logger.error('Purchase verification not configured', {
+        hasRootCerts: rootCerts.length > 0,
+        hasAppAppleId: Number.isFinite(appAppleId)
+      });
       return createErrorResponse(new Error('Purchase verification is not available'), 503);
     }
 
     const bundleId = process.env.APPLE_BUNDLE_ID || DEFAULT_BUNDLE_ID;
-    const appAppleId = process.env.APPLE_APP_APPLE_ID
-      ? Number(process.env.APPLE_APP_APPLE_ID)
-      : undefined;
 
     let payload;
     try {
@@ -73,9 +76,10 @@ exports.handler = withLogging('verify-purchase', async (event, context) => {
 
     let entitlement;
     try {
-      entitlement = resolveEntitlement(payload, { bundleId });
+      entitlement = resolveEntitlement(payload, { bundleId, expectedAccountToken: user.id });
     } catch (resolveError) {
-      // Verified signature but wrong app/product — treat as a spoof attempt.
+      // Verified signature but wrong app/product/account — treat as a spoof or
+      // cross-account replay attempt.
       logger.security('purchase_entitlement_rejected', {
         userId: user.id,
         error: resolveError.message,
