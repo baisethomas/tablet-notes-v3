@@ -42,9 +42,7 @@ TabletNotes/
 │   │   ├── SyncService.swift              # Background sync with Supabase
 │   │   └── BackgroundSyncManager.swift
 │   ├── Bible/
-│   │   ├── BibleAPIService.swift
-│   │   ├── DirectBibleAPIService.swift
-│   │   └── NetlifyBibleAPIService.swift
+│   │   └── BibleAPIService.swift
 │   ├── Subscription/
 │   │   ├── SubscriptionService.swift
 │   │   └── SubscriptionServiceProtocol.swift
@@ -92,10 +90,7 @@ TabletNotes/
 │
 └── Resources/
     ├── Assets.xcassets/               # Images and color assets
-    ├── Config.plist                   # App configuration
     ├── SupabaseConfig.swift           # Supabase project URL and anon key
-    ├── AssemblyAIKey.swift            # AssemblyAI API key (not in version control)
-    ├── StripeConfig.swift             # Stripe payment configuration
     ├── ApiBibleConfig.swift           # Bible API configuration
     └── TabletNotes.entitlements       # App capabilities
 ```
@@ -199,5 +194,5 @@ User Action → SwiftUI View → Service → SwiftData / Supabase API
 | **Supabase** | Auth, database, file storage | Swift SDK via `SupabaseService` |
 | **AssemblyAI** | Audio transcription | Via Netlify Functions + WebSocket |
 | **Netlify Functions** | Serverless API layer | REST endpoints from `SupabaseService` |
-| **Stripe** | Subscription payments | Via `SubscriptionService` |
-| **API.Bible** | Bible text content | Via `BibleAPIService` variants |
+| **Apple StoreKit** | Subscription payments | Via `SubscriptionService` |
+| **API.Bible** | Bible text content | Via `BibleAPIService` |

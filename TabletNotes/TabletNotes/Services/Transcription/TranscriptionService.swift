@@ -13,6 +13,12 @@ class TranscriptionService: NSObject, ObservableObject {
     private var fullTranscript: String = ""
     private let transcriptSubject = CurrentValueSubject<String, Never>("")
     var transcriptPublisher: AnyPublisher<String, Never> { transcriptSubject.eraseToAnyPublisher() }
+
+    /// Set when live transcription startup fails (e.g. the backend token
+    /// endpoint denies a free-tier user or is unavailable). Recording is
+    /// unaffected — the audio is still saved and transcribed after recording —
+    /// so the UI surfaces this as a non-blocking notice rather than an error.
+    @Published var liveStartupError: String?
     private var timer: Timer?
     private let sessionLimit: TimeInterval = 59 // seconds
     private var sessionStartTime: Date?
@@ -80,34 +86,25 @@ class TranscriptionService: NSObject, ObservableObject {
     }
     
     private func startTranscriptionWithProvider(_ provider: TranscriptionProvider) async {
-
         switch provider {
         case .assemblyAILive:
-            Task {
-                do {
-                    try await assemblyAILiveService.startLiveTranscription()
-                } catch {
-                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
-                    // No longer fallback to Apple Speech - AssemblyAI Live is the only live transcription method
-                }
-            }
+            break
         case .appleSpeech:
             print("[TranscriptionService] Apple Speech is deprecated. Using AssemblyAI Live instead.")
-            Task {
-                do {
-                    try await assemblyAILiveService.startLiveTranscription()
-                } catch {
-                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
-                }
-            }
         case .assemblyAI:
             print("[TranscriptionService] Regular AssemblyAI doesn't support live transcription. Using AssemblyAI Live instead.")
-            Task {
-                do {
-                    try await assemblyAILiveService.startLiveTranscription()
-                } catch {
-                    print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
-                }
+        }
+
+        // All providers route to AssemblyAI Live. Surface a startup failure so
+        // the recording UI can tell the user live captions are unavailable —
+        // previously the error was only logged and the UI proceeded silently.
+        Task { @MainActor in
+            do {
+                try await assemblyAILiveService.startLiveTranscription()
+                liveStartupError = nil
+            } catch {
+                print("[TranscriptionService] Failed to start AssemblyAI Live: \(error)")
+                liveStartupError = "Live captions couldn't start. Your recording is still being saved and will be transcribed when you finish."
             }
         }
     }

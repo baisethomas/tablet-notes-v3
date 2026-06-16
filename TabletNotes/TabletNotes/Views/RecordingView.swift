@@ -134,6 +134,9 @@ struct RecordingView: View {
             transcript = newTranscript
             scheduleTranscriptAnalysis(newTranscript)
         }
+        .onReceive(transcriptionService.$liveStartupError.compactMap { $0 }) { message in
+            withAnimation { transcriptProcessingError = message }
+        }
         .onReceive(noteService.notesPublisher) { updatedNotes in
             notes = updatedNotes
             // Load existing note text on first arrival (only if user hasn't typed anything)
