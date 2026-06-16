@@ -134,6 +134,17 @@ struct RecordingView: View {
             transcript = newTranscript
             scheduleTranscriptAnalysis(newTranscript)
         }
+        .onReceive(transcriptionService.$liveStartupError) { message in
+            withAnimation {
+                if let message {
+                    transcriptProcessingError = message
+                } else if transcriptProcessingError == TranscriptionService.liveCaptionsUnavailableMessage {
+                    // Live captions recovered — clear only our own banner, never
+                    // an unrelated notice (e.g. "Recording was interrupted").
+                    transcriptProcessingError = nil
+                }
+            }
+        }
         .onReceive(noteService.notesPublisher) { updatedNotes in
             notes = updatedNotes
             // Load existing note text on first arrival (only if user hasn't typed anything)

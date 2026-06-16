@@ -233,7 +233,6 @@ struct ScriptureDetailView: View {
     }
     
     private func getEnglishBibles() -> [Bible] {
-        // NetlifyBibleAPIService provides available Bibles
         return bibleService.availableBibles
     }
     

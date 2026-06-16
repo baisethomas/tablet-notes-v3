@@ -22,10 +22,6 @@ struct TranscriptSegment: Identifiable {
     }
 }
 #endif
-// import TabletNotes.TabletNotes.Models.Transcript // Uncomment if needed, but likely not needed if in same module
-
-// Ensure TabletNotes/TabletNotes/Resources/AssemblyAIKey.swift and TabletNotes/TabletNotes/Models/Transcript.swift are included in the build target for AssemblyAIConfig and TranscriptSegment to be in scope.
-
 // MARK: - Vercel API Models
 
 // For /api/generate-upload-url

@@ -136,8 +136,8 @@ The app handles network transitions (WiFi/cellular switches, phone calls, airpla
 ## Configuration
 
 ### API Keys and Configuration
-- **AssemblyAI API key**: Stored in `AssemblyAIKey.swift` (not committed to version control)
-- **Supabase credentials**: Stored in `Resources/SupabaseConfig.swift`
+- **AssemblyAI API key**: Backend-only — held in the Netlify environment (`ASSEMBLYAI_API_KEY`). The client never holds an AssemblyAI key; transcription and live-token requests go through `/api/*` with a Supabase Bearer token.
+- **Supabase credentials**: Stored in `Resources/SupabaseConfig.swift` (anon key is client-safe)
 - **Netlify API base URL**: `https://comfy-daffodil-7ecc55.netlify.app`
 
 ### Environment Setup
