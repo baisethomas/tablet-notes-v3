@@ -11,12 +11,24 @@ struct ApiBibleConfig {
     /// Default Bible ID — the real King James Version (see `BibleTranslationCatalog`).
     static var defaultBibleId: String { BibleTranslationCatalog.defaultId }
 
+    // MARK: - Storage Keys
+
+    private static let preferenceKey = "preferredBibleTranslationId"
+    private static let migrationVersionKey = "bibleTranslationMigrationVersion"
+    private static let currentMigrationVersion = 1
+
+    /// The id the app historically stored as "KJV". It actually serves the
+    /// American Standard Version and is a valid catalog entry today (as ASV),
+    /// so it must be migrated by a one-time versioned pass rather than by the
+    /// validity check below — see `runMigrationsIfNeeded()`.
+    private static let legacyKjvBibleId = "06125adad2d5898a-01"
+
     // MARK: - Preference Management
 
     /// Sets the preferred Bible translation
     /// - Parameter translationId: The Bible ID to set as preferred
     static func setPreferredBibleTranslation(_ translationId: String) {
-        UserDefaults.standard.set(translationId, forKey: "preferredBibleTranslationId")
+        UserDefaults.standard.set(translationId, forKey: preferenceKey)
     }
 
     /// The preferred Bible translation ID from UserDefaults, or the default.
@@ -24,17 +36,42 @@ struct ApiBibleConfig {
     /// The stored value is validated against `BibleTranslationCatalog`: earlier
     /// builds let users pick translation IDs that were mislabeled or not actually
     /// accessible (e.g. "NKJV"/"ESV"/"NLT"). A stale or unsupported stored ID is
-    /// migrated in place — the bad key is cleared so subsequent reads resolve to
-    /// the (catalog-derived) default rather than re-validating it forever (TAB-51).
+    /// cleared in place so subsequent reads resolve to the (catalog-derived)
+    /// default rather than re-validating it forever (TAB-51).
+    ///
+    /// This getter is the single read choke point, so it also drives the
+    /// one-time versioned migration of the legacy "KJV" alias.
     static var preferredBibleTranslationId: String {
-        guard let stored = UserDefaults.standard.string(forKey: "preferredBibleTranslationId") else {
+        runMigrationsIfNeeded()
+
+        guard let stored = UserDefaults.standard.string(forKey: preferenceKey) else {
             return defaultBibleId
         }
         guard BibleTranslationCatalog.contains(stored) else {
-            UserDefaults.standard.removeObject(forKey: "preferredBibleTranslationId")
+            UserDefaults.standard.removeObject(forKey: preferenceKey)
             return defaultBibleId
         }
         return stored
+    }
+
+    /// Runs one-time, versioned preference migrations. Idempotent: gated on a
+    /// stored version counter so each migration runs at most once per install,
+    /// and so deliberate later selections are never re-clobbered.
+    private static func runMigrationsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let version = defaults.integer(forKey: migrationVersionKey) // 0 when unset
+        guard version < currentMigrationVersion else { return }
+
+        // v1: the old default/"KJV" option stored `06125adad2d5898a-01`, which
+        // actually serves ASV. Those users intended KJV, so repoint them to the
+        // real KJV id — but only this once. After the version flag is set, a
+        // deliberate ASV selection (same id) persists normally and is left alone.
+        if version < 1,
+           defaults.string(forKey: preferenceKey) == legacyKjvBibleId {
+            defaults.set(BibleTranslationCatalog.defaultId, forKey: preferenceKey)
+        }
+
+        defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
     }
 }
 
