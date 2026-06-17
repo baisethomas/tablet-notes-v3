@@ -1,156 +1,120 @@
 import Foundation
 import Combine
+import Supabase
 
 class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
     @Published var availableBibles: [Bible] = []
     @Published var isLoading = false
     @Published var error: String?
-    
-    private var cancellables = Set<AnyCancellable>()
-    
-    init() {
+
+    private let session = URLSession.shared
+    private let apiBaseUrl = "https://comfy-daffodil-7ecc55.netlify.app/api"
+    private let supabase: SupabaseClient
+
+    init(supabase: SupabaseClient = SupabaseService.shared.client) {
+        self.supabase = supabase
         loadAvailableBibles()
     }
-    
-    // MARK: - BibleAPIServiceProtocol Implementation
-    
-    func fetchVerse(reference: String, bibleId: String) async throws -> BibleVerse {
-        print("[BibleAPIService] fetchVerse called with reference: '\(reference)', bibleId: '\(bibleId)'")
-        let verseId = formatReferenceForAPI(reference)
-        print("[BibleAPIService] Using verse ID: '\(verseId)' with Bible: '\(bibleId)'")
-        let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/verses/\(verseId)")!
-        
+
+    // MARK: - Backend proxy transport
+    // All Bible calls go through the Netlify bible-api proxy, which holds the
+    // API.Bible key server-side. The client no longer ships the key (TAB-48).
+
+    private func getAuthToken() async throws -> String {
+        do {
+            return try await supabase.auth.session.accessToken
+        } catch {
+            do {
+                return try await supabase.auth.refreshSession().accessToken
+            } catch {
+                throw BibleAPIError.networkError(error)
+            }
+        }
+    }
+
+    /// Performs a GET against the bible-api proxy and decodes the inner
+    /// api.bible payload. `endpoint` is a relative api.bible path (query values
+    /// already percent-encoded); it is encoded again here so '/', '?', '&', '='
+    /// ride as the `endpoint` query value rather than altering the proxy URL.
+    private func proxyGet<T: Decodable>(_ endpoint: String, as type: T.Type) async throws -> T {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let encoded = endpoint.addingPercentEncoding(withAllowedCharacters: allowed) ?? endpoint
+        guard let url = URL(string: "\(apiBaseUrl)/bible-api?endpoint=\(encoded)") else {
+            throw BibleAPIError.invalidRequest
+        }
+
+        let token = try await getAuthToken()
         var request = URLRequest(url: url)
-        ApiBibleConfig.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw BibleAPIError.networkError(URLError(.badServerResponse))
         }
-        
-        guard httpResponse.statusCode == 200 else {
+        guard (200...299).contains(httpResponse.statusCode) else {
             if httpResponse.statusCode == 401 {
-                throw BibleAPIError.apiError("Invalid API key. Please check your API.Bible configuration.")
-            } else if httpResponse.statusCode == 404 {
-                throw BibleAPIError.apiError("Verse not found in selected translation.")
+                throw BibleAPIError.apiError("Please sign in to use Bible lookups.")
             }
             throw BibleAPIError.apiError("HTTP \(httpResponse.statusCode)")
         }
-        
-        let apiResponse = try JSONDecoder().decode(BibleAPIResponse<BibleVerse>.self, from: data)
-        return apiResponse.data
+
+        // Proxy envelope: { data: { data: <api.bible {data, meta}>, ... } }.
+        // On a Bible-side 4xx the proxy returns 200 with { data: { data: null, error } }.
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let responseData = root["data"] as? [String: Any] else {
+            throw BibleAPIError.apiError("Invalid response format")
+        }
+        if let apiError = responseData["error"] as? String {
+            throw BibleAPIError.apiError(apiError)
+        }
+        guard let apiBible = responseData["data"], !(apiBible is NSNull) else {
+            throw BibleAPIError.apiError("No data returned")
+        }
+
+        let apiBibleData = try JSONSerialization.data(withJSONObject: apiBible)
+        return try JSONDecoder().decode(type, from: apiBibleData)
     }
-    
+
+    // MARK: - BibleAPIServiceProtocol Implementation
+
+    func fetchVerse(reference: String, bibleId: String) async throws -> BibleVerse {
+        let verseId = formatReferenceForAPI(reference)
+        let response = try await proxyGet("bibles/\(bibleId)/verses/\(verseId)", as: BibleAPIResponse<BibleVerse>.self)
+        return response.data
+    }
+
     func fetchPassage(reference: String, bibleId: String) async throws -> BiblePassage {
         let passageId = formatReferenceForAPI(reference)
-        let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/passages/\(passageId)")!
-        
-        var request = URLRequest(url: url)
-        ApiBibleConfig.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw BibleAPIError.networkError(URLError(.badServerResponse))
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            if httpResponse.statusCode == 401 {
-                throw BibleAPIError.apiError("Invalid API key. Please check your API.Bible configuration.")
-            } else if httpResponse.statusCode == 404 {
-                throw BibleAPIError.apiError("Passage not found in selected translation.")
-            }
-            throw BibleAPIError.apiError("HTTP \(httpResponse.statusCode)")
-        }
-        
-        let apiResponse = try JSONDecoder().decode(BibleAPIResponse<BiblePassage>.self, from: data)
-        return apiResponse.data
+        let response = try await proxyGet("bibles/\(bibleId)/passages/\(passageId)", as: BibleAPIResponse<BiblePassage>.self)
+        return response.data
     }
-    
+
     func searchVerses(query: String, bibleId: String, limit: Int = 10) async throws -> [BibleVerse] {
-        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/search?query=\(encodedQuery)&limit=\(limit)")!
-        
-        var request = URLRequest(url: url)
-        ApiBibleConfig.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw BibleAPIError.networkError(URLError(.badServerResponse))
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            if httpResponse.statusCode == 401 {
-                throw BibleAPIError.apiError("Invalid API key. Please check your API.Bible configuration.")
-            }
-            throw BibleAPIError.apiError("HTTP \(httpResponse.statusCode)")
-        }
-        
-        let searchResponse = try JSONDecoder().decode(BibleAPIResponse<BibleSearchResult>.self, from: data)
-        return searchResponse.data.verses
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? query
+        let response = try await proxyGet("bibles/\(bibleId)/search?query=\(encodedQuery)&limit=\(limit)", as: BibleAPIResponse<BibleSearchResult>.self)
+        return response.data.verses
     }
-    
+
     func fetchBooks(bibleId: String) async throws -> [BibleBook] {
-        let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles/\(bibleId)/books")!
-        
-        var request = URLRequest(url: url)
-        ApiBibleConfig.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw BibleAPIError.networkError(URLError(.badServerResponse))
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            if httpResponse.statusCode == 401 {
-                throw BibleAPIError.apiError("Invalid API key. Please check your API.Bible configuration.")
-            }
-            throw BibleAPIError.apiError("HTTP \(httpResponse.statusCode)")
-        }
-        
-        let apiResponse = try JSONDecoder().decode(BibleAPIResponse<[BibleBook]>.self, from: data)
-        return apiResponse.data
+        let response = try await proxyGet("bibles/\(bibleId)/books", as: BibleAPIResponse<[BibleBook]>.self)
+        return response.data
     }
-    
+
     // MARK: - Private Methods
-    
+
     private func loadAvailableBibles() {
-        guard ApiBibleConfig.isConfigured else {
-            DispatchQueue.main.async {
-                self.error = "API key not configured. Please add your API.Bible key to ApiBibleConfig."
-                self.availableBibles = []
-            }
-            return
-        }
-        
         isLoading = true
-        
+
         Task {
             do {
-                let url = URL(string: "\(ApiBibleConfig.baseURL)/bibles")!
-                var request = URLRequest(url: url)
-                ApiBibleConfig.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-                
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw BibleAPIError.networkError(URLError(.badServerResponse))
-                }
-                
-                guard httpResponse.statusCode == 200 else {
-                    if httpResponse.statusCode == 401 {
-                        throw BibleAPIError.apiError("Invalid API key. Please check your API.Bible configuration.")
-                    }
-                    throw BibleAPIError.apiError("HTTP \(httpResponse.statusCode)")
-                }
-                
-                let apiResponse = try JSONDecoder().decode(BibleAPIResponse<[Bible]>.self, from: data)
-                
+                let response = try await proxyGet("bibles", as: BibleAPIResponse<[Bible]>.self)
+
                 await MainActor.run {
-                    let filteredBibles = apiResponse.data.filter { bible in
+                    let filteredBibles = response.data.filter { bible in
                         bible.language.name.lowercased().contains("english")
                     }.sorted { first, second in
                         // Prioritize common translations
@@ -162,8 +126,7 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
                     self.availableBibles = filteredBibles
                     self.isLoading = false
                     self.error = nil
-                    print("[BibleAPIService] Successfully loaded \(filteredBibles.count) English Bibles from API")
-                    print("[BibleAPIService] First few Bible IDs: \(filteredBibles.prefix(3).map { "\($0.abbreviation): \($0.id)" })")
+                    print("[BibleAPIService] Loaded \(filteredBibles.count) English Bibles via proxy")
                 }
             } catch {
                 print("[BibleAPIService] Failed to load bibles: \(error)")

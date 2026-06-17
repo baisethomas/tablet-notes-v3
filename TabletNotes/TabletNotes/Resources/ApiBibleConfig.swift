@@ -1,37 +1,15 @@
 import Foundation
 
 // MARK: - API Bible Configuration
-// This file contains configuration for the API.Bible service
-// To use this service, you need to obtain an API key from https://scripture.api.bible
+// Bible translation identifiers and the user's translation preference.
+// API.Bible requests are proxied through the backend (bible-api), which holds
+// the key server-side — the client no longer stores an API.Bible key (TAB-48).
 
 struct ApiBibleConfig {
-    // MARK: - API Configuration
-
-    // Your API.Bible API key
-    private static let apiKey = "ab8de08ae7c7135ffe48263c4b05bdc3"
-
-    // Base URL for the API.Bible service
-    static let baseURL = "https://api.scripture.api.bible/v1"
+    // MARK: - Bible Identifiers
 
     // Default Bible ID (King James Version)
     static let defaultBibleId = "06125adad2d5898a-01"
-
-    // MARK: - Headers
-
-    static var headers: [String: String] {
-        return [
-            "api-key": apiKey,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        ]
-    }
-
-    // MARK: - Configuration Status
-
-    /// Returns true if the API key has been configured
-    static var isConfigured: Bool {
-        return !apiKey.isEmpty && apiKey.count > 10
-    }
 
     // MARK: - Preference Management
 
