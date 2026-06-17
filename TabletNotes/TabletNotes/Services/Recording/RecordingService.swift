@@ -317,7 +317,7 @@ class RecordingService: NSObject {
         // Start duration tracking
         recordingDuration = 0
         recordingStartTime = Date()
-        saveRecoveryManifest(serviceType: serviceType, audioFileName: filename)
+        await saveRecoveryManifest(serviceType: serviceType, audioFileName: filename)
         startDurationTimer()
 
         isRecording = true
@@ -366,13 +366,17 @@ class RecordingService: NSObject {
         activeRecoverySessionId = sessionId
     }
 
-    private func saveRecoveryManifest(serviceType: String, audioFileName: String) {
+    private func saveRecoveryManifest(serviceType: String, audioFileName: String) async {
         guard let activeRecoverySessionId else {
             print("[RecordingService] No recovery session ID was set before recording started")
             return
         }
 
-        let recordingUserId: UUID? = MainActor.assumeIsolated {
+        // RecordingService is intentionally not @MainActor (AVAudioRecorderDelegate
+        // uses synchronous callbacks), and startRecording runs off the main actor.
+        // AuthenticationManager is @MainActor, so hop to it rather than assuming
+        // isolation — MainActor.assumeIsolated would trap here.
+        let recordingUserId: UUID? = await MainActor.run {
             AuthenticationManager.shared.currentUser?.id
         }
 
