@@ -294,6 +294,16 @@ class RecordingService: NSObject {
         let filename = "sermon_\(UUID().uuidString).m4a"
         let url = getAudioRecordingsDirectory().appendingPathComponent(filename)
 
+        // Resolve the recovery user id up front. AuthenticationManager is
+        // @MainActor, so this hop must happen *before* record() — that way the
+        // manifest can be written synchronously the instant recording starts,
+        // with no suspension point in between. A suspension there could leave an
+        // orphaned on-disk recording with no manifest if the app is interrupted
+        // or terminated before the save lands.
+        let recordingUserId: UUID? = await MainActor.run {
+            AuthenticationManager.shared.currentUser?.id
+        }
+
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 44100,
@@ -317,7 +327,8 @@ class RecordingService: NSObject {
         // Start duration tracking
         recordingDuration = 0
         recordingStartTime = Date()
-        await saveRecoveryManifest(serviceType: serviceType, audioFileName: filename)
+        // Synchronous — no await between record() and this save (see above).
+        saveRecoveryManifest(serviceType: serviceType, audioFileName: filename, userId: recordingUserId)
         startDurationTimer()
 
         isRecording = true
@@ -366,18 +377,14 @@ class RecordingService: NSObject {
         activeRecoverySessionId = sessionId
     }
 
-    private func saveRecoveryManifest(serviceType: String, audioFileName: String) async {
+    /// Persists the recovery manifest. Synchronous by design: the caller invokes
+    /// it with no suspension point between AVAudioRecorder.record() and this save,
+    /// so an interruption can't leave an orphaned recording without a manifest.
+    /// `userId` is resolved on the main actor by the caller before recording starts.
+    private func saveRecoveryManifest(serviceType: String, audioFileName: String, userId: UUID?) {
         guard let activeRecoverySessionId else {
             print("[RecordingService] No recovery session ID was set before recording started")
             return
-        }
-
-        // RecordingService is intentionally not @MainActor (AVAudioRecorderDelegate
-        // uses synchronous callbacks), and startRecording runs off the main actor.
-        // AuthenticationManager is @MainActor, so hop to it rather than assuming
-        // isolation — MainActor.assumeIsolated would trap here.
-        let recordingUserId: UUID? = await MainActor.run {
-            AuthenticationManager.shared.currentUser?.id
         }
 
         InterruptedRecordingRecoveryStore.save(
@@ -386,7 +393,7 @@ class RecordingService: NSObject {
                 serviceType: serviceType,
                 audioFileName: audioFileName,
                 startedAt: recordingStartTime ?? Date(),
-                userId: recordingUserId
+                userId: userId
             )
         )
     }
