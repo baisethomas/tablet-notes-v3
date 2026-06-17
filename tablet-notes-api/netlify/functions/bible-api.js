@@ -10,6 +10,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { isValidBibleEndpoint } = require('./utils/bibleEndpoint');
 
 // Circuit breaker for Bible API
 const bibleAPIBreaker = new CircuitBreaker(3, 60000);
@@ -93,32 +94,28 @@ exports.handler = withLogging('bible-api', async (event, context) => {
       return createErrorResponse(new Error('endpoint parameter is required'), 400);
     }
     
-    // Sanitize endpoint to prevent injection
-    const sanitizedEndpoint = Validator.sanitizeText(endpoint, {
-      maxLength: 200,
-      allowHtml: false,
-      allowNewlines: false
-    });
-    
-    if (sanitizedEndpoint !== endpoint) {
-      logger.security('endpoint_sanitization', {
+    // Validate the endpoint against a strict allowlist. (Previously this ran
+    // sanitizeText, which HTML-escaped '/' and broke every multi-segment Bible
+    // path — TAB-48.) Reject anything that isn't a safe relative API.Bible path.
+    if (!isValidBibleEndpoint(endpoint)) {
+      logger.security('invalid_bible_endpoint', {
         userId: user.id,
-        original: endpoint,
-        sanitized: sanitizedEndpoint
+        endpoint: String(endpoint).slice(0, 200)
       });
+      return createErrorResponse(new Error('Invalid endpoint'), 400);
     }
 
     // Construct full URL
-    const url = `${baseURL}/${sanitizedEndpoint}`;
+    const url = `${baseURL}/${endpoint}`;
     
     logger.info('Making Bible API request', {
       userId: user.id,
       method: requestMethod,
-      endpoint: sanitizedEndpoint,
+      endpoint: endpoint,
       url
     });
     
-    logger.apiCall('BibleAPI', sanitizedEndpoint, {
+    logger.apiCall('BibleAPI', endpoint, {
       method: requestMethod,
       userId: user.id
     });
@@ -144,7 +141,7 @@ exports.handler = withLogging('bible-api', async (event, context) => {
         userId: user.id,
         status: response.status,
         statusText: response.statusText,
-        endpoint: sanitizedEndpoint,
+        endpoint: endpoint,
         errorText: errorText.substring(0, 500) // Truncate for logging
       });
       
@@ -156,7 +153,7 @@ exports.handler = withLogging('bible-api', async (event, context) => {
           error: 'Verse not found',
           status: 404,
           userId: user.id,
-          endpoint: sanitizedEndpoint
+          endpoint: endpoint
         };
         
         const additionalHeaders = context.rateLimitHeaders || {};
@@ -170,7 +167,7 @@ exports.handler = withLogging('bible-api', async (event, context) => {
           error: `Bible API client error: ${response.status} ${response.statusText}`,
           details: errorText.substring(0, 200), // Truncate error details
           userId: user.id,
-          endpoint: sanitizedEndpoint
+          endpoint: endpoint
         };
         
         const additionalHeaders = context.rateLimitHeaders || {};
@@ -186,7 +183,7 @@ exports.handler = withLogging('bible-api', async (event, context) => {
     
     logger.info('Bible API request completed successfully', {
       userId: user.id,
-      endpoint: sanitizedEndpoint,
+      endpoint: endpoint,
       responseSize: JSON.stringify(data).length,
       hasData: !!data.data
     });
@@ -194,7 +191,7 @@ exports.handler = withLogging('bible-api', async (event, context) => {
     const responseData = {
       data,
       userId: user.id,
-      endpoint: sanitizedEndpoint,
+      endpoint: endpoint,
       metadata: {
         responseTime: Date.now() - logger.startTime,
         apiVersion: 'v1',
