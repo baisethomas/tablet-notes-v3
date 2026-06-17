@@ -226,14 +226,12 @@ struct ScriptureDetailView: View {
     }
     
     private func getCurrentBibleName() -> String {
-        if let bible = getEnglishBibles().first(where: { $0.id == selectedBibleVersion }) {
-            return bible.abbreviation
-        }
-        return "KJV"
+        BibleTranslationCatalog.translation(for: selectedBibleVersion)?.abbreviation ?? "KJV"
     }
-    
-    private func getEnglishBibles() -> [Bible] {
-        return bibleService.availableBibles
+
+    // Single source of truth, shared with Settings and the Bible browser (TAB-51).
+    private func getEnglishBibles() -> [CuratedBibleTranslation] {
+        BibleTranslationCatalog.all
     }
     
     private func shareScripture() {

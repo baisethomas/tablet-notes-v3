@@ -8,8 +8,8 @@ import Foundation
 struct ApiBibleConfig {
     // MARK: - Bible Identifiers
 
-    // Default Bible ID (King James Version)
-    static let defaultBibleId = "06125adad2d5898a-01"
+    /// Default Bible ID — the real King James Version (see `BibleTranslationCatalog`).
+    static var defaultBibleId: String { BibleTranslationCatalog.defaultId }
 
     // MARK: - Preference Management
 
@@ -19,55 +19,28 @@ struct ApiBibleConfig {
         UserDefaults.standard.set(translationId, forKey: "preferredBibleTranslationId")
     }
 
-    /// Gets the preferred Bible translation ID from UserDefaults, or returns default
+    /// The preferred Bible translation ID from UserDefaults, or the default.
+    ///
+    /// The stored value is validated against `BibleTranslationCatalog`: earlier
+    /// builds let users pick translation IDs that were mislabeled or not actually
+    /// accessible (e.g. "NKJV"/"ESV"/"NLT"). If a stale or unsupported ID is
+    /// stored, fall back to the default so lookups don't silently fail (TAB-51).
     static var preferredBibleTranslationId: String {
-        return UserDefaults.standard.string(forKey: "preferredBibleTranslationId") ?? defaultBibleId
+        guard let stored = UserDefaults.standard.string(forKey: "preferredBibleTranslationId"),
+              BibleTranslationCatalog.contains(stored) else {
+            return defaultBibleId
+        }
+        return stored
     }
-
-    // MARK: - Popular Bible IDs
-
-    struct BibleIDs {
-        static let kingJamesVersion = "06125adad2d5898a-01"
-        static let newAmericanStandardBible = "90b8dbe0143dd92c-01"
-        static let newKingJamesVersion = "478cdd0b0b6f4567-01"
-        static let englishStandardVersion = "f72b840c855f362c-04"
-        static let newInternationalVersion = "78a9f6124f344018-01"
-    }
-
-    // MARK: - Popular English Bibles Array
-
-    /// Array of popular English Bible IDs for fallback when API fails
-    static let popularEnglishBibles = [
-        BibleIDs.kingJamesVersion,
-        BibleIDs.newAmericanStandardBible,
-        BibleIDs.newKingJamesVersion,
-        BibleIDs.englishStandardVersion,
-        BibleIDs.newInternationalVersion,
-        "01b29f4b342acc35-01", // New Living Translation
-        "463b3b6b37664e71-01", // Good News Translation
-        "8bc59cdb7b6e0ed4-01", // Contemporary English Version
-        "89c4e5cd-508c-4b83-9da6-26e7dc18b96e"  // World English Bible
-    ]
 }
 
 // MARK: - Configuration Status
 /*
- ✅ API.Bible is fully configured and ready to use!
+ API.Bible is proxied through the backend (bible-api); the curated list of
+ translations the app offers lives in `BibleTranslationCatalog`.
 
- Features enabled:
- - Scripture lookup and display
- - Multiple Bible translations (KJV, NASB, NKJV, ESV, NIV, etc.)
- - Bible browser with book/chapter navigation
- - Scripture references in sermon notes
- - Clickable scripture text in summaries
- - Direct Bible verse fetching
-
- Supported translations:
- - King James Version (KJV)
- - New American Standard Bible (NASB)
- - New King James Version (NKJV)
- - English Standard Version (ESV)
- - New International Version (NIV)
- - New Living Translation (NLT)
- - And more...
+ Only public-domain / openly-licensed translations are available on the API key
+ (KJV, BSB, WEB, ASV, FBV, LSV, GNV). Copyrighted translations (NIV, ESV, NLT,
+ NKJV, NASB, CSB) require paid publisher licensing and are intentionally not
+ listed — see TAB-51.
  */

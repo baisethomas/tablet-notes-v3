@@ -429,17 +429,10 @@ struct BibleBrowserView: View {
         }
     }
     
-    private func getEnglishBibles() -> [Bible] {
-        // Filter available Bibles to only show English translations
-        return bibleService.availableBibles.filter { bible in
-            bible.language.name.lowercased().contains("english")
-        }.sorted { first, second in
-            // Prioritize common translations
-            let priority = ["ESV", "NIV", "NLT", "KJV", "NASB", "ASV"]
-            let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
-            let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
-            return firstPriority < secondPriority
-        }
+    // Single source of truth, shared with Settings (TAB-51). The live API is
+    // used only to fetch verse/book text, not to populate this list.
+    private func getEnglishBibles() -> [CuratedBibleTranslation] {
+        BibleTranslationCatalog.all
     }
 }
 
