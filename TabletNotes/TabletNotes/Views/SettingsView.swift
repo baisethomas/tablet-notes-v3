@@ -1280,11 +1280,7 @@ struct BibleTranslationSettingRow: View {
     }
     
     private func getSelectedTranslationName() -> String {
-        // Find the selected translation from the default list
-        if let translation = BibleTranslation.defaultTranslations.first(where: { $0.id == selectedTranslationId }) {
-            return "\(translation.abbreviation) - \(translation.name)"
-        }
-        return "KJV - King James Version" // Fallback
+        BibleTranslationCatalog.displayName(for: selectedTranslationId)
     }
 }
 
@@ -1293,74 +1289,51 @@ struct BibleTranslationSelectionView: View {
     @Binding var selectedTranslationId: String
     let onSelectionChanged: (String) -> Void
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var bibleService = BibleAPIService()
-    @State private var availableTranslations: [BibleTranslation] = []
-    @State private var isLoading = true
-    
+
+    // Single source of truth, shared with the in-app Bible browser (TAB-51).
+    private let availableTranslations = BibleTranslationCatalog.all
+
     var body: some View {
         NavigationView {
-            Group {
-                if isLoading {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Loading Bible translations...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if availableTranslations.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundColor(.orange)
-                        Text("No Bible translations available")
-                            .font(.headline)
-                        Text("Please check your internet connection and try again.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else {
-                    List {
-                        ForEach(availableTranslations) { translation in
-                            Button(action: {
-                                onSelectionChanged(translation.id)
-                                dismiss()
-                            }) {
-                                HStack(spacing: 16) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text(translation.abbreviation)
-                                                .font(.headline)
-                                                .fontWeight(.semibold)
-                                                .foregroundColor(.primary)
-                                            
-                                            if translation.id == selectedTranslationId {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundColor(.accentColor)
-                                            }
-                                        }
-                                        
-                                        Text(translation.name)
-                                            .font(.subheadline)
+            List {
+                Section {
+                    ForEach(availableTranslations) { translation in
+                        Button(action: {
+                            onSelectionChanged(translation.id)
+                            dismiss()
+                        }) {
+                            HStack(spacing: 16) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(translation.abbreviation)
+                                            .font(.headline)
+                                            .fontWeight(.semibold)
                                             .foregroundColor(.primary)
-                                        
-                                        Text(translation.translationDescription ?? "")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(2)
+
+                                        if translation.id == selectedTranslationId {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.accentColor)
+                                        }
                                     }
-                                    
-                                    Spacer()
+
+                                    Text(translation.name)
+                                        .font(.subheadline)
+                                        .foregroundColor(.primary)
+
+                                    Text(translation.translationDescription)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(2)
                                 }
-                                .padding(.vertical, 4)
+
+                                Spacer()
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            .padding(.vertical, 4)
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
+                } footer: {
+                    Text("Only public-domain translations are available. Copyrighted translations (NIV, ESV, NLT, NKJV, NASB) require publisher licensing and aren't offered yet.")
                 }
             }
             .navigationTitle("Bible Translation")
@@ -1373,17 +1346,6 @@ struct BibleTranslationSelectionView: View {
                 }
             }
         }
-        .onAppear {
-            loadAvailableTranslations()
-        }
-    }
-    
-    private func loadAvailableTranslations() {
-        isLoading = true
-        
-        // Use the default translations from the model
-        availableTranslations = BibleTranslation.defaultTranslations
-        isLoading = false
     }
 }
 

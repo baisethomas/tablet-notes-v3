@@ -3,7 +3,6 @@ import Combine
 import Supabase
 
 class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
-    @Published var availableBibles: [Bible] = []
     @Published var isLoading = false
     @Published var error: String?
 
@@ -13,7 +12,6 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
 
     init(supabase: SupabaseClient = SupabaseService.shared.client) {
         self.supabase = supabase
-        loadAvailableBibles()
     }
 
     // MARK: - Backend proxy transport
@@ -106,41 +104,6 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
 
     // MARK: - Private Methods
 
-    private func loadAvailableBibles() {
-        isLoading = true
-
-        Task {
-            do {
-                let response = try await proxyGet("bibles", as: BibleAPIResponse<[Bible]>.self)
-
-                await MainActor.run {
-                    let filteredBibles = response.data.filter { bible in
-                        bible.language.name.lowercased().contains("english")
-                    }.sorted { first, second in
-                        // Prioritize common translations
-                        let priority = ["KJV", "ESV", "NIV", "NLT", "NASB", "ASV"]
-                        let firstPriority = priority.firstIndex { first.abbreviation.contains($0) } ?? Int.max
-                        let secondPriority = priority.firstIndex { second.abbreviation.contains($0) } ?? Int.max
-                        return firstPriority < secondPriority
-                    }
-                    self.availableBibles = filteredBibles
-                    self.isLoading = false
-                    self.error = nil
-                    print("[BibleAPIService] Loaded \(filteredBibles.count) English Bibles via proxy")
-                }
-            } catch {
-                print("[BibleAPIService] Failed to load bibles: \(error)")
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isLoading = false
-                    // Use fallback Bible list for popular translations
-                    self.availableBibles = getFallbackBibles()
-                    print("[BibleAPIService] Using fallback Bibles: \(self.availableBibles.prefix(3).map { $0.id })")
-                }
-            }
-        }
-    }
-    
     private func formatReferenceForAPI(_ reference: String) -> String {
         // API.Bible uses standard format: BOOK.CHAPTER.VERSE
         // Convert "John 3:16" to "JHN.3.16"
@@ -232,43 +195,5 @@ class BibleAPIService: ObservableObject, BibleAPIServiceProtocol {
         
         // Fallback: use first 3 letters uppercase
         return String(bookName.prefix(3)).uppercased()
-    }
-    
-    private func getFallbackBibles() -> [Bible] {
-        // Provide popular English Bibles as fallback when API fails
-        return ApiBibleConfig.popularEnglishBibles.enumerated().map { index, bibleId in
-            let names = ["King James Version", "New American Standard Bible", "New King James Version", 
-                        "New Living Translation", "Good News Translation", "Contemporary English Version", "World English Bible"]
-            let abbreviations = ["KJV", "NASB", "NKJV", "NLT", "GNT", "CEV", "WEB"]
-            
-            return Bible(
-                id: bibleId,
-                dblId: bibleId.replacingOccurrences(of: "-01", with: ""),
-                abbreviation: abbreviations[safe: index] ?? "UNK",
-                abbreviationLocal: abbreviations[safe: index] ?? "UNK",
-                name: names[safe: index] ?? "Unknown Bible",
-                nameLocal: names[safe: index] ?? "Unknown Bible",
-                description: "Popular English Bible translation",
-                relatedDbl: nil,
-                language: BibleLanguage(
-                    id: "eng",
-                    name: "English",
-                    nameLocal: "English",
-                    script: "Latn",
-                    scriptDirection: "LTR"
-                ),
-                countries: [BibleCountry(id: "US", name: "United States", nameLocal: "United States")],
-                type: "text",
-                updatedAt: "2024-01-01T00:00:00.000Z",
-                audioBibles: nil
-            )
-        }
-    }
-}
-
-// MARK: - Array Extension for Safe Access
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        return index >= 0 && index < count ? self[index] : nil
     }
 }

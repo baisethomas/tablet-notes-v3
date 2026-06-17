@@ -3,7 +3,6 @@ import Combine
 
 @MainActor
 protocol BibleAPIServiceProtocol: ObservableObject {
-    var availableBibles: [Bible] { get }
     var isLoading: Bool { get }
     var error: String? { get }
     

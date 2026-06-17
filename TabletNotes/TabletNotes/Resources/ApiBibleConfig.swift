@@ -8,66 +8,80 @@ import Foundation
 struct ApiBibleConfig {
     // MARK: - Bible Identifiers
 
-    // Default Bible ID (King James Version)
-    static let defaultBibleId = "06125adad2d5898a-01"
+    /// Default Bible ID — the real King James Version (see `BibleTranslationCatalog`).
+    static var defaultBibleId: String { BibleTranslationCatalog.defaultId }
+
+    // MARK: - Storage Keys
+
+    private static let preferenceKey = "preferredBibleTranslationId"
+    private static let migrationVersionKey = "bibleTranslationMigrationVersion"
+    private static let currentMigrationVersion = 1
+
+    /// The id the app historically stored as "KJV". It actually serves the
+    /// American Standard Version and is a valid catalog entry today (as ASV),
+    /// so it must be migrated by a one-time versioned pass rather than by the
+    /// validity check below — see `runMigrationsIfNeeded()`.
+    private static let legacyKjvBibleId = "06125adad2d5898a-01"
 
     // MARK: - Preference Management
 
     /// Sets the preferred Bible translation
     /// - Parameter translationId: The Bible ID to set as preferred
     static func setPreferredBibleTranslation(_ translationId: String) {
-        UserDefaults.standard.set(translationId, forKey: "preferredBibleTranslationId")
+        UserDefaults.standard.set(translationId, forKey: preferenceKey)
     }
 
-    /// Gets the preferred Bible translation ID from UserDefaults, or returns default
+    /// The preferred Bible translation ID from UserDefaults, or the default.
+    ///
+    /// The stored value is validated against `BibleTranslationCatalog`: earlier
+    /// builds let users pick translation IDs that were mislabeled or not actually
+    /// accessible (e.g. "NKJV"/"ESV"/"NLT"). A stale or unsupported stored ID is
+    /// cleared in place so subsequent reads resolve to the (catalog-derived)
+    /// default rather than re-validating it forever (TAB-51).
+    ///
+    /// This getter is the single read choke point, so it also drives the
+    /// one-time versioned migration of the legacy "KJV" alias.
     static var preferredBibleTranslationId: String {
-        return UserDefaults.standard.string(forKey: "preferredBibleTranslationId") ?? defaultBibleId
+        runMigrationsIfNeeded()
+
+        guard let stored = UserDefaults.standard.string(forKey: preferenceKey) else {
+            return defaultBibleId
+        }
+        guard BibleTranslationCatalog.contains(stored) else {
+            UserDefaults.standard.removeObject(forKey: preferenceKey)
+            return defaultBibleId
+        }
+        return stored
     }
 
-    // MARK: - Popular Bible IDs
+    /// Runs one-time, versioned preference migrations. Idempotent: gated on a
+    /// stored version counter so each migration runs at most once per install,
+    /// and so deliberate later selections are never re-clobbered.
+    private static func runMigrationsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let version = defaults.integer(forKey: migrationVersionKey) // 0 when unset
+        guard version < currentMigrationVersion else { return }
 
-    struct BibleIDs {
-        static let kingJamesVersion = "06125adad2d5898a-01"
-        static let newAmericanStandardBible = "90b8dbe0143dd92c-01"
-        static let newKingJamesVersion = "478cdd0b0b6f4567-01"
-        static let englishStandardVersion = "f72b840c855f362c-04"
-        static let newInternationalVersion = "78a9f6124f344018-01"
+        // v1: the old default/"KJV" option stored `06125adad2d5898a-01`, which
+        // actually serves ASV. Those users intended KJV, so repoint them to the
+        // real KJV id — but only this once. After the version flag is set, a
+        // deliberate ASV selection (same id) persists normally and is left alone.
+        if version < 1,
+           defaults.string(forKey: preferenceKey) == legacyKjvBibleId {
+            defaults.set(BibleTranslationCatalog.defaultId, forKey: preferenceKey)
+        }
+
+        defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
     }
-
-    // MARK: - Popular English Bibles Array
-
-    /// Array of popular English Bible IDs for fallback when API fails
-    static let popularEnglishBibles = [
-        BibleIDs.kingJamesVersion,
-        BibleIDs.newAmericanStandardBible,
-        BibleIDs.newKingJamesVersion,
-        BibleIDs.englishStandardVersion,
-        BibleIDs.newInternationalVersion,
-        "01b29f4b342acc35-01", // New Living Translation
-        "463b3b6b37664e71-01", // Good News Translation
-        "8bc59cdb7b6e0ed4-01", // Contemporary English Version
-        "89c4e5cd-508c-4b83-9da6-26e7dc18b96e"  // World English Bible
-    ]
 }
 
 // MARK: - Configuration Status
 /*
- ✅ API.Bible is fully configured and ready to use!
+ API.Bible is proxied through the backend (bible-api); the curated list of
+ translations the app offers lives in `BibleTranslationCatalog`.
 
- Features enabled:
- - Scripture lookup and display
- - Multiple Bible translations (KJV, NASB, NKJV, ESV, NIV, etc.)
- - Bible browser with book/chapter navigation
- - Scripture references in sermon notes
- - Clickable scripture text in summaries
- - Direct Bible verse fetching
-
- Supported translations:
- - King James Version (KJV)
- - New American Standard Bible (NASB)
- - New King James Version (NKJV)
- - English Standard Version (ESV)
- - New International Version (NIV)
- - New Living Translation (NLT)
- - And more...
+ Only public-domain / openly-licensed translations are available on the API key
+ (KJV, BSB, WEB, ASV, FBV, LSV, GNV). Copyrighted translations (NIV, ESV, NLT,
+ NKJV, NASB, CSB) require paid publisher licensing and are intentionally not
+ listed — see TAB-51.
  */

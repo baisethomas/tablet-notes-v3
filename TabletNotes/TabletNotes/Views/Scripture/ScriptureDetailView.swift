@@ -6,7 +6,7 @@ struct ScriptureDetailView: View {
     @State private var scriptureContent: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var selectedBibleVersion = ApiBibleConfig.defaultBibleId
+    @State private var selectedBibleVersion = ApiBibleConfig.preferredBibleTranslationId
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -226,14 +226,12 @@ struct ScriptureDetailView: View {
     }
     
     private func getCurrentBibleName() -> String {
-        if let bible = getEnglishBibles().first(where: { $0.id == selectedBibleVersion }) {
-            return bible.abbreviation
-        }
-        return "KJV"
+        BibleTranslationCatalog.translation(for: selectedBibleVersion)?.abbreviation ?? "KJV"
     }
-    
-    private func getEnglishBibles() -> [Bible] {
-        return bibleService.availableBibles
+
+    // Single source of truth, shared with Settings and the Bible browser (TAB-51).
+    private func getEnglishBibles() -> [CuratedBibleTranslation] {
+        BibleTranslationCatalog.all
     }
     
     private func shareScripture() {
