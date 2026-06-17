@@ -6,7 +6,7 @@ struct ScriptureDetailView: View {
     @State private var scriptureContent: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var selectedBibleVersion = ApiBibleConfig.defaultBibleId
+    @State private var selectedBibleVersion = ApiBibleConfig.preferredBibleTranslationId
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {

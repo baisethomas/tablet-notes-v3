@@ -23,11 +23,15 @@ struct ApiBibleConfig {
     ///
     /// The stored value is validated against `BibleTranslationCatalog`: earlier
     /// builds let users pick translation IDs that were mislabeled or not actually
-    /// accessible (e.g. "NKJV"/"ESV"/"NLT"). If a stale or unsupported ID is
-    /// stored, fall back to the default so lookups don't silently fail (TAB-51).
+    /// accessible (e.g. "NKJV"/"ESV"/"NLT"). A stale or unsupported stored ID is
+    /// migrated in place — the bad key is cleared so subsequent reads resolve to
+    /// the (catalog-derived) default rather than re-validating it forever (TAB-51).
     static var preferredBibleTranslationId: String {
-        guard let stored = UserDefaults.standard.string(forKey: "preferredBibleTranslationId"),
-              BibleTranslationCatalog.contains(stored) else {
+        guard let stored = UserDefaults.standard.string(forKey: "preferredBibleTranslationId") else {
+            return defaultBibleId
+        }
+        guard BibleTranslationCatalog.contains(stored) else {
+            UserDefaults.standard.removeObject(forKey: "preferredBibleTranslationId")
             return defaultBibleId
         }
         return stored
