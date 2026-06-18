@@ -121,6 +121,8 @@ struct SyncServiceMergeTests {
         var shouldBlockCreate = false
         var shouldBlockFetch = false
         var createSyncedScopes: SermonSyncScopes = .all
+        var failingDownloadURLs: Set<URL> = []
+        struct DownloadFailure: Error {}
 
         init(
             recorder: CallRecorder,
@@ -173,6 +175,9 @@ struct SyncServiceMergeTests {
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
             _ = remotePath
             recorder.record("remote.download")
+            if failingDownloadURLs.contains(url) {
+                throw DownloadFailure()
+            }
             return url
         }
 
@@ -1173,6 +1178,33 @@ struct SyncServiceMergeTests {
         #expect(allSermons.count == 1)
         #expect(allSermons.first?.remoteId == "remote-other")
         #expect(allSermons.first?.title == "Local Title")
+    }
+
+    // MARK: - TAB-53: restore must not abort on a single failed audio download
+
+    @Test func pullRestoresAllSermonsWhenOneAudioDownloadFails() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        // Two brand-new remote sermons (no local rows) — the restore case after a
+        // destructive store reset. The first sermon's audio download fails; the
+        // pull must still create both metadata rows rather than aborting.
+        let first = makeRemoteSermon(id: "remote-a", localId: UUID(), userId: user.id, title: "First")
+        let second = makeRemoteSermon(id: "remote-b", localId: UUID(), userId: user.id, title: "Second")
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[first, second]]
+        )
+        remoteGateway.failingDownloadURLs = [first.audioFileURL]
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 2)
+        #expect(Set(allSermons.compactMap(\.remoteId)) == ["remote-a", "remote-b"])
     }
 
     // MARK: - TAB-21: deletion during in-flight push must not crash
