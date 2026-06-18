@@ -1093,11 +1093,16 @@ class SermonService {
 
         guard succeeded else { return }  // keep flags, retry; UI stays restoring
 
+        // Reconcile the preserved-audio catalog against what the cloud restored
+        // BEFORE discarding it. recoverFromMigration() imports only files not
+        // already matched to a restored sermon (performRecovery dedupes by
+        // audioFileName) — so cloud-restored recordings aren't re-imported as
+        // duplicates, while local-only recordings that never reached the cloud
+        // (including ones older than the orphan window) are preserved instead of
+        // being silently dropped (TAB-53).
+        recoverFromMigration()
+
         DataMigration.clearLocalStoreResetFlag()
-        // The cloud copy is now local. Drop the orphan-audio recovery catalog
-        // too: after a reset, those on-disk files are the same recordings the
-        // pull just re-downloaded, and re-importing them would create duplicate
-        // local-only rows that push as new cloud sermons (TAB-53, finding b).
         DataMigration.clearRecoveryFlags()
     }
 
