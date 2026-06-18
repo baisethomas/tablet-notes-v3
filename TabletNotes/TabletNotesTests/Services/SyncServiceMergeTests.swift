@@ -1200,11 +1200,14 @@ struct SyncServiceMergeTests {
         remoteGateway.failingDownloadURLs = [first.audioFileURL]
         let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
 
-        try await engine.sync(userId: user.id)
+        let fullySucceeded = try await engine.sync(userId: user.id)
 
         let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
         #expect(allSermons.count == 2)
         #expect(Set(allSermons.compactMap(\.remoteId)) == ["remote-a", "remote-b"])
+        // A failed audio download is not a pull failure — the metadata row was
+        // still restored (audio retries later), so the sync reports success.
+        #expect(fullySucceeded == true)
     }
 
     // MARK: - TAB-21: deletion during in-flight push must not crash

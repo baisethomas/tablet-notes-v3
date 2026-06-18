@@ -19,7 +19,11 @@ final class SermonSyncEngine {
 
     private let localRepository: any SermonSyncLocalRepositoryProtocol
     private let remoteGateway: any SermonSyncRemoteGatewayProtocol
-    private var currentSyncTask: Task<Void, Error>?
+    /// Returns whether the pull phase restored every remote sermon without a
+    /// per-item failure — so callers (cloud restore) only treat the sync as
+    /// fully successful when the local copy actually matches the cloud.
+    private var currentSyncTask: Task<Bool, Error>?
+    private var lastPullFailureCount = 0
 
     /// Remote IDs deleted this session. A pull whose fetch snapshot predates a
     /// delete would otherwise recreate the sermon locally (ghost resurrection).
@@ -33,20 +37,23 @@ final class SermonSyncEngine {
         self.remoteGateway = remoteGateway
     }
 
-    func sync(userId: UUID) async throws {
+    /// Returns true only if the sync completed AND the pull restored every remote
+    /// sermon without a per-item failure.
+    @discardableResult
+    func sync(userId: UUID) async throws -> Bool {
         if let currentSyncTask {
-            try await currentSyncTask.value
-            return
+            return try await currentSyncTask.value
         }
 
-        let task = Task { @MainActor in
+        let task = Task { @MainActor () throws -> Bool in
             try await self.runSyncPhases(userId: userId)
+            return self.lastPullFailureCount == 0
         }
 
         currentSyncTask = task
         defer { currentSyncTask = nil }
 
-        try await task.value
+        return try await task.value
     }
 
     func deleteAllRemoteData(for userId: UUID) async throws {
@@ -79,6 +86,7 @@ final class SermonSyncEngine {
     }
 
     private func runSyncPhases(userId: UUID) async throws {
+        lastPullFailureCount = 0
         for phase in SyncPhase.allCases {
             print(phase.logMessage)
             try await run(phase, userId: userId)
@@ -206,6 +214,7 @@ final class SermonSyncEngine {
                 print("[SyncService] ⚠️ Failed to pull sermon \(remoteSermon.id) (\(remoteSermon.title)), continuing: \(error.localizedDescription)")
             }
         }
+        lastPullFailureCount = failures
         if failures > 0 {
             print("[SyncService] ⚠️ Pull completed with \(failures)/\(remoteSermons.count) sermon(s) skipped; will retry next sync")
         }
@@ -369,10 +378,13 @@ final class SyncService: SyncServiceProtocol {
         syncError = nil
 
         do {
-            try await engine.sync(userId: currentUser.id)
-            syncStatus = "synced"
-            print("[SyncService] ✅ Sync completed successfully")
-            return true
+            // Fully successful only if the pull restored every remote sermon —
+            // per-item pull failures must not be reported as success, or cloud
+            // restore would clear its recovery flags on an incomplete restore.
+            let fullySucceeded = try await engine.sync(userId: currentUser.id)
+            syncStatus = fullySucceeded ? "synced" : "error"
+            print("[SyncService] \(fullySucceeded ? "✅ Sync completed successfully" : "⚠️ Sync completed with skipped sermons")")
+            return fullySucceeded
         } catch {
             syncStatus = "error"
             syncError = error
