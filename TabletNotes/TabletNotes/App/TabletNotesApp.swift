@@ -23,10 +23,23 @@ struct TabletNotesApp: App {
     init() {
         FirebaseApp.configure()
 
-        // Anchor the store on the versioned schema + migration plan so future
-        // schema changes migrate in place. The destructive reset below is now a
-        // genuine last resort (TAB-53), not the normal upgrade path.
-        let schema = Schema(versionedSchema: TabletNotesSchemaV1.self)
+        // Build the store from the current model set. SwiftData lightweight
+        // migration handles compatible changes automatically; the destructive
+        // reset in the catch is a genuine last resort (TAB-53), not the normal
+        // upgrade path. (A versioned schema/migration plan will be introduced
+        // when the first custom migration is actually needed — a baseline
+        // version pointing at the live, mutable models gives false safety.)
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            TranscriptSegment.self,
+            Summary.self,
+            ChatMessage.self,
+            ProcessingJob.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
         let url = URL.documentsDirectory.appending(path: "TabletNotes.store")
 
         do {
@@ -35,19 +48,15 @@ struct TabletNotesApp: App {
                 allowsSave: true,
                 cloudKitDatabase: .none  // Explicit local-only to avoid CloudKit conflicts during migration
             )
-            container = try ModelContainer(
-                for: schema,
-                migrationPlan: TabletNotesMigrationPlan.self,
-                configurations: configuration
-            )
+            container = try ModelContainer(for: schema, configurations: configuration)
         } catch {
-            // LAST RESORT: migration genuinely failed. We can still fully recover
-            // because the cloud copy is authoritative — SyncService re-hydrates the
-            // store on next login. Preserve audio files, reset the store, and record
-            // that a reset happened so the UI can show a "Restoring…" state instead
-            // of a bare empty list (which reads as total data loss). This path
-            // should be rare now that migrations are versioned; log loudly.
-            print("⛔️ [TAB-53] SwiftData migration failed — destructive reset (cloud will re-hydrate). Error: \(error)")
+            // LAST RESORT: the store genuinely failed to load. We can still fully
+            // recover because the cloud copy is authoritative — SyncService
+            // re-hydrates the store on next login. Preserve audio files, reset the
+            // store, and record that a reset happened so the UI can show a
+            // "Restoring…" state instead of a bare empty list (which reads as
+            // total data loss). Log loudly.
+            print("⛔️ [TAB-53] SwiftData store load failed — destructive reset (cloud will re-hydrate). Error: \(error)")
 
             DataMigration.recoverAudioFilesAfterMigration()
             DataMigration.recordLocalStoreReset(reason: "\(error)")
@@ -59,12 +68,14 @@ struct TabletNotesApp: App {
             try? FileManager.default.removeItem(at: storeURLWal)
 
             do {
-                let configuration = ModelConfiguration(url: url, allowsSave: true)
-                container = try ModelContainer(
-                    for: schema,
-                    migrationPlan: TabletNotesMigrationPlan.self,
-                    configurations: configuration
+                // Keep cloudKitDatabase: .none on the fallback too, or it defaults
+                // to .automatic (P2).
+                let configuration = ModelConfiguration(
+                    url: url,
+                    allowsSave: true,
+                    cloudKitDatabase: .none
                 )
+                container = try ModelContainer(for: schema, configurations: configuration)
                 print("✅ [TAB-53] Created fresh ModelContainer after reset; awaiting cloud re-hydration")
             } catch {
                 fatalError("Failed to create ModelContainer even after reset: \(error)")

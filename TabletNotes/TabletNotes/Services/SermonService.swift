@@ -55,6 +55,9 @@ class SermonService {
     private var recoveredInterruptedSermonIDs: [UUID] = []
     private(set) var sermons: [Sermon] = []
     private(set) var filteredSermons: [Sermon] = []
+    /// True while a cloud re-hydration is in flight (TAB-53), so the list can
+    /// show a loading/restoring state instead of a bare empty library.
+    private(set) var isRestoringFromCloud = false
     var limitReachedMessage: String?
     var searchText: String = "" {
         didSet {
@@ -1067,19 +1070,32 @@ class SermonService {
         }
     }
 
-    /// Drives a full cloud re-hydration after the local store was destructively
-    /// reset (TAB-53) and clears the reset signal once the sync attempt has
-    /// completed — so the "Restoring…" UI resolves to the list (data restored)
-    /// or the first-recording prompt (nothing to restore), never spins forever.
+    /// Drives a full cloud re-hydration when the local library is empty — after a
+    /// destructive store reset (TAB-53) or a fresh install. Clears the reset
+    /// signal only on a *confirmed* outcome (data restored, or a successful sync
+    /// that found nothing), so a failed or offline attempt keeps the restoring
+    /// state instead of falling back to the misleading empty-library screen.
     @MainActor
     func performCloudRestore() async {
-        guard isSyncAvailable() else {
-            DataMigration.clearLocalStoreResetFlag()
-            return
-        }
+        // Can't restore yet (not signed in / sync unavailable): leave the reset
+        // flag set so we retry rather than show the empty screen as if data lost.
+        guard isSyncAvailable() else { return }
+
+        isRestoringFromCloud = true
+        defer { isRestoringFromCloud = false }
+
         await SermonProcessingCoordinator.shared.triggerManualSync()
         fetchSermons()
-        DataMigration.clearLocalStoreResetFlag()
+
+        if !sermons.isEmpty {
+            // Restored.
+            DataMigration.clearLocalStoreResetFlag()
+        } else if NetworkMonitor.shared.isConnected {
+            // Sync ran while connected and found nothing — genuinely empty.
+            DataMigration.clearLocalStoreResetFlag()
+        }
+        // else: likely offline / failed — keep the flag so the next attempt
+        // retries and the UI keeps showing the restoring state.
     }
 
     func isSyncAvailable() -> Bool {
