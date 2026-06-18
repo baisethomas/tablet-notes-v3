@@ -189,13 +189,25 @@ final class SermonSyncEngine {
         let remoteSermons = try await remoteGateway.fetchRemoteSermons(for: userId)
         print("[SyncService] Found \(remoteSermons.count) remote sermons to pull")
 
+        // Isolate failures per sermon: restoring a large library (e.g. after a
+        // store reset) must not be aborted by a single bad audio download or row
+        // (TAB-53). Skipped sermons are retried on the next sync.
+        var failures = 0
         for remoteSermon in remoteSermons {
             guard !deletedRemoteIds.contains(remoteSermon.id) else {
                 print("[SyncService] ⏭️ Skipping remote sermon deleted this session: \(remoteSermon.id)")
                 continue
             }
             print("[SyncService] Syncing remote sermon: \(remoteSermon.title)")
-            try await pullSermonFromCloud(remoteSermon)
+            do {
+                try await pullSermonFromCloud(remoteSermon)
+            } catch {
+                failures += 1
+                print("[SyncService] ⚠️ Failed to pull sermon \(remoteSermon.id) (\(remoteSermon.title)), continuing: \(error.localizedDescription)")
+            }
+        }
+        if failures > 0 {
+            print("[SyncService] ⚠️ Pull completed with \(failures)/\(remoteSermons.count) sermon(s) skipped; will retry next sync")
         }
     }
 
@@ -233,11 +245,24 @@ final class SermonSyncEngine {
         }
 
         print("[SyncService] No existing local sermon found, creating new one")
-        let localAudioURL = try await remoteGateway.downloadAudioFile(
-            from: remoteSermon.audioFileURL,
-            remotePath: remoteSermon.audioFilePath
-        )
-        try localRepository.createLocalSermon(from: remoteSermon, audioFileURL: localAudioURL)
+        // Create the metadata row first so the sermon is restored (and visible)
+        // even if the audio download is slow or fails — the audio is fetched next
+        // and any miss is re-tried by mergeRemoteSermon on a later sync (TAB-53).
+        // This also lets a large library populate quickly instead of one row per
+        // completed audio download.
+        try localRepository.createLocalSermon(from: remoteSermon, audioFileURL: remoteSermon.audioFileURL)
+        do {
+            let localAudioURL = try await remoteGateway.downloadAudioFile(
+                from: remoteSermon.audioFileURL,
+                remotePath: remoteSermon.audioFilePath
+            )
+            try localRepository.markAudioDownloaded(
+                fileName: localAudioURL.lastPathComponent,
+                for: remoteSermon.localId
+            )
+        } catch {
+            print("[SyncService] ⚠️ Audio download failed for new sermon \(remoteSermon.id); metadata kept, will retry next sync: \(error.localizedDescription)")
+        }
     }
 
     private func mergeRemoteSermon(_ remoteSermon: RemoteSermonData, into initialSermon: Sermon) async throws {
