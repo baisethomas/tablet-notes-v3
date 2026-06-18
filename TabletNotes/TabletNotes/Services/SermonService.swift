@@ -1084,18 +1084,21 @@ class SermonService {
         isRestoringFromCloud = true
         defer { isRestoringFromCloud = false }
 
-        await SermonProcessingCoordinator.shared.triggerManualSync()
+        // Use the result-reporting sync: clear the reset signal ONLY on a
+        // confirmed success. Connectivity doesn't prove the backend/auth sync
+        // worked, and clearing on a failed sync would bring back the misleading
+        // empty-library screen (TAB-53, finding a).
+        let succeeded = await (syncService?.syncAllDataReportingSuccess() ?? false)
         fetchSermons()
 
-        if !sermons.isEmpty {
-            // Restored.
-            DataMigration.clearLocalStoreResetFlag()
-        } else if NetworkMonitor.shared.isConnected {
-            // Sync ran while connected and found nothing — genuinely empty.
-            DataMigration.clearLocalStoreResetFlag()
-        }
-        // else: likely offline / failed — keep the flag so the next attempt
-        // retries and the UI keeps showing the restoring state.
+        guard succeeded else { return }  // keep flags, retry; UI stays restoring
+
+        DataMigration.clearLocalStoreResetFlag()
+        // The cloud copy is now local. Drop the orphan-audio recovery catalog
+        // too: after a reset, those on-disk files are the same recordings the
+        // pull just re-downloaded, and re-importing them would create duplicate
+        // local-only rows that push as new cloud sermons (TAB-53, finding b).
+        DataMigration.clearRecoveryFlags()
     }
 
     func isSyncAvailable() -> Bool {
@@ -1262,6 +1265,17 @@ class SermonService {
     
     @MainActor
     private func checkForRecoverableAudioFiles() {
+        // After a destructive store reset, the orphan audio files on disk are the
+        // SAME recordings already in the cloud. Importing them as local-only rows
+        // here would let the two-phase sync push them as brand-new cloud sermons
+        // (push runs before pull) — creating duplicates. While a reset+restore is
+        // pending and sync is available, defer to the cloud pull instead; the
+        // restore clears the recovery catalog on success (TAB-53, finding b).
+        if DataMigration.didResetLocalStore() && isSyncAvailable() {
+            print("[SermonService] Skipping orphan-audio import — cloud restore pending after store reset")
+            return
+        }
+
         // Check for recoverable files from migration OR orphaned files in empty database
         if !DataMigration.hasRecoverableAudioFiles() {
             checkForOrphanedAudioFiles()

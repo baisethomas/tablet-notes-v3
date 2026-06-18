@@ -10,8 +10,15 @@ struct SermonServiceDeleteTests {
         private(set) var syncAllDataCallCount = 0
         var deleteRemoteSermonError: Error?
 
+        var syncSucceeds = true
+
         func syncAllData() async {
             syncAllDataCallCount += 1
+        }
+
+        func syncAllDataReportingSuccess() async -> Bool {
+            syncAllDataCallCount += 1
+            return syncSucceeds
         }
 
         func deleteRemoteSermon(remoteId: String) async throws {

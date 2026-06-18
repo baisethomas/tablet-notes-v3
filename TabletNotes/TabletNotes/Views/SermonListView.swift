@@ -184,7 +184,9 @@ struct SermonListView: View {
             // cancelled) the moment isLoading flips false.
             try? await Task.sleep(for: .milliseconds(400))
             withAnimation { isLoading = false }
-            if sermonService.sermons.isEmpty && sermonService.isSyncAvailable() {
+            // Restore after a store reset (even if a stray row slipped in) or when
+            // the library is empty (fresh install / new device).
+            if (DataMigration.didResetLocalStore() || sermonService.sermons.isEmpty) && sermonService.isSyncAvailable() {
                 await sermonService.performCloudRestore()
             }
         }

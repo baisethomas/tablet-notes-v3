@@ -344,12 +344,17 @@ final class SyncService: SyncServiceProtocol {
     }
 
     func syncAllData() async {
+        await syncAllDataReportingSuccess()
+    }
+
+    @discardableResult
+    func syncAllDataReportingSuccess() async -> Bool {
         print("[SyncService] 🔄 Starting full sync...")
 
         guard let currentUser = authService.currentUser else {
             print("[SyncService] ❌ No current user - cannot sync")
             syncError = SyncError.subscriptionRequired
-            return
+            return false
         }
 
         print("[SyncService] Current user: \(currentUser.email), canSync: \(currentUser.canSync)")
@@ -357,7 +362,7 @@ final class SyncService: SyncServiceProtocol {
         guard currentUser.canSync else {
             print("[SyncService] ❌ User cannot sync (requires Premium subscription)")
             syncError = SyncError.subscriptionRequired
-            return
+            return false
         }
 
         syncStatus = "syncing"
@@ -367,10 +372,12 @@ final class SyncService: SyncServiceProtocol {
             try await engine.sync(userId: currentUser.id)
             syncStatus = "synced"
             print("[SyncService] ✅ Sync completed successfully")
+            return true
         } catch {
             syncStatus = "error"
             syncError = error
             print("[SyncService] ❌ Sync failed: \(error.localizedDescription)")
+            return false
         }
     }
 }
