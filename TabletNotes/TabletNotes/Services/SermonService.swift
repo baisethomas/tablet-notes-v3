@@ -1066,7 +1066,22 @@ class SermonService {
             await SermonProcessingCoordinator.shared.triggerManualSync()
         }
     }
-    
+
+    /// Drives a full cloud re-hydration after the local store was destructively
+    /// reset (TAB-53) and clears the reset signal once the sync attempt has
+    /// completed — so the "Restoring…" UI resolves to the list (data restored)
+    /// or the first-recording prompt (nothing to restore), never spins forever.
+    @MainActor
+    func performCloudRestore() async {
+        guard isSyncAvailable() else {
+            DataMigration.clearLocalStoreResetFlag()
+            return
+        }
+        await SermonProcessingCoordinator.shared.triggerManualSync()
+        fetchSermons()
+        DataMigration.clearLocalStoreResetFlag()
+    }
+
     func isSyncAvailable() -> Bool {
         guard let currentUser = authManager.currentUser else { return false }
         return currentUser.canSync

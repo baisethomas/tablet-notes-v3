@@ -106,6 +106,7 @@ struct SermonListView: View {
     @State private var sortOrder: SortOrder = .newestFirst
     @State private var showingSortOptions = false
     @State private var showingSearch = false
+    @State private var restoreAttempted = false
     @State private var cancellables = Set<AnyCancellable>()
 
     enum SortOrder: String, CaseIterable {
@@ -158,6 +159,8 @@ struct SermonListView: View {
             Group {
                 if isLoading {
                     svLoadingState
+                } else if sermonService.sermons.isEmpty && DataMigration.didResetLocalStore() && !restoreAttempted {
+                    svRestoringState
                 } else if sermonService.sermons.isEmpty {
                     svFirstRecordingPrompt
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
@@ -262,6 +265,39 @@ struct SermonListView: View {
     }
 
     // MARK: - First Recording Prompt
+
+    // Shown after a destructive local-store reset (TAB-53) while the cloud copy
+    // is re-downloaded, so the user sees recovery in progress instead of a bare
+    // empty list that reads as total data loss.
+    private var svRestoringState: some View {
+        VStack(spacing: 18) {
+            Spacer()
+
+            ProgressView()
+                .controlSize(.large)
+                .tint(Color.SV.primary)
+
+            VStack(spacing: 10) {
+                Text("Restoring your recordings…")
+                    .font(.system(size: 20, weight: .semibold, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface)
+                    .multilineTextAlignment(.center)
+
+                Text("Your recordings are safe in the cloud.\nThis can take a moment for a large library.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                    .multilineTextAlignment(.center)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+        .task {
+            await sermonService.performCloudRestore()
+            restoreAttempted = true
+        }
+    }
 
     private var svFirstRecordingPrompt: some View {
         VStack(spacing: 0) {
