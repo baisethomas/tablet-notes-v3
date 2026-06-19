@@ -55,6 +55,9 @@ class SermonService {
     private var recoveredInterruptedSermonIDs: [UUID] = []
     private(set) var sermons: [Sermon] = []
     private(set) var filteredSermons: [Sermon] = []
+    /// True while a cloud re-hydration is in flight (TAB-53), so the list can
+    /// show a loading/restoring state instead of a bare empty library.
+    private(set) var isRestoringFromCloud = false
     var limitReachedMessage: String?
     var searchText: String = "" {
         didSet {
@@ -1066,7 +1069,47 @@ class SermonService {
             await SermonProcessingCoordinator.shared.triggerManualSync()
         }
     }
-    
+
+    /// Drives a full cloud re-hydration when the local library is empty — after a
+    /// destructive store reset (TAB-53) or a fresh install. Clears the reset
+    /// signal only on a *confirmed* outcome (data restored, or a successful sync
+    /// that found nothing), so a failed or offline attempt keeps the restoring
+    /// state instead of falling back to the misleading empty-library screen.
+    @MainActor
+    func performCloudRestore() async {
+        // Can't restore yet (not signed in / sync unavailable): leave the reset
+        // flag set so we retry rather than show the empty screen as if data lost.
+        guard isSyncAvailable() else { return }
+
+        isRestoringFromCloud = true
+        defer { isRestoringFromCloud = false }
+
+        // Use the result-reporting sync: clear the reset signal ONLY on a
+        // confirmed success. Connectivity doesn't prove the backend/auth sync
+        // worked, and clearing on a failed sync would bring back the misleading
+        // empty-library screen (TAB-53, finding a).
+        let succeeded = await (syncService?.syncAllDataReportingSuccess() ?? false)
+        fetchSermons()
+
+        guard succeeded else { return }  // keep flags, retry; UI stays restoring
+
+        // Reconcile the preserved-audio catalog against what the cloud restored
+        // BEFORE discarding it. recoverFromMigration() imports only files not
+        // already matched to a restored sermon (performRecovery dedupes by
+        // audioFileName) — so cloud-restored recordings aren't re-imported as
+        // duplicates, while local-only recordings that never reached the cloud
+        // (including ones older than the orphan window) are preserved instead of
+        // being silently dropped (TAB-53).
+        // Import never-synced local recordings before discarding the catalog.
+        // If that import can't be persisted, keep BOTH flags set so the catalog —
+        // the only record of those still-unsaved recordings — survives and we
+        // retry next launch. Never clear on an unpersisted reconciliation (TAB-53).
+        guard recoverFromMigration() else { return }
+
+        DataMigration.clearLocalStoreResetFlag()
+        DataMigration.clearRecoveryFlags()
+    }
+
     func isSyncAvailable() -> Bool {
         guard let currentUser = authManager.currentUser else { return false }
         return currentUser.canSync
@@ -1231,6 +1274,17 @@ class SermonService {
     
     @MainActor
     private func checkForRecoverableAudioFiles() {
+        // After a destructive store reset, the orphan audio files on disk are the
+        // SAME recordings already in the cloud. Importing them as local-only rows
+        // here would let the two-phase sync push them as brand-new cloud sermons
+        // (push runs before pull) — creating duplicates. While a reset+restore is
+        // pending and sync is available, defer to the cloud pull instead; the
+        // restore clears the recovery catalog on success (TAB-53, finding b).
+        if DataMigration.didResetLocalStore() && isSyncAvailable() {
+            print("[SermonService] Skipping orphan-audio import — cloud restore pending after store reset")
+            return
+        }
+
         // Check for recoverable files from migration OR orphaned files in empty database
         if !DataMigration.hasRecoverableAudioFiles() {
             checkForOrphanedAudioFiles()
@@ -1240,29 +1294,33 @@ class SermonService {
     }
     
     @MainActor
-    private func recoverFromMigration() {
-        guard let activeUserId = activeUser?.id else { return }
+    /// Returns whether the catalog was reconciled durably (see performRecovery).
+    /// Ownership-mismatch and nothing-to-do cases return true (nothing of the
+    /// current user's is at risk); only an unpersisted import returns false.
+    @discardableResult
+    private func recoverFromMigration() -> Bool {
+        guard let activeUserId = activeUser?.id else { return false }
 
         let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
         guard storedOwnerId == activeUserId.uuidString else {
             print("[SermonService] Skipping migration recovery — local data owner mismatch")
             DataMigration.clearRecoveryFlags()
-            return
+            return true
         }
 
         guard let recoveryOwnerId = DataMigration.recoveryOwnerUserId(),
               recoveryOwnerId == activeUserId.uuidString else {
             print("[SermonService] Skipping migration recovery — catalog has no ownership proof for current user")
             DataMigration.clearRecoveryFlags()
-            return
+            return true
         }
 
-        guard DataMigration.hasRecoverableAudioFiles() else { return }
-        
+        guard DataMigration.hasRecoverableAudioFiles() else { return true }
+
         print("[SermonService] Found recoverable audio files after migration, attempting recovery...")
-        
+
         let recoverableFiles = DataMigration.getRecoverableAudioFiles()
-        performRecovery(from: recoverableFiles, source: "migration")
+        return performRecovery(from: recoverableFiles, source: "migration")
     }
     
     /// Recovery window for orphaned audio files. Old strays (e.g. files left
@@ -1338,11 +1396,16 @@ class SermonService {
     }
     
     @MainActor
-    private func performRecovery(from recoverableFiles: [(filename: String, creationDate: Date, path: String)], source: String) {
-        guard let activeUserId = activeUser?.id else { return }
+    /// Returns whether recovery completed durably: true if there was nothing to
+    /// persist or the save succeeded; false if the save failed (inserts are then
+    /// rolled back, so the recovery catalog stays the source of truth).
+    @discardableResult
+    private func performRecovery(from recoverableFiles: [(filename: String, creationDate: Date, path: String)], source: String) -> Bool {
+        guard let activeUserId = activeUser?.id else { return false }
 
         var recoveredCount = 0
-        
+        var insertedSermons: [Sermon] = []
+
         // Get backed-up notes if available
         let backedUpNotes = DataMigration.getBackedUpSermonNotes()
         
@@ -1409,27 +1472,36 @@ class SermonService {
                 }
                 
                 modelContext.insert(sermon)
+                insertedSermons.append(sermon)
                 recoveredCount += 1
-                
+
                 print("[SermonService] Recovered sermon: \(title) with \(recoveredNotes.count) notes")
             }
         }
         
-        if recoveredCount > 0 {
-            do {
-                try modelContext.save()
-                print("[SermonService] Successfully recovered \(recoveredCount) sermons from \(source)")
-                
-                // Clear recovery flags if from migration
-                if source == "migration" {
-                    DataMigration.clearRecoveryFlags()
-                }
-                
-                // Refresh sermon list
-                fetchSermons()
-            } catch {
-                print("[SermonService] Failed to save recovered sermons: \(error)")
+        guard recoveredCount > 0 else { return true }
+
+        do {
+            try modelContext.save()
+            print("[SermonService] Successfully recovered \(recoveredCount) sermons from \(source)")
+
+            // Clear recovery flags if from migration
+            if source == "migration" {
+                DataMigration.clearRecoveryFlags()
             }
+
+            // Refresh sermon list
+            fetchSermons()
+            return true
+        } catch {
+            print("[SermonService] Failed to save recovered sermons: \(error)")
+            // Roll back the failed inserts so they don't linger unsaved in the
+            // context, and so the recovery catalog stays the source of truth for
+            // these still-unpersisted local-only recordings (TAB-53).
+            for sermon in insertedSermons {
+                modelContext.delete(sermon)
+            }
+            return false
         }
     }
     

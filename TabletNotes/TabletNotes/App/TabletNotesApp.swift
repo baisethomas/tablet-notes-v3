@@ -23,21 +23,26 @@ struct TabletNotesApp: App {
     init() {
         FirebaseApp.configure()
 
+        // Build the store from the current model set. SwiftData lightweight
+        // migration handles compatible changes automatically; the destructive
+        // reset in the catch is a genuine last resort (TAB-53), not the normal
+        // upgrade path. (A versioned schema/migration plan will be introduced
+        // when the first custom migration is actually needed — a baseline
+        // version pointing at the live, mutable models gives false safety.)
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            TranscriptSegment.self,
+            Summary.self,
+            ChatMessage.self,
+            ProcessingJob.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let url = URL.documentsDirectory.appending(path: "TabletNotes.store")
+
         do {
-            // Configure the container with migration options - include User models
-            let schema = Schema([
-                Sermon.self, 
-                Note.self, 
-                Transcript.self, 
-                Summary.self, 
-                ProcessingJob.self,
-                TranscriptSegment.self,
-                User.self,
-                UserNotificationSettings.self
-            ])
-            
-            // Create configuration with migration options
-            let url = URL.documentsDirectory.appending(path: "TabletNotes.store")
             let configuration = ModelConfiguration(
                 url: url,
                 allowsSave: true,
@@ -45,36 +50,33 @@ struct TabletNotesApp: App {
             )
             container = try ModelContainer(for: schema, configurations: configuration)
         } catch {
-            // If migration fails due to schema changes, preserve audio files and reset database
-            print("Schema migration failed, preserving audio files and resetting data store: \(error)")
-            
-            // First, catalog existing audio files for potential recovery
+            // LAST RESORT: the store genuinely failed to load. We can still fully
+            // recover because the cloud copy is authoritative — SyncService
+            // re-hydrates the store on next login. Preserve audio files, reset the
+            // store, and record that a reset happened so the UI can show a
+            // "Restoring…" state instead of a bare empty list (which reads as
+            // total data loss). Log loudly.
+            print("⛔️ [TAB-53] SwiftData store load failed — destructive reset (cloud will re-hydrate). Error: \(error)")
+
             DataMigration.recoverAudioFilesAfterMigration()
-            
-            // Delete the existing store files
-            let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let storeURL = documentsDir.appendingPathComponent("TabletNotes.store")
-            let storeURLShm = documentsDir.appendingPathComponent("TabletNotes.store-shm") 
-            let storeURLWal = documentsDir.appendingPathComponent("TabletNotes.store-wal")
-            
-            try? FileManager.default.removeItem(at: storeURL)
+            DataMigration.recordLocalStoreReset(reason: "\(error)")
+
+            let storeURLShm = url.deletingLastPathComponent().appendingPathComponent("TabletNotes.store-shm")
+            let storeURLWal = url.deletingLastPathComponent().appendingPathComponent("TabletNotes.store-wal")
+            try? FileManager.default.removeItem(at: url)
             try? FileManager.default.removeItem(at: storeURLShm)
             try? FileManager.default.removeItem(at: storeURLWal)
-            
+
             do {
-                let schema = Schema([
-                    Sermon.self, 
-                    Note.self, 
-                    Transcript.self, 
-                    Summary.self, 
-                    ProcessingJob.self,
-                    TranscriptSegment.self,
-                    User.self,
-                    UserNotificationSettings.self
-                ])
-                let configuration = ModelConfiguration(url: storeURL, allowsSave: true)
+                // Keep cloudKitDatabase: .none on the fallback too, or it defaults
+                // to .automatic (P2).
+                let configuration = ModelConfiguration(
+                    url: url,
+                    allowsSave: true,
+                    cloudKitDatabase: .none
+                )
                 container = try ModelContainer(for: schema, configurations: configuration)
-                print("Successfully created fresh ModelContainer after migration failure")
+                print("✅ [TAB-53] Created fresh ModelContainer after reset; awaiting cloud re-hydration")
             } catch {
                 fatalError("Failed to create ModelContainer even after reset: \(error)")
             }

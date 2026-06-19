@@ -121,6 +121,8 @@ struct SyncServiceMergeTests {
         var shouldBlockCreate = false
         var shouldBlockFetch = false
         var createSyncedScopes: SermonSyncScopes = .all
+        var failingDownloadURLs: Set<URL> = []
+        struct DownloadFailure: Error {}
 
         init(
             recorder: CallRecorder,
@@ -173,6 +175,9 @@ struct SyncServiceMergeTests {
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
             _ = remotePath
             recorder.record("remote.download")
+            if failingDownloadURLs.contains(url) {
+                throw DownloadFailure()
+            }
             return url
         }
 
@@ -1173,6 +1178,94 @@ struct SyncServiceMergeTests {
         #expect(allSermons.count == 1)
         #expect(allSermons.first?.remoteId == "remote-other")
         #expect(allSermons.first?.title == "Local Title")
+    }
+
+    // MARK: - TAB-53: restore must not abort on a single failed audio download
+
+    @Test func pullRestoresAllSermonsWhenOneAudioDownloadFails() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        // Two brand-new remote sermons (no local rows) — the restore case after a
+        // destructive store reset. The first sermon's audio download fails; the
+        // pull must still create both metadata rows rather than aborting.
+        let first = makeRemoteSermon(id: "remote-a", localId: UUID(), userId: user.id, title: "First")
+        let second = makeRemoteSermon(id: "remote-b", localId: UUID(), userId: user.id, title: "Second")
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[first, second]]
+        )
+        remoteGateway.failingDownloadURLs = [first.audioFileURL]
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        let fullySucceeded = try await engine.sync(userId: user.id)
+
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 2)
+        #expect(Set(allSermons.compactMap(\.remoteId)) == ["remote-a", "remote-b"])
+        // A failed audio download is not a pull failure — the metadata row was
+        // still restored (audio retries later), so the sync reports success.
+        #expect(fullySucceeded == true)
+    }
+
+    /// Forwards to a real repository but throws when creating one targeted
+    /// sermon, simulating a per-sermon metadata (row-creation) failure.
+    @MainActor
+    final class ThrowingCreateLocalRepository: SermonSyncLocalRepositoryProtocol {
+        let wrapped: SermonSyncLocalRepository
+        let throwForLocalId: UUID
+        struct CreateFailure: Error {}
+
+        init(wrapped: SermonSyncLocalRepository, throwForLocalId: UUID) {
+            self.wrapped = wrapped
+            self.throwForLocalId = throwForLocalId
+        }
+
+        func sermonsNeedingSync() throws -> [Sermon] { try wrapped.sermonsNeedingSync() }
+        func syncData(for sermon: Sermon) -> SermonSyncData { wrapped.syncData(for: sermon) }
+        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws {
+            try wrapped.markSermonSynced(sermon, remoteId: remoteId, syncedAt: syncedAt, scopes: scopes)
+        }
+        func findSermon(remoteId: String) throws -> Sermon? { try wrapped.findSermon(remoteId: remoteId) }
+        func refreshSermon(id: UUID) throws -> Sermon? { try wrapped.refreshSermon(id: id) }
+        func markAudioDownloaded(fileName: String, for sermonId: UUID) throws { try wrapped.markAudioDownloaded(fileName: fileName, for: sermonId) }
+        func updateLocalSermon(_ sermon: Sermon, with remoteData: RemoteSermonData) { wrapped.updateLocalSermon(sermon, with: remoteData) }
+        func createLocalSermon(from remoteData: RemoteSermonData, audioFileURL: URL) throws {
+            if remoteData.localId == throwForLocalId { throw CreateFailure() }
+            try wrapped.createLocalSermon(from: remoteData, audioFileURL: audioFileURL)
+        }
+        func resetCloudSyncState() throws { try wrapped.resetCloudSyncState() }
+        func save() throws { try wrapped.save() }
+    }
+
+    @Test func pullReportsFailureWhenASermonCannotBeCreated() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let realRepo = SermonSyncLocalRepository(modelContext: modelContext)
+        let failingLocalId = UUID()
+        let repository = ThrowingCreateLocalRepository(wrapped: realRepo, throwForLocalId: failingLocalId)
+
+        // Two new remote sermons; creating the second throws (metadata failure).
+        let ok = makeRemoteSermon(id: "remote-ok", localId: UUID(), userId: user.id, title: "OK")
+        let bad = makeRemoteSermon(id: "remote-bad", localId: failingLocalId, userId: user.id, title: "Bad")
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[ok, bad]]
+        )
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        let fullySucceeded = try await engine.sync(userId: user.id)
+
+        // A genuine per-sermon failure must make the sync report incomplete, so
+        // cloud restore won't clear its recovery flags on a partial restore.
+        #expect(fullySucceeded == false)
+        // The other sermon still restored — one failure doesn't abort the batch.
+        let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
+        #expect(allSermons.count == 1)
+        #expect(allSermons.first?.remoteId == "remote-ok")
     }
 
     // MARK: - TAB-21: deletion during in-flight push must not crash

@@ -158,6 +158,8 @@ struct SermonListView: View {
             Group {
                 if isLoading {
                     svLoadingState
+                } else if sermonService.sermons.isEmpty && (sermonService.isRestoringFromCloud || DataMigration.didResetLocalStore()) {
+                    svRestoringState
                 } else if sermonService.sermons.isEmpty {
                     svFirstRecordingPrompt
                 } else if !sermonService.searchText.isEmpty && sermonService.filteredSermons.isEmpty {
@@ -173,6 +175,20 @@ struct SermonListView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: isLoading)
+        }
+        .task {
+            // Drive initial load and, when the library is empty, a cloud
+            // re-hydration (TAB-53) — so an empty list while syncing shows the
+            // restoring indicator instead of reading as data loss. Lives on the
+            // stable body, not svLoadingState, which is torn down (and its task
+            // cancelled) the moment isLoading flips false.
+            try? await Task.sleep(for: .milliseconds(400))
+            withAnimation { isLoading = false }
+            // Restore after a store reset (even if a stray row slipped in) or when
+            // the library is empty (fresh install / new device).
+            if (DataMigration.didResetLocalStore() || sermonService.sermons.isEmpty) && sermonService.isSyncAvailable() {
+                await sermonService.performCloudRestore()
+            }
         }
         .background(Color.SV.surface.ignoresSafeArea())
         .alert("Delete Sermon", isPresented: $showingDeleteAlert) {
@@ -262,6 +278,37 @@ struct SermonListView: View {
     }
 
     // MARK: - First Recording Prompt
+
+    // Shown while the cloud copy is (re-)downloaded into an empty local library
+    // — after a destructive store reset or on a fresh install (TAB-53) — so the
+    // user sees recovery in progress instead of a bare empty list that reads as
+    // total data loss. The restore is driven by the body's .task.
+    private var svRestoringState: some View {
+        let didReset = DataMigration.didResetLocalStore()
+        return VStack(spacing: 18) {
+            Spacer()
+
+            ProgressView()
+                .controlSize(.large)
+                .tint(Color.SV.primary)
+
+            VStack(spacing: 10) {
+                Text(didReset ? "Restoring your recordings…" : "Loading your recordings…")
+                    .font(.system(size: 20, weight: .semibold, design: .serif))
+                    .foregroundStyle(Color.SV.onSurface)
+                    .multilineTextAlignment(.center)
+
+                Text("Your recordings are safe in the cloud.\nThis can take a moment for a large library.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                    .multilineTextAlignment(.center)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+    }
 
     private var svFirstRecordingPrompt: some View {
         VStack(spacing: 0) {
@@ -462,10 +509,6 @@ struct SermonListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.SV.surface)
-        .task {
-            try? await Task.sleep(for: .milliseconds(400))
-            withAnimation { isLoading = false }
-        }
     }
 
     // MARK: - Helpers

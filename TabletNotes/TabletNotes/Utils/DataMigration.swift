@@ -174,6 +174,32 @@ struct DataMigration {
         }
     }
     
+    // MARK: - Local store reset signal (TAB-53)
+
+    private static let localStoreResetKey = "did_reset_local_store"
+    private static let localStoreResetReasonKey = "local_store_reset_reason"
+
+    /// Records that the local SwiftData store was destructively reset because
+    /// migration failed. The cloud copy is authoritative, so this is a signal to
+    /// the UI to present a "Restoring your recordings…" state while SyncService
+    /// re-hydrates, rather than a bare empty list that reads as data loss.
+    static func recordLocalStoreReset(reason: String) {
+        UserDefaults.standard.set(true, forKey: localStoreResetKey)
+        UserDefaults.standard.set(reason, forKey: localStoreResetReasonKey)
+    }
+
+    /// Whether the local store was reset on a recent launch and is awaiting
+    /// cloud re-hydration.
+    static func didResetLocalStore() -> Bool {
+        UserDefaults.standard.bool(forKey: localStoreResetKey)
+    }
+
+    /// Clears the reset signal once the store has been re-hydrated from the cloud.
+    static func clearLocalStoreResetFlag() {
+        UserDefaults.standard.removeObject(forKey: localStoreResetKey)
+        UserDefaults.standard.removeObject(forKey: localStoreResetReasonKey)
+    }
+
     /// Get list of recoverable audio files
     static func getRecoverableAudioFiles() -> [(filename: String, creationDate: Date, path: String)] {
         var recoverableFiles: [(filename: String, creationDate: Date, path: String)] = []
