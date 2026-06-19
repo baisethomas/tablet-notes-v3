@@ -24,6 +24,10 @@ final class SermonSyncEngine {
     /// fully successful when the local copy actually matches the cloud.
     private var currentSyncTask: Task<Bool, Error>?
     private var lastPullFailureCount = 0
+    /// Whether the most recent sync's push phase failed (e.g. upload rate limit).
+    /// Recorded for visibility; it does NOT gate the restore-success signal —
+    /// restore completeness is about the pull (TAB-55).
+    private(set) var lastPushFailed = false
 
     /// Remote IDs deleted this session. A pull whose fetch snapshot predates a
     /// delete would otherwise recreate the sermon locally (ghost resurrection).
@@ -87,19 +91,23 @@ final class SermonSyncEngine {
 
     private func runSyncPhases(userId: UUID) async throws {
         lastPullFailureCount = 0
-        for phase in SyncPhase.allCases {
-            print(phase.logMessage)
-            try await run(phase, userId: userId)
-        }
-    }
+        lastPushFailed = false
 
-    private func run(_ phase: SyncPhase, userId: UUID) async throws {
-        switch phase {
-        case .pushLocalChanges:
+        // Push and pull are independent. A push failure (e.g. the upload rate
+        // limit returning 429) must NOT abort the pull — otherwise a restore can
+        // never complete, because the remaining cloud sermons never come down
+        // (TAB-55). Unpushed local changes stay marked dirty and retry next sync.
+        print(SyncPhase.pushLocalChanges.logMessage)
+        do {
             try await pushLocalChanges(userId: userId)
-        case .pullCloudChanges:
-            try await pullCloudChanges(userId: userId)
+        } catch {
+            lastPushFailed = true
+            print("[SyncService] ⚠️ Push phase failed; pulling anyway (local changes stay queued for retry): \(error.localizedDescription)")
         }
+
+        print(SyncPhase.pullCloudChanges.logMessage)
+        // A pull-fetch failure is a real sync failure and still propagates.
+        try await pullCloudChanges(userId: userId)
     }
 
     private func pushLocalChanges(userId: UUID) async throws {

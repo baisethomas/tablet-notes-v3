@@ -1268,6 +1268,44 @@ struct SyncServiceMergeTests {
         #expect(allSermons.first?.remoteId == "remote-ok")
     }
 
+    // MARK: - TAB-55: a push failure must not starve the pull
+
+    @Test func pullRunsEvenWhenPushFails() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Local Sermon",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        struct PushFailure: Error {}
+        // The push (upload) fails — e.g. the 429 upload rate limit. The pull must
+        // still run so a restore can complete (TAB-55).
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(PushFailure())
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        let fullySucceeded = try await engine.sync(userId: user.id)
+
+        #expect(recorder.events.contains("remote.create"))  // push was attempted…
+        #expect(recorder.events.contains("remote.fetch"))    // …and the pull ran anyway
+        // Push failure doesn't mark a pull failure; the pull restored all it fetched.
+        #expect(fullySucceeded == true)
+    }
+
     // MARK: - TAB-21: deletion during in-flight push must not crash
 
     /// Remote gateway that runs a caller-supplied action while the push is
