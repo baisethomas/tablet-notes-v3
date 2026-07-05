@@ -141,6 +141,7 @@ enum SyncError: LocalizedError {
     case conflictResolution
     case remoteAlreadyExists
     case authenticationFailed
+    case rateLimited(retryAfter: TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -156,6 +157,8 @@ enum SyncError: LocalizedError {
             return "Data corruption detected during sync"
         case .conflictResolution:
             return "Unable to resolve sync conflicts"
+        case .rateLimited(let retryAfter):
+            return "Rate limited by server; retry after \(Int(retryAfter))s"
         }
     }
 }

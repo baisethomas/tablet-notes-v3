@@ -1306,6 +1306,62 @@ struct SyncServiceMergeTests {
         #expect(fullySucceeded == true)
     }
 
+    /// A 429 on the first sermon means every other sermon this cycle would hit
+    /// the same per-user window — stop the batch, and skip the push phase
+    /// entirely on the next sync (60s later, per BackgroundSyncManager) rather
+    /// than hammering the doomed upload endpoint every tick until it resets.
+    @Test func pushStopsOnRateLimitAndSkipsFollowingSyncUntilRetryAfterElapses() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermonA = Sermon(
+            title: "Sermon A",
+            audioFileName: "a.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let sermonB = Sermon(
+            title: "Sermon B",
+            audioFileName: "b.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermonA, sermonB],
+            syncDataBySermonId: [
+                sermonA.id: makeSyncData(for: sermonA, userId: user.id),
+                sermonB.id: makeSyncData(for: sermonB, userId: user.id)
+            ]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(SyncError.rateLimited(retryAfter: 5))
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        _ = try await engine.sync(userId: user.id)
+
+        // Only the first sermon was attempted — sermonB's create would fail
+        // identically, so it isn't wasted on this cycle.
+        #expect(remoteGateway.createCallCount == 1)
+        #expect(recorder.events.contains("remote.fetch")) // pull still ran
+
+        // A second sync (as if the 60s timer fired again) must not re-attempt
+        // the upload while still inside the retryAfter window.
+        _ = try await engine.sync(userId: user.id)
+        #expect(remoteGateway.createCallCount == 1)
+    }
+
     // MARK: - TAB-21: deletion during in-flight push must not crash
 
     /// Remote gateway that runs a caller-supplied action while the push is

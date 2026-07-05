@@ -9,10 +9,13 @@ const RATE_LIMITS = {
     keyPrefix: 'rate_limit:general:'
   },
   
-  // File uploads - per user per hour
+  // File uploads - per user per hour. Each signed-upload-URL request is one
+  // sermon (recording, cloud restore after a local reset, or backlog sync
+  // after time offline) — 10/hour throttled ordinary restores (TAB-55) and
+  // would throttle any user with a backlog of unsynced recordings.
   upload: {
     windowMs: 60 * 60 * 1000, // 1 hour
-    maxRequests: 10, // 10 uploads per hour per user
+    maxRequests: 100, // 100 uploads per hour per user
     keyPrefix: 'rate_limit:upload:'
   },
   

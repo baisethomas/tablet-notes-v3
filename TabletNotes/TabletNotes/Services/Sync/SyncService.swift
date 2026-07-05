@@ -29,6 +29,11 @@ final class SermonSyncEngine {
     /// restore completeness is about the pull (TAB-55).
     private(set) var lastPushFailed = false
 
+    /// Set when the upload endpoint 429s. Sync runs every 60s (BackgroundSyncManager);
+    /// without this, a single rate-limit hit would retry the same doomed upload every
+    /// tick until the server's window resets. Push is skipped entirely until this time.
+    private var pushBlockedUntil: Date?
+
     /// Remote IDs deleted this session. A pull whose fetch snapshot predates a
     /// delete would otherwise recreate the sermon locally (ghost resurrection).
     private var deletedRemoteIds: Set<String> = []
@@ -111,6 +116,12 @@ final class SermonSyncEngine {
     }
 
     private func pushLocalChanges(userId: UUID) async throws {
+        if let blockedUntil = pushBlockedUntil, Date() < blockedUntil {
+            print("[SyncService] ⏳ Skipping push phase — rate limited until \(blockedUntil)")
+            throw SyncError.rateLimited(retryAfter: blockedUntil.timeIntervalSinceNow)
+        }
+        pushBlockedUntil = nil
+
         // Capture IDs only — holding live Sermon models across the awaits below
         // crashes if a sermon is deleted while a push is in flight (TAB-21).
         let sermonIdsToSync = try localRepository.sermonsNeedingSync().map(\.id)
@@ -122,7 +133,15 @@ final class SermonSyncEngine {
                 continue
             }
             print("[SyncService] Syncing sermon: \(sermon.title)")
-            try await pushSermonToCloud(sermon, userId: userId)
+            do {
+                try await pushSermonToCloud(sermon, userId: userId)
+            } catch SyncError.rateLimited(let retryAfter) {
+                // Every remaining sermon would hit the same per-user window —
+                // stop this cycle and suppress retries until it resets.
+                pushBlockedUntil = Date().addingTimeInterval(retryAfter)
+                print("[SyncService] ⚠️ Upload rate limited; pausing push until \(pushBlockedUntil!)")
+                throw SyncError.rateLimited(retryAfter: retryAfter)
+            }
         }
     }
 
