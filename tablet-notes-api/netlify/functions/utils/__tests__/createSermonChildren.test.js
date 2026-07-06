@@ -76,6 +76,28 @@ test('a failed scope does not block the remaining child inserts', async () => {
   assert.deepEqual(supabase.calls.map(c => c.table), ['notes', 'transcripts', 'summaries']);
 });
 
+test('rounds fractional note timestamps for the integer column', async () => {
+  const supabase = fakeSupabase();
+
+  await createSermonChildren({
+    supabase,
+    body: {
+      notes: [
+        { id: 'note-local-1', text: 'A note', timestamp: 12.483749 },
+        { id: 'note-local-2', text: 'Another', timestamp: 754.9 },
+        { id: 'note-local-3', text: 'No timestamp' }
+      ]
+    },
+    sermonId: 'sermon-1',
+    userId: 'user-1',
+    logger: silentLogger
+  });
+
+  const noteRows = supabase.calls.find(c => c.table === 'notes').rows;
+  assert.deepEqual(noteRows.map(r => r.timestamp), [12, 755, 0]);
+  assert.ok(noteRows.every(r => Number.isInteger(r.timestamp)));
+});
+
 test('acknowledges scopes vacuously when there is nothing to insert', async () => {
   const supabase = fakeSupabase(['notes', 'transcripts', 'summaries']);
 
