@@ -22,7 +22,9 @@ async function createSermonChildren({ supabase, body, sermonId, userId, logger }
       sermon_id: sermonId,
       user_id: userId,
       text: note.text,
-      timestamp: note.timestamp ?? 0
+      // notes.timestamp is an integer column; the client sends fractional
+      // seconds. An unrounded value fails the whole insert with 22P02.
+      timestamp: Math.round(note.timestamp) || 0
     }));
 
     const { data: insertedNotes, error: notesError } = await supabase

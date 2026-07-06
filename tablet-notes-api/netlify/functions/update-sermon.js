@@ -131,7 +131,10 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
           sermon_id: body.remoteId,
           user_id: user.id,
           text: note.text,
-          timestamp: note.timestamp ?? 0
+          // notes.timestamp is an integer column; the client sends fractional
+          // seconds. An unrounded value fails the whole insert with 22P02 —
+          // and the existing notes were already deleted above.
+          timestamp: Math.round(note.timestamp) || 0
         }));
 
         const { data: insertedNotes, error: notesError } = await supabase

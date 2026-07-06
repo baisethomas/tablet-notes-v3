@@ -61,7 +61,9 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 [
                     "id": note.id.uuidString,
                     "text": note.text,
-                    "timestamp": note.timestamp
+                    // The backend notes.timestamp column is an integer;
+                    // fractional seconds fail the whole note insert (TAB-56).
+                    "timestamp": Int(note.timestamp.rounded())
                 ]
             }
         }
@@ -166,7 +168,9 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 [
                     "id": note.id.uuidString,
                     "text": note.text,
-                    "timestamp": note.timestamp
+                    // The backend notes.timestamp column is an integer;
+                    // fractional seconds fail the whole note insert (TAB-56).
+                    "timestamp": Int(note.timestamp.rounded())
                 ]
             }
         }
