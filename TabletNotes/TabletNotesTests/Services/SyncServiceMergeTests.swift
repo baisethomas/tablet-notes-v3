@@ -1268,6 +1268,200 @@ struct SyncServiceMergeTests {
         #expect(allSermons.first?.remoteId == "remote-ok")
     }
 
+    // MARK: - TAB-55: a push failure must not starve the pull
+
+    @Test func pullRunsEvenWhenPushFails() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermon = Sermon(
+            title: "Local Sermon",
+            audioFileName: "local.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: user.id)]
+        )
+        struct PushFailure: Error {}
+        // The push (upload) fails — e.g. the 429 upload rate limit. The pull must
+        // still run so a restore can complete (TAB-55).
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(PushFailure())
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        let fullySucceeded = try await engine.sync(userId: user.id)
+
+        #expect(recorder.events.contains("remote.create"))  // push was attempted…
+        #expect(recorder.events.contains("remote.fetch"))    // …and the pull ran anyway
+        // Push failure doesn't mark a pull failure; the pull restored all it fetched.
+        #expect(fullySucceeded == true)
+    }
+
+    /// A 429 on the first new-sermon upload means every other sermon still
+    /// needing a create this cycle would hit the same per-user window — skip
+    /// them, and skip new-sermon uploads on the next sync (60s later, per
+    /// BackgroundSyncManager) rather than hammering the doomed endpoint every
+    /// tick until it resets.
+    @Test func pushStopsOnRateLimitAndSkipsFollowingSyncUntilRetryAfterElapses() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let sermonA = Sermon(
+            title: "Sermon A",
+            audioFileName: "a.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let sermonB = Sermon(
+            title: "Sermon B",
+            audioFileName: "b.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermonA, sermonB],
+            syncDataBySermonId: [
+                sermonA.id: makeSyncData(for: sermonA, userId: user.id),
+                sermonB.id: makeSyncData(for: sermonB, userId: user.id)
+            ]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(SyncError.rateLimited(retryAfter: 5))
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        _ = try await engine.sync(userId: user.id)
+
+        // Only the first sermon was attempted — sermonB's create would fail
+        // identically, so it isn't wasted on this cycle.
+        #expect(remoteGateway.createCallCount == 1)
+        #expect(recorder.events.contains("remote.fetch")) // pull still ran
+
+        // A second sync (as if the 60s timer fired again) must not re-attempt
+        // the upload while still inside the retryAfter window.
+        _ = try await engine.sync(userId: user.id)
+        #expect(remoteGateway.createCallCount == 1)
+    }
+
+    /// A rate-limited new-sermon upload must not withhold updates to sermons
+    /// that already have a remoteId — those go through updateRemoteSermon,
+    /// which isn't subject to the upload endpoint's limit.
+    @Test func pushStillSendsUpdatesForAlreadySyncedSermonsDuringUploadBackoff() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let newSermon = Sermon(
+            title: "New Sermon",
+            audioFileName: "new.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let editedSermon = Sermon(
+            title: "Already Synced Sermon",
+            audioFileName: "existing.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            remoteId: "remote-existing",
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [newSermon, editedSermon],
+            syncDataBySermonId: [
+                newSermon.id: makeSyncData(for: newSermon, userId: user.id),
+                editedSermon.id: makeSyncData(for: editedSermon, userId: user.id)
+            ]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(SyncError.rateLimited(retryAfter: 5))
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        _ = try await engine.sync(userId: user.id)
+
+        // The new sermon's upload was rate limited…
+        #expect(remoteGateway.createCallCount == 1)
+        // …but the already-synced sermon's metadata update still went through.
+        #expect(recorder.events.contains("remote.update"))
+    }
+
+    /// pushBlockedUntil is keyed per user — a rate limit recorded while user A
+    /// is signed in must not withhold user B's uploads. SermonSyncEngine is
+    /// created once in MainAppView and outlives sign-out/sign-in (TAB-36), so
+    /// this state can't be scoped to the engine instance alone. The local
+    /// repository/remote gateway are fixed per engine instance (mirroring how
+    /// one engine serves whichever account is currently signed in), so both
+    /// calls below share them; what varies is only the `userId` sync() is
+    /// called with — exactly what changes across a sign-out/sign-in.
+    @Test func pushRateLimitDoesNotLeakAcrossUsers() async throws {
+        let userA = makeSyncUser()
+        let userB = makeSyncUser()
+        let recorder = CallRecorder()
+        // Stays dirty across both calls: its create always fails, so it never
+        // gets marked synced and remains in sermonsNeedingSync().
+        let sermon = Sermon(
+            title: "Sermon",
+            audioFileName: "a.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            updatedAt: Date(),
+            needsSync: true
+        )
+        let localRepository = SyncLocalRepositorySpy(
+            recorder: recorder,
+            sermonsToSync: [sermon],
+            syncDataBySermonId: [sermon.id: makeSyncData(for: sermon, userId: userA.id)]
+        )
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            createResult: .failure(SyncError.rateLimited(retryAfter: 300))
+        )
+        let engine = SermonSyncEngine(localRepository: localRepository, remoteGateway: remoteGateway)
+
+        _ = try await engine.sync(userId: userA.id)
+        #expect(remoteGateway.createCallCount == 1)
+
+        // Same engine, different (still-blocked-window) user — the upload
+        // must still be attempted, not silently skipped by user A's backoff.
+        // It's expected to fail again (same always-failing gateway); the
+        // point is that it was attempted at all.
+        _ = try await engine.sync(userId: userB.id)
+        #expect(remoteGateway.createCallCount == 2)
+    }
+
     // MARK: - TAB-21: deletion during in-flight push must not crash
 
     /// Remote gateway that runs a caller-supplied action while the push is

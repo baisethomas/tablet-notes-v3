@@ -112,6 +112,11 @@ class SupabaseService: SupabaseServiceProtocol {
             if httpResponse.statusCode == 401 {
                 throw URLError(.userAuthenticationRequired)
             }
+            if httpResponse.statusCode == 429 {
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init) ?? 300
+                print("[SupabaseService] ⚠️ Upload rate limited, retry after \(retryAfter)s")
+                throw SyncError.rateLimited(retryAfter: retryAfter)
+            }
             throw URLError(.badServerResponse)
         }
 
