@@ -29,10 +29,12 @@ final class SermonSyncEngine {
     /// restore completeness is about the pull (TAB-55).
     private(set) var lastPushFailed = false
 
-    /// Set when the upload endpoint 429s. Sync runs every 60s (BackgroundSyncManager);
-    /// without this, a single rate-limit hit would retry the same doomed upload every
-    /// tick until the server's window resets. Push is skipped entirely until this time.
-    private var pushBlockedUntil: Date?
+    /// Set per-user when the upload endpoint 429s (the server-side limit is per-user,
+    /// so a single shared Date would incorrectly block a different account signed in
+    /// on the same device/session — the engine outlives sign-out/sign-in in MainAppView).
+    /// Sync runs every 60s (BackgroundSyncManager); without this, a rate-limit hit would
+    /// retry the same doomed upload every tick until the server's window resets.
+    private var pushBlockedUntil: [UUID: Date] = [:]
 
     /// Remote IDs deleted this session. A pull whose fetch snapshot predates a
     /// delete would otherwise recreate the sermon locally (ghost resurrection).
@@ -116,32 +118,48 @@ final class SermonSyncEngine {
     }
 
     private func pushLocalChanges(userId: UUID) async throws {
-        if let blockedUntil = pushBlockedUntil, Date() < blockedUntil {
-            print("[SyncService] ⏳ Skipping push phase — rate limited until \(blockedUntil)")
-            throw SyncError.rateLimited(retryAfter: blockedUntil.timeIntervalSinceNow)
-        }
-        pushBlockedUntil = nil
-
         // Capture IDs only — holding live Sermon models across the awaits below
         // crashes if a sermon is deleted while a push is in flight (TAB-21).
         let sermonIdsToSync = try localRepository.sermonsNeedingSync().map(\.id)
         print("[SyncService] Found \(sermonIdsToSync.count) sermons marked for sync")
+
+        var rateLimitedRetryAfter: TimeInterval?
 
         for sermonId in sermonIdsToSync {
             guard let sermon = try localRepository.refreshSermon(id: sermonId) else {
                 print("[SyncService] ⚠️ Sermon \(sermonId) disappeared before push, skipping")
                 continue
             }
+
+            // Only a brand-new sermon (no remoteId yet) requests a signed upload
+            // URL and can hit the upload rate limit — an existing sermon's
+            // metadata/notes/transcript update goes through updateRemoteSermon
+            // and isn't subject to it, so it shouldn't be held back by another
+            // sermon's backoff window.
+            let needsCreate = sermon.remoteId?.isEmpty != false
+            if needsCreate, let blockedUntil = pushBlockedUntil[userId] {
+                if Date() < blockedUntil {
+                    print("[SyncService] ⏳ Skipping new-sermon upload for \(sermon.title) — rate limited until \(blockedUntil)")
+                    continue
+                }
+                pushBlockedUntil.removeValue(forKey: userId)
+            }
+
             print("[SyncService] Syncing sermon: \(sermon.title)")
             do {
                 try await pushSermonToCloud(sermon, userId: userId)
             } catch SyncError.rateLimited(let retryAfter) {
-                // Every remaining sermon would hit the same per-user window —
-                // stop this cycle and suppress retries until it resets.
-                pushBlockedUntil = Date().addingTimeInterval(retryAfter)
-                print("[SyncService] ⚠️ Upload rate limited; pausing push until \(pushBlockedUntil!)")
-                throw SyncError.rateLimited(retryAfter: retryAfter)
+                // Every other sermon still needing a create would hit the same
+                // per-user window — stop attempting new uploads until it resets,
+                // but keep processing update-only sermons below.
+                pushBlockedUntil[userId] = Date().addingTimeInterval(retryAfter)
+                rateLimitedRetryAfter = retryAfter
+                print("[SyncService] ⚠️ Upload rate limited; pausing new-sermon uploads for this user until \(pushBlockedUntil[userId]!)")
             }
+        }
+
+        if let rateLimitedRetryAfter {
+            throw SyncError.rateLimited(retryAfter: rateLimitedRetryAfter)
         }
     }
 
