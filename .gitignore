@@ -157,6 +157,10 @@ new-icons/
 stitch_recording_interface/
 
 # Config
-TabletNotes/TabletNotes/Resources/Config.plist 
+TabletNotes/TabletNotes/Resources/Config.plist
 # Local Netlify folder
 .netlify
+
+# Supabase CLI local state
+supabase/.temp/
+tablet-notes-api/supabase/.temp/
