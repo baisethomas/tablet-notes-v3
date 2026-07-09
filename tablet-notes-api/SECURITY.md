@@ -139,6 +139,17 @@ ASSEMBLYAI_API_KEY=your-assemblyai-key
 OPENAI_API_KEY=your-openai-key
 BIBLE_API_KEY=your-bible-api-key
 
+# Support automation
+HELPSCOUT_WEBHOOK_SECRET=your-helpscout-webhook-secret
+HELPSCOUT_APP_ID=your-helpscout-oauth-app-id
+HELPSCOUT_APP_SECRET=your-helpscout-oauth-app-secret
+LINEAR_API_KEY=your-linear-personal-api-key
+LINEAR_TEAM_ID=your-linear-team-uuid
+LINEAR_PROJECT_ID=optional-linear-project-uuid
+LINEAR_ASSIGNEE_ID=optional-linear-user-uuid
+LINEAR_LABEL_IDS=optional,comma,separated,label,uuids
+SUPPORT_AGENT_MODEL=gpt-4o-mini
+
 # Security Configuration  
 ALLOWED_ORIGINS=https://tabletnotes.io,https://www.tabletnotes.io
 NODE_ENV=production
@@ -187,6 +198,35 @@ LOG_LEVEL=DEBUG
 - Failed authentication tracking
 
 ## Testing Security Features
+
+### Support Automation Webhook
+
+Configure Help Scout's Webhooks app to send `convo.created` and
+`convo.customer.reply.created` events to:
+
+```text
+https://your-api.netlify.app/api/support-webhook
+```
+
+The webhook secret must match `HELPSCOUT_WEBHOOK_SECRET`. The handler verifies
+Help Scout's `X-HelpScout-Signature`, fetches the full conversation, runs the
+support agent with deterministic triage fallback, creates a draft reply for
+human review, adds an internal triage note, and creates a Linear issue for bug
+or feature-request categories.
+
+The support workflow includes specialist sub-agents:
+- Engineering sub-agent: adds bug investigation steps, known/missing metadata,
+  and customer follow-up questions to Linear issues.
+- Billing sub-agent: adds purchase/restore checklist items to the internal
+  Help Scout note without creating engineering work by default.
+- Product sub-agent: adds discovery prompts for feature requests.
+- Reply safety sub-agent: removes unsafe promises from draft replies before
+  they are stored in Help Scout.
+
+For Linear personal API keys, set `LINEAR_API_KEY` directly. If you later switch
+to OAuth, set `LINEAR_AUTH_HEADER_VALUE="Bearer <access-token>"` instead.
+`LINEAR_TEAM_ID` should be the Linear team UUID. Short keys like `TAB` are also
+resolved by the backend as a fallback, but the UUID is preferred.
 
 ### 1. Rate Limiting Test
 ```bash
