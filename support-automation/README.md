@@ -21,3 +21,8 @@ npm test
 
 Environment variables are documented in `.env.example`. Secrets belong in
 Vercel environment variables and must not be committed.
+
+`SUPPORT_INBOX_ROUTES` is keyed by immutable Help Scout mailbox ID. Every route
+requires `productName`, `mailboxName`, `supportEmail`, `agentGuidance`, and
+`linearTeamId`. Optional fields are `identityAliases`, `supportSignature`,
+`linearProjectId`, `linearAssigneeId`, and `linearLabelIds`.
