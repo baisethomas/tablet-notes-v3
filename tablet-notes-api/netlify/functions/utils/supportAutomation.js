@@ -142,7 +142,7 @@ function buildLinearIssueInput(context, triage, config) {
   const subAgentReports = config.subAgentReports || buildSubAgentReports(context, triage);
   const input = {
     teamId: config.teamId,
-    title: `[Support] ${context.subject}`,
+    title: `[Support][${getProductName(context)}] ${context.subject}`,
     description: buildLinearIssueDescription(context, triage, subAgentReports),
     priority: triage.priority
   };
@@ -164,17 +164,19 @@ function buildLinearIssueInput(context, triage, config) {
 
 function buildHelpScoutDraftReply(context, triage) {
   const firstName = context.customer.firstName || 'there';
+  const productName = getProductName(context);
+  const supportSignature = context.supportSignature || `${productName} Support`;
 
   if (triage.category === 'bug') {
     return [
       `Hi ${firstName},`,
       '',
-      "I'm sorry Tablet Notes is giving you trouble here. We're looking into this and I have opened it with engineering so we can investigate it properly.",
+      `I'm sorry ${productName} is giving you trouble here. We're looking into this and I have opened it with engineering so we can investigate it properly.`,
       '',
-      'If you have a minute, please send any extra details you have about the device, iOS/iPadOS version, Tablet Notes version, and what happened right before the issue appeared.',
+      `If you have a minute, please send any extra details you have about the device, operating system version, ${productName} version, and what happened right before the issue appeared.`,
       '',
       'Thanks,',
-      'Tablet Notes Support'
+      supportSignature
     ].join('\n');
   }
 
@@ -182,10 +184,10 @@ function buildHelpScoutDraftReply(context, triage) {
     return [
       `Hi ${firstName},`,
       '',
-      'Thanks for reaching out. I can help with this purchase question. Please send the email used for the App Store purchase and a screenshot of the subscription state shown in Tablet Notes if you have it handy.',
+      `Thanks for reaching out. I can help with this purchase question. Please send the email used for the purchase and a screenshot of the subscription state shown in ${productName} if you have it handy.`,
       '',
       'Thanks,',
-      'Tablet Notes Support'
+      supportSignature
     ].join('\n');
   }
 
@@ -193,10 +195,10 @@ function buildHelpScoutDraftReply(context, triage) {
     return [
       `Hi ${firstName},`,
       '',
-      'Thanks for the suggestion. I have captured this for product review so we can weigh it with the rest of the Tablet Notes roadmap.',
+      `Thanks for the suggestion. I have captured this for product review so we can weigh it with the rest of the ${productName} roadmap.`,
       '',
       'Thanks,',
-      'Tablet Notes Support'
+      supportSignature
     ].join('\n');
   }
 
@@ -206,7 +208,7 @@ function buildHelpScoutDraftReply(context, triage) {
     'Thanks for reaching out. I am taking a look and will follow up with the best next step.',
     '',
     'Thanks,',
-    'Tablet Notes Support'
+    supportSignature
   ].join('\n');
 }
 
@@ -224,7 +226,21 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   }
 
   const conversation = await helpScoutClient.getConversation(conversationId);
-  const context = buildSupportContext(conversation);
+  const baseContext = buildSupportContext(conversation);
+  const route = resolveInboxRoute(baseContext.mailbox.id, config.inboxRoutes);
+  if (!route) {
+    return {
+      processed: false,
+      reason: `Ignored unconfigured Help Scout mailbox: ${baseContext.mailbox.id || 'unknown'}`,
+      context: baseContext
+    };
+  }
+
+  const context = {
+    ...baseContext,
+    productName: route.productName,
+    supportSignature: route.supportSignature || `${route.productName} Support`
+  };
   const fallbackTriage = triageSupportContext(context);
   let triage = fallbackTriage;
   let draftReply = buildHelpScoutDraftReply(context, triage);
@@ -247,10 +263,10 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   let linearIssue = null;
   if (triage.shouldCreateLinearIssue) {
     linearIssue = await linearClient.createIssue(buildLinearIssueInput(context, triage, {
-      teamId: config.linearTeamId,
-      projectId: config.linearProjectId,
-      assigneeId: config.linearAssigneeId,
-      labelIds: config.linearLabelIds,
+      teamId: route.linearTeamId,
+      projectId: route.linearProjectId,
+      assigneeId: route.linearAssigneeId,
+      labelIds: route.linearLabelIds,
       subAgentReports
     }));
   }
@@ -270,6 +286,7 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
 
   return {
     processed: true,
+    route,
     context,
     triage,
     linearIssue,
@@ -434,6 +451,23 @@ function containsAny(text, terms) {
   return terms.some((term) => text.includes(term));
 }
 
+function resolveInboxRoute(mailboxId, inboxRoutes) {
+  if (!mailboxId || !inboxRoutes || typeof inboxRoutes !== 'object') {
+    return null;
+  }
+
+  const route = inboxRoutes[String(mailboxId)];
+  if (!route?.productName || !route?.linearTeamId) {
+    return null;
+  }
+
+  return route;
+}
+
+function getProductName(context) {
+  return context.productName || 'Tablet Notes';
+}
+
 module.exports = {
   buildHelpScoutDraftReply,
   buildInternalNote,
@@ -441,6 +475,7 @@ module.exports = {
   buildSupportContext,
   isProcessableHelpScoutEvent,
   runSupportWorkflow,
+  resolveInboxRoute,
   triageSupportContext,
   verifyHelpScoutSignature
 };

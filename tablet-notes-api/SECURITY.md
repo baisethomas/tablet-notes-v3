@@ -144,10 +144,7 @@ HELPSCOUT_WEBHOOK_SECRET=your-helpscout-webhook-secret
 HELPSCOUT_APP_ID=your-helpscout-oauth-app-id
 HELPSCOUT_APP_SECRET=your-helpscout-oauth-app-secret
 LINEAR_API_KEY=your-linear-personal-api-key
-LINEAR_TEAM_ID=your-linear-team-uuid
-LINEAR_PROJECT_ID=optional-linear-project-uuid
-LINEAR_ASSIGNEE_ID=optional-linear-user-uuid
-LINEAR_LABEL_IDS=optional,comma,separated,label,uuids
+SUPPORT_INBOX_ROUTES='{"360464":{"productName":"Tablet Notes","linearTeamId":"38abf509-9400-4268-a35d-cb64cc6db607"},"371514":{"productName":"Granted AI","linearTeamId":"ec3442ea-feb0-42a3-a355-bdb373c9bc0c"}}'
 SUPPORT_AGENT_MODEL=gpt-4o-mini
 
 # Security Configuration  
@@ -209,10 +206,19 @@ https://your-api.netlify.app/api/support-webhook
 ```
 
 The webhook secret must match `HELPSCOUT_WEBHOOK_SECRET`. The handler verifies
-Help Scout's `X-HelpScout-Signature`, fetches the full conversation, runs the
-support agent with deterministic triage fallback, creates a draft reply for
-human review, adds an internal triage note, and creates a Linear issue for bug
-or feature-request categories.
+Help Scout's `X-HelpScout-Signature`, fetches the full conversation, and selects
+the product route by immutable Help Scout mailbox ID. Unknown or unconfigured
+mailboxes are ignored without creating a draft, note, or Linear issue. Known
+mailboxes run the support agent with deterministic triage fallback, create a
+draft reply for human review, add an internal triage note, and create a Linear
+issue for bug or feature-request categories in that mailbox's configured team.
+
+`SUPPORT_INBOX_ROUTES` is a JSON object keyed by Help Scout mailbox ID. Each
+route requires `productName` and `linearTeamId`. A route may also define
+`supportSignature`, `linearProjectId`, `linearAssigneeId`, and a
+`linearLabelIds` array. Product names and support signatures are used in the AI
+prompt and customer draft, preventing one inbox's identity from appearing in
+another inbox.
 
 The support workflow includes specialist sub-agents:
 - Engineering sub-agent: adds bug investigation steps, known/missing metadata,
@@ -224,9 +230,9 @@ The support workflow includes specialist sub-agents:
   they are stored in Help Scout.
 
 For Linear personal API keys, set `LINEAR_API_KEY` directly. If you later switch
-to OAuth, set `LINEAR_AUTH_HEADER_VALUE="Bearer <access-token>"` instead.
-`LINEAR_TEAM_ID` should be the Linear team UUID. Short keys like `TAB` are also
-resolved by the backend as a fallback, but the UUID is preferred.
+to OAuth, set `LINEAR_AUTH_HEADER_VALUE="Bearer <access-token>"` instead. Each
+`linearTeamId` in `SUPPORT_INBOX_ROUTES` should be a Linear team UUID. Short
+team keys are also resolved by the backend, but UUIDs are preferred.
 
 ### 1. Rate Limiting Test
 ```bash

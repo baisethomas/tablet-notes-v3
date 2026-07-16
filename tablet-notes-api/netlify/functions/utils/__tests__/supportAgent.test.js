@@ -94,3 +94,43 @@ test('SupportAgent asks OpenAI for a JSON decision', async () => {
   assert.equal(calls[0].response_format.type, 'json_object');
   assert.match(calls[0].messages[1].content, /Recording disappears/);
 });
+
+test('SupportAgent uses the routed product identity in its instructions', async () => {
+  const calls = [];
+  const openAIClient = {
+    chat: {
+      completions: {
+        create: async (input) => {
+          calls.push(input);
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  category: 'bug',
+                  priority: 2,
+                  labels: ['support', 'bug'],
+                  summary: 'Setup crash.',
+                  shouldCreateLinearIssue: true,
+                  shouldStartEngineeringWork: true,
+                  draftReply: 'Hi Jordan,\n\nThanks for the report. We are investigating.\n\nThanks,\nGranted AI Support'
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const agent = new SupportAgent({ openAIClient, model: 'test-model' });
+
+  await agent.analyze({
+    ...context,
+    productName: 'Granted AI',
+    supportSignature: 'Granted AI Support'
+  }, fallbackTriage);
+
+  const prompt = calls[0].messages.map((message) => message.content).join('\n');
+  assert.match(prompt, /Granted AI support triage agent/);
+  assert.match(prompt, /signed Granted AI Support/);
+  assert.doesNotMatch(prompt, /Tablet Notes/);
+});

@@ -6,6 +6,7 @@ const {
 const { HelpScoutClient } = require('./utils/helpScoutClient');
 const { LinearClient } = require('./utils/linearClient');
 const { SupportAgent } = require('./utils/supportAgent');
+const { parseSupportInboxRoutes } = require('./utils/supportInboxRouting');
 const {
   isProcessableHelpScoutEvent,
   runSupportWorkflow,
@@ -54,6 +55,7 @@ exports.handler = withLogging('support-webhook', async (event) => {
       }, 202);
     }
 
+    const inboxRoutes = parseSupportInboxRoutes(process.env.SUPPORT_INBOX_ROUTES);
     const helpScoutClient = new HelpScoutClient({
       appId: process.env.HELPSCOUT_APP_ID,
       appSecret: process.env.HELPSCOUT_APP_SECRET
@@ -81,10 +83,7 @@ exports.handler = withLogging('support-webhook', async (event) => {
         linearClient,
         supportAgent,
         config: {
-          linearTeamId: process.env.LINEAR_TEAM_ID,
-          linearProjectId: process.env.LINEAR_PROJECT_ID,
-          linearAssigneeId: process.env.LINEAR_ASSIGNEE_ID,
-          linearLabelIds: parseCsv(process.env.LINEAR_LABEL_IDS)
+          inboxRoutes
         }
       });
     } catch (workflowError) {
@@ -119,6 +118,8 @@ exports.handler = withLogging('support-webhook', async (event) => {
       processed: result.processed,
       reason: result.reason,
       category: result.triage?.category,
+      product: result.route?.productName || null,
+      helpScoutMailbox: result.context?.mailbox?.id || null,
       linearIssue: result.linearIssue?.identifier || result.linearIssue?.id || null,
       helpScoutDraftReply: result.helpScoutDraftReply?.id || null
     }, 202);
@@ -129,11 +130,3 @@ exports.handler = withLogging('support-webhook', async (event) => {
     return createErrorResponse(error, 500);
   }
 });
-
-function parseCsv(value) {
-  if (!value) {
-    return [];
-  }
-
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
-}

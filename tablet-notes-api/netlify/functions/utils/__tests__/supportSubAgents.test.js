@@ -85,3 +85,21 @@ test('reply safety sub-agent removes auto-send language and appends human review
   assert.doesNotMatch(review.draftReply, /automatically sent/i);
   assert.match(review.reviewNotes.join('\n'), /Removed unsafe promise/);
 });
+
+test('engineering sub-agent requests metadata for the routed product', () => {
+  const reports = buildSubAgentReports({
+    productName: 'Granted AI',
+    subject: 'Setup crashes',
+    latestCustomerMessage: 'The app crashes during setup.',
+    detectedMetadata: {}
+  }, {
+    category: 'bug',
+    priority: 2,
+    labels: ['support', 'bug'],
+    shouldCreateLinearIssue: true,
+    shouldStartEngineeringWork: true
+  });
+
+  assert.ok(reports.engineering.missingMetadata.includes('Granted AI app version'));
+  assert.doesNotMatch(reports.linearAppendix, /Tablet Notes/);
+});

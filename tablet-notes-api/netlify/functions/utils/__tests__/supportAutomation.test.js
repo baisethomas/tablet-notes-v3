@@ -52,6 +52,17 @@ const sampleConversation = {
   }
 };
 
+const inboxRoutes = {
+  '42': {
+    productName: 'Tablet Notes',
+    linearTeamId: 'tablet-notes-team'
+  },
+  '84': {
+    productName: 'Granted AI',
+    linearTeamId: 'granted-ai-team'
+  }
+};
+
 test('verifies Help Scout webhook signatures with raw body HMAC-SHA1 base64', () => {
   const rawBody = JSON.stringify({ id: 123, subject: 'Help' });
   const secret = 'shared-secret';
@@ -121,7 +132,7 @@ test('builds a Linear issue input with Help Scout traceability', () => {
   assert.equal(issue.teamId, 'team-uuid');
   assert.equal(issue.projectId, 'project-uuid');
   assert.equal(issue.priority, 1);
-  assert.match(issue.title, /\[Support\] App crashes after recording/);
+  assert.equal(issue.title, '[Support][Tablet Notes] App crashes after recording');
   assert.match(issue.description, /Help Scout: https:\/\/secure\.helpscout\.net\/conversation\/123\/456/);
   assert.match(issue.description, /Customer: Jordan Lee <jordan@example\.com>/);
   assert.match(issue.description, /iPadOS 18\.5/);
@@ -166,8 +177,13 @@ test('runs the support workflow with injected clients', async () => {
     helpScoutClient,
     linearClient,
     config: {
-      linearTeamId: 'team-uuid',
-      linearProjectId: 'project-uuid'
+      inboxRoutes: {
+        '42': {
+          productName: 'Tablet Notes',
+          linearTeamId: 'team-uuid',
+          linearProjectId: 'project-uuid'
+        }
+      }
     }
   });
 
@@ -182,6 +198,71 @@ test('runs the support workflow with injected clients', async () => {
     'createNote'
   ]);
   assert.equal(calls.find((call) => call[0] === 'createDraftReply')[4], undefined);
+});
+
+test('routes each Help Scout inbox to its own Linear team and product voice', async () => {
+  const calls = [];
+  const grantedConversation = {
+    ...sampleConversation,
+    mailbox: { id: 84, name: 'Granted AI Support' },
+    subject: 'App crashes during setup'
+  };
+  const helpScoutClient = {
+    getConversation: async () => grantedConversation,
+    createDraftReply: async (conversationId, input) => {
+      calls.push(['createDraftReply', input.text]);
+      return { id: 999 };
+    },
+    createNote: async () => ({ id: 1000 })
+  };
+  const linearClient = {
+    createIssue: async (input) => {
+      calls.push(['createIssue', input.teamId, input.title]);
+      return { id: 'issue-uuid', identifier: 'GRA-101' };
+    }
+  };
+
+  const result = await runSupportWorkflow({
+    eventName: 'convo.created',
+    payload: { id: 123 },
+    helpScoutClient,
+    linearClient,
+    config: { inboxRoutes }
+  });
+
+  assert.equal(result.processed, true);
+  assert.equal(result.route.productName, 'Granted AI');
+  assert.equal(calls.find((call) => call[0] === 'createIssue')[1], 'granted-ai-team');
+  assert.match(calls.find((call) => call[0] === 'createIssue')[2], /Granted AI/);
+  assert.match(calls.find((call) => call[0] === 'createDraftReply')[1], /Granted AI Support/);
+  assert.doesNotMatch(calls.find((call) => call[0] === 'createDraftReply')[1], /Tablet Notes/);
+});
+
+test('skips an unconfigured Help Scout inbox without downstream writes', async () => {
+  const writes = [];
+  const helpScoutClient = {
+    getConversation: async () => ({
+      ...sampleConversation,
+      mailbox: { id: 999, name: 'Unconfigured Inbox' }
+    }),
+    createDraftReply: async () => writes.push('draft'),
+    createNote: async () => writes.push('note')
+  };
+  const linearClient = {
+    createIssue: async () => writes.push('linear')
+  };
+
+  const result = await runSupportWorkflow({
+    eventName: 'convo.created',
+    payload: { id: 123 },
+    helpScoutClient,
+    linearClient,
+    config: { inboxRoutes }
+  });
+
+  assert.equal(result.processed, false);
+  assert.equal(result.reason, 'Ignored unconfigured Help Scout mailbox: 999');
+  assert.deepEqual(writes, []);
 });
 
 test('runs the support workflow with agent-generated triage and draft reply', async () => {
@@ -225,7 +306,7 @@ test('runs the support workflow with agent-generated triage and draft reply', as
     linearClient,
     supportAgent,
     config: {
-      linearTeamId: 'team-uuid'
+      inboxRoutes
     }
   });
 
@@ -257,7 +338,7 @@ test('falls back to deterministic triage when the support agent fails', async ()
     linearClient,
     supportAgent,
     config: {
-      linearTeamId: 'team-uuid'
+      inboxRoutes
     }
   });
 

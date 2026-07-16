@@ -26,16 +26,18 @@ class SupportAgent {
   }
 
   async analyze(context, fallbackTriage) {
+    const productName = context.productName || 'Tablet Notes';
+    const supportSignature = context.supportSignature || `${productName} Support`;
     const response = await this.openAIClient.chat.completions.create({
       model: this.model,
       messages: [
         {
           role: 'system',
           content: [
-            'You are the Tablet Notes support triage agent.',
+            `You are the ${productName} support triage agent.`,
             'Return only JSON. Do not send customer replies directly.',
             'Keep replies as drafts for human review.',
-            'Prioritize crashes, data loss, lost recordings, account lockouts, and App Store launch issues.',
+            'Prioritize crashes, data loss, core workflow failures, account lockouts, and release-blocking issues.',
             'Use priority 1 urgent, 2 high, 3 medium, 4 low.',
             'Create Linear issues for product bugs and feature requests. Do not create Linear issues for ordinary how-to or billing requests unless engineering is needed.'
           ].join('\n')
@@ -50,7 +52,7 @@ class SupportAgent {
               summary: 'one sentence internal summary',
               shouldCreateLinearIssue: true,
               shouldStartEngineeringWork: true,
-              draftReply: 'customer-facing draft reply signed Tablet Notes Support'
+              draftReply: `customer-facing draft reply signed ${supportSignature}`
             },
             fallbackTriage,
             ticket: context

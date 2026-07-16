@@ -57,9 +57,10 @@ function buildEngineeringReport(context, triage) {
   const knownMetadata = Object.entries(context.detectedMetadata || {})
     .map(([key, value]) => `${key}: ${value}`);
   const missingMetadata = [];
+  const productName = context.productName || 'Tablet Notes';
 
   if (!context.detectedMetadata?.appVersion) {
-    missingMetadata.push('Tablet Notes app version');
+    missingMetadata.push(`${productName} app version`);
   }
 
   if (!context.detectedMetadata?.osVersion) {
@@ -74,13 +75,13 @@ function buildEngineeringReport(context, triage) {
     investigationSteps: [
       'Look for crash logs or correlated errors around the conversation timestamp.',
       'Try to reproduce from the latest customer message using the detected app and OS version.',
-      'Check recent recording, transcription, sync, and storage changes touching the affected flow.',
+      `Check recent ${productName} changes touching the affected flow.`,
       'Add or update a regression test before shipping a fix.'
     ],
     customerFollowUpQuestions: [
       'Which device model are you using?',
-      'Does the issue happen every time or only with this recording?',
-      'Did the recording finish saving before the app was closed?'
+      'Does the issue happen every time or only in a specific workflow?',
+      'What was the last successful step before the issue appeared?'
     ]
   };
 }
@@ -104,7 +105,7 @@ function buildProductReport() {
       'What workflow is blocked without this feature?',
       'How often would the customer use it?',
       'What workaround are they using today?',
-      'Would this affect recording, sermon organization, summaries, or scripture lookup?'
+      'Which part of the product would this change affect?'
     ]
   };
 }
