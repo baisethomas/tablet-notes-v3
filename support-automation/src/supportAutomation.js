@@ -47,7 +47,13 @@ function buildSupportContext(conversation) {
     .map((thread) => cleanText(thread.body || thread.text || ''))
     .filter(Boolean)
     .join('\n\n');
-  const customer = normalizeCustomer(conversation.customer || latestCustomerThread.customer || {});
+  const customer = normalizeCustomer(
+    conversation.customer ||
+    conversation.primaryCustomer ||
+    latestCustomerThread.customer ||
+    latestCustomerThread.createdBy ||
+    {}
+  );
 
   return {
     conversationId: conversation.id,
@@ -445,8 +451,8 @@ function normalizeCustomer(customer) {
 
   return {
     id: customer.id || null,
-    firstName: customer.firstName || customer.first_name || '',
-    lastName: customer.lastName || customer.last_name || '',
+    firstName: customer.firstName || customer.first_name || customer.first || '',
+    lastName: customer.lastName || customer.last_name || customer.last || '',
     email: primaryEmail
   };
 }

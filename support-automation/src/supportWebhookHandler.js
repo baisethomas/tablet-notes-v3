@@ -71,10 +71,15 @@ async function handleSupportWebhook(request, options = {}) {
         appId: env.HELPSCOUT_APP_ID,
         appSecret: env.HELPSCOUT_APP_SECRET
       }),
-      linearClient: options.linearClient || new LinearClient({
-        apiKey: env.LINEAR_API_KEY,
-        authHeader: env.LINEAR_AUTH_HEADER_VALUE
-      }),
+      linearClient: options.linearClient || {
+        createIssue: async (input) => {
+          const client = new LinearClient({
+            apiKey: env.LINEAR_API_KEY,
+            authHeader: env.LINEAR_AUTH_HEADER_VALUE
+          });
+          return client.createIssue(input);
+        }
+      },
       supportAgent: options.supportAgent === undefined ? supportAgent : options.supportAgent,
       config: {
         inboxRoutes: parseSupportInboxRoutes(env.SUPPORT_INBOX_ROUTES)

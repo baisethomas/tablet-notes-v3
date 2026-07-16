@@ -2,6 +2,8 @@
 
 Standalone Vercel Function for shared Help Scout support automation.
 
+Production webhook: `https://loom-logic-support-automation.vercel.app/api/support-webhook`
+
 ## Workflow
 
 1. Help Scout sends a signed conversation webhook to `/api/support-webhook`.

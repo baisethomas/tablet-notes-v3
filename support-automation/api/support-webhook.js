@@ -16,20 +16,22 @@ module.exports = async function supportWebhook(request, response) {
 };
 
 async function readRawBody(request) {
+  const chunks = [];
+  if (typeof request[Symbol.asyncIterator] === 'function') {
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+  }
+
+  if (chunks.length > 0) {
+    return Buffer.concat(chunks).toString('utf8');
+  }
+
   if (Buffer.isBuffer(request.body)) {
     return request.body.toString('utf8');
   }
   if (typeof request.body === 'string') {
     return request.body;
-  }
-
-  const chunks = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  if (chunks.length > 0) {
-    return Buffer.concat(chunks).toString('utf8');
   }
 
   return request.body && typeof request.body === 'object'
