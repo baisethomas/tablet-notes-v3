@@ -42,27 +42,9 @@ function sanitizeDraftReplyWithReview(draftReply, identity = {}) {
     rule.pattern.lastIndex = 0;
   }
 
-  const forbiddenIdentities = Array.from(new Set(identity.forbiddenIdentities || []))
-    .filter((item) => typeof item === 'string' && item.trim())
-    .sort((a, b) => b.length - a.length);
-  let replacedIdentity = false;
-
-  for (const forbiddenIdentity of forbiddenIdentities) {
-    const replacement = /\bsupport\s*$/i.test(forbiddenIdentity)
-      ? identity.supportSignature
-      : identity.productName;
-    if (!replacement) {
-      continue;
-    }
-
-    const pattern = new RegExp(escapeRegExp(forbiddenIdentity), 'gi');
-    if (pattern.test(safeDraft)) {
-      safeDraft = safeDraft.replace(pattern, replacement);
-      replacedIdentity = true;
-    }
-  }
-
-  if (replacedIdentity) {
+  const identityReview = sanitizeSupportIdentity(safeDraft, identity);
+  safeDraft = identityReview.text;
+  if (identityReview.changed) {
     reviewNotes.push('Replaced another support inbox identity with the routed product identity.');
   }
 
@@ -71,6 +53,29 @@ function sanitizeDraftReplyWithReview(draftReply, identity = {}) {
     changed: reviewNotes.length > 0,
     reviewNotes
   };
+}
+
+function sanitizeSupportIdentity(value, identity = {}, options = {}) {
+  let text = String(value || '');
+  let changed = false;
+  const replacements = (identity.replacements || [])
+    .filter((item) => typeof item?.forbidden === 'string' && item.forbidden.trim() && typeof item?.replacement === 'string' && item.replacement.trim())
+    .sort((a, b) => b.forbidden.length - a.forbidden.length);
+
+  for (const item of replacements) {
+    let replacement = item.replacement;
+    if (options.labelMode) {
+      replacement = replacement.toLowerCase().replace(/\s+/g, '-');
+    }
+
+    const pattern = buildIdentityPattern(item.forbidden);
+    if (pattern.test(text)) {
+      text = text.replace(pattern, replacement);
+      changed = true;
+    }
+  }
+
+  return { text, changed };
 }
 
 function buildEngineeringReport(context, triage) {
@@ -205,7 +210,13 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function buildIdentityPattern(value) {
+  const words = value.trim().split(/[\s_-]+/).map(escapeRegExp);
+  return new RegExp(words.join('[\\s_-]+'), 'gi');
+}
+
 module.exports = {
   buildSubAgentReports,
-  sanitizeDraftReplyWithReview
+  sanitizeDraftReplyWithReview,
+  sanitizeSupportIdentity
 };

@@ -1,7 +1,8 @@
 const crypto = require('node:crypto');
 const {
   buildSubAgentReports,
-  sanitizeDraftReplyWithReview
+  sanitizeDraftReplyWithReview,
+  sanitizeSupportIdentity
 } = require('./supportSubAgents');
 
 const PROCESSABLE_EVENTS = new Set([
@@ -239,7 +240,7 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   const context = {
     ...baseContext,
     productName: route.productName,
-    supportSignature: route.supportSignature || `${route.productName} Support`,
+    supportSignature: route.supportSignature,
     agentGuidance: route.agentGuidance
   };
   const fallbackTriage = triageSupportContext(context);
@@ -257,15 +258,19 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
     }
   }
 
-  const subAgentReports = buildSubAgentReports(context, triage);
-  const replyReview = sanitizeDraftReplyWithReview(draftReply, {
-    productName: context.productName,
-    supportSignature: context.supportSignature,
-    forbiddenIdentities: Object.values(config.inboxRoutes)
+  const identityGuard = {
+    replacements: Object.values(config.inboxRoutes)
       .filter((candidate) => candidate !== route)
-      .flatMap((candidate) => [candidate.supportSignature, candidate.productName])
-      .filter(Boolean)
-  });
+      .flatMap((candidate) => [
+        { forbidden: candidate.supportSignature, replacement: context.supportSignature },
+        { forbidden: candidate.productName, replacement: context.productName }
+      ])
+      .filter((replacement) => replacement.forbidden && replacement.replacement)
+  };
+  const triageIdentityReview = sanitizeTriageIdentity(triage, identityGuard);
+  triage = triageIdentityReview.triage;
+  const subAgentReports = buildSubAgentReports(context, triage);
+  const replyReview = sanitizeDraftReplyWithReview(draftReply, identityGuard);
   draftReply = replyReview.draftReply;
 
   let linearIssue = null;
@@ -288,7 +293,8 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   await helpScoutClient.createNote(context.conversationId, {
     text: buildInternalNote(context, triage, linearIssue, {
       subAgentReports,
-      replyReview
+      replyReview,
+      triageIdentityReview
     })
   });
 
@@ -302,7 +308,8 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
     draftReply,
     agentError,
     subAgentReports,
-    replyReview
+    replyReview,
+    triageIdentityReview
   };
 }
 
@@ -375,6 +382,10 @@ function buildInternalNote(context, triage, linearIssue, options = {}) {
 
   if (options.replyReview?.changed) {
     note.push('', 'Reply safety sub-agent:', ...options.replyReview.reviewNotes.map((item) => `- ${item}`));
+  }
+
+  if (options.triageIdentityReview?.changed) {
+    note.push('', 'Triage identity safety: replaced another support inbox identity.');
   }
 
   return note.join('\n');
@@ -459,13 +470,32 @@ function containsAny(text, terms) {
   return terms.some((term) => text.includes(term));
 }
 
+function sanitizeTriageIdentity(triage, identityGuard) {
+  const summaryReview = sanitizeSupportIdentity(triage.summary, identityGuard);
+  let changed = summaryReview.changed;
+  const labels = triage.labels.map((label) => {
+    const labelReview = sanitizeSupportIdentity(label, identityGuard, { labelMode: true });
+    changed = changed || labelReview.changed;
+    return labelReview.text;
+  });
+
+  return {
+    triage: {
+      ...triage,
+      summary: summaryReview.text,
+      labels: Array.from(new Set(labels))
+    },
+    changed
+  };
+}
+
 function resolveInboxRoute(mailboxId, inboxRoutes) {
   if (!mailboxId || !inboxRoutes || typeof inboxRoutes !== 'object') {
     return null;
   }
 
   const route = inboxRoutes[String(mailboxId)];
-  if (!route?.productName || !route?.linearTeamId) {
+  if (!route?.productName || !route?.supportSignature || !route?.agentGuidance || !route?.linearTeamId) {
     return null;
   }
 

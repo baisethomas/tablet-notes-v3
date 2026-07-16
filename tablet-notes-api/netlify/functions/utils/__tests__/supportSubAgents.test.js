@@ -82,9 +82,10 @@ test('reply safety sub-agent replaces another inbox identity', () => {
   const review = sanitizeDraftReplyWithReview(
     'Hi Jordan,\n\nThanks for contacting Tablet Notes.\n\nThanks,\nTablet Notes Support',
     {
-      productName: 'Granted AI',
-      supportSignature: 'Granted AI Support',
-      forbiddenIdentities: ['Tablet Notes Support', 'Tablet Notes']
+      replacements: [
+        { forbidden: 'Tablet Notes Support', replacement: 'Granted AI Support' },
+        { forbidden: 'Tablet Notes', replacement: 'Granted AI' }
+      ]
     }
   );
 

@@ -184,6 +184,7 @@ test('runs the support workflow with injected clients', async () => {
       inboxRoutes: {
         '42': {
           productName: 'Tablet Notes',
+          supportSignature: 'Tablet Notes Support',
           agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
           linearTeamId: 'team-uuid',
           linearProjectId: 'project-uuid'
@@ -272,6 +273,7 @@ test('skips an unconfigured Help Scout inbox without downstream writes', async (
 
 test('replaces a model-generated identity from another inbox before drafting', async () => {
   let draftedText;
+  let noteText;
   const helpScoutClient = {
     getConversation: async () => ({
       ...sampleConversation,
@@ -281,16 +283,23 @@ test('replaces a model-generated identity from another inbox before drafting', a
       draftedText = input.text;
       return { id: 999 };
     },
-    createNote: async () => ({ id: 1000 })
+    createNote: async (conversationId, input) => {
+      noteText = input.text;
+      return { id: 1000 };
+    }
   };
   const supportAgent = {
     analyze: async (context, fallbackTriage) => ({
-      triage: fallbackTriage,
+      triage: {
+        ...fallbackTriage,
+        summary: 'Tablet Notes crashes during setup.',
+        labels: ['support', 'tablet-notes']
+      },
       draftReply: 'Hi Jordan,\n\nThanks for contacting Tablet Notes.\n\nThanks,\nTablet Notes Support'
     })
   };
 
-  await runSupportWorkflow({
+  const result = await runSupportWorkflow({
     eventName: 'convo.created',
     payload: { id: 123 },
     helpScoutClient,
@@ -301,6 +310,9 @@ test('replaces a model-generated identity from another inbox before drafting', a
 
   assert.doesNotMatch(draftedText, /Tablet Notes/);
   assert.match(draftedText, /Granted AI Support/);
+  assert.doesNotMatch(result.triage.summary, /Tablet Notes/);
+  assert.doesNotMatch(result.triage.labels.join(' '), /tablet-notes/);
+  assert.doesNotMatch(noteText, /Tablet Notes/);
 });
 
 test('runs the support workflow with agent-generated triage and draft reply', async () => {
