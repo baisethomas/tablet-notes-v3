@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const { SupportAgent, normalizeAgentDecision } = require('../supportAgent');
 
 const context = {
+  productName: 'Tablet Notes',
+  supportSignature: 'Tablet Notes Support',
+  agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
   subject: 'Recording disappears',
   customer: {
     firstName: 'Jordan',
@@ -126,11 +129,13 @@ test('SupportAgent uses the routed product identity in its instructions', async 
   await agent.analyze({
     ...context,
     productName: 'Granted AI',
-    supportSignature: 'Granted AI Support'
+    supportSignature: 'Granted AI Support',
+    agentGuidance: 'Use only details present in the ticket.'
   }, fallbackTriage);
 
   const prompt = calls[0].messages.map((message) => message.content).join('\n');
   assert.match(prompt, /Granted AI support triage agent/);
   assert.match(prompt, /signed Granted AI Support/);
+  assert.match(prompt, /Use only details present in the ticket/);
   assert.doesNotMatch(prompt, /Tablet Notes/);
 });

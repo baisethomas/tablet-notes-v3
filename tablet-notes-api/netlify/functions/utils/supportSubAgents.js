@@ -30,7 +30,7 @@ function buildSubAgentReports(context, triage) {
   };
 }
 
-function sanitizeDraftReplyWithReview(draftReply) {
+function sanitizeDraftReplyWithReview(draftReply, identity = {}) {
   let safeDraft = draftReply || '';
   const reviewNotes = [];
 
@@ -40,6 +40,30 @@ function sanitizeDraftReplyWithReview(draftReply) {
       reviewNotes.push(rule.note);
     }
     rule.pattern.lastIndex = 0;
+  }
+
+  const forbiddenIdentities = Array.from(new Set(identity.forbiddenIdentities || []))
+    .filter((item) => typeof item === 'string' && item.trim())
+    .sort((a, b) => b.length - a.length);
+  let replacedIdentity = false;
+
+  for (const forbiddenIdentity of forbiddenIdentities) {
+    const replacement = /\bsupport\s*$/i.test(forbiddenIdentity)
+      ? identity.supportSignature
+      : identity.productName;
+    if (!replacement) {
+      continue;
+    }
+
+    const pattern = new RegExp(escapeRegExp(forbiddenIdentity), 'gi');
+    if (pattern.test(safeDraft)) {
+      safeDraft = safeDraft.replace(pattern, replacement);
+      replacedIdentity = true;
+    }
+  }
+
+  if (replacedIdentity) {
+    reviewNotes.push('Replaced another support inbox identity with the routed product identity.');
   }
 
   return {
@@ -57,14 +81,14 @@ function buildEngineeringReport(context, triage) {
   const knownMetadata = Object.entries(context.detectedMetadata || {})
     .map(([key, value]) => `${key}: ${value}`);
   const missingMetadata = [];
-  const productName = context.productName || 'Tablet Notes';
+  const productName = context.productName;
 
   if (!context.detectedMetadata?.appVersion) {
     missingMetadata.push(`${productName} app version`);
   }
 
   if (!context.detectedMetadata?.osVersion) {
-    missingMetadata.push('iOS/iPadOS version');
+    missingMetadata.push('operating system or browser version');
   }
 
   return {
@@ -79,7 +103,7 @@ function buildEngineeringReport(context, triage) {
       'Add or update a regression test before shipping a fix.'
     ],
     customerFollowUpQuestions: [
-      'Which device model are you using?',
+      'Which device and browser or app are you using?',
       'Does the issue happen every time or only in a specific workflow?',
       'What was the last successful step before the issue appeared?'
     ]
@@ -90,9 +114,9 @@ function buildBillingReport() {
   return {
     kind: 'billing_support',
     checklist: [
-      'Ask for App Store subscription screenshot if purchase state is unclear.',
-      'Ask whether Restore Purchases was tried from the account screen.',
-      'Check whether the customer is signed into the same Apple ID used for purchase.',
+      'Ask for a purchase or subscription screenshot if the current state is unclear.',
+      'Ask which purchase channel and account the customer used.',
+      'Check whether the customer is signed into the same account used for purchase.',
       'Escalate to engineering only if receipt verification or entitlement state appears wrong.'
     ]
   };
@@ -175,6 +199,10 @@ function buildInternalNoteAppendix({ engineering, billing, product }) {
 
 function formatList(items) {
   return items.map((item) => `- ${item}`).join('\n');
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 module.exports = {

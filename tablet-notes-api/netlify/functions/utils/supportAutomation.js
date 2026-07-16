@@ -239,7 +239,8 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   const context = {
     ...baseContext,
     productName: route.productName,
-    supportSignature: route.supportSignature || `${route.productName} Support`
+    supportSignature: route.supportSignature || `${route.productName} Support`,
+    agentGuidance: route.agentGuidance
   };
   const fallbackTriage = triageSupportContext(context);
   let triage = fallbackTriage;
@@ -257,7 +258,14 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
   }
 
   const subAgentReports = buildSubAgentReports(context, triage);
-  const replyReview = sanitizeDraftReplyWithReview(draftReply);
+  const replyReview = sanitizeDraftReplyWithReview(draftReply, {
+    productName: context.productName,
+    supportSignature: context.supportSignature,
+    forbiddenIdentities: Object.values(config.inboxRoutes)
+      .filter((candidate) => candidate !== route)
+      .flatMap((candidate) => [candidate.supportSignature, candidate.productName])
+      .filter(Boolean)
+  });
   draftReply = replyReview.draftReply;
 
   let linearIssue = null;

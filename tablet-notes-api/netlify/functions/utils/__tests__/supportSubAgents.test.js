@@ -7,6 +7,7 @@ const {
 } = require('../supportSubAgents');
 
 const crashContext = {
+  productName: 'Tablet Notes',
   subject: 'App crashes after recording',
   customer: {
     firstName: 'Jordan',
@@ -41,6 +42,7 @@ test('bug investigation sub-agent produces engineering handoff details', () => {
 
 test('billing sub-agent avoids engineering handoff and asks for purchase context', () => {
   const reports = buildSubAgentReports({
+    productName: 'Tablet Notes',
     subject: 'Restore purchase',
     latestCustomerMessage: 'I paid but cannot restore purchase.',
     detectedMetadata: {}
@@ -54,11 +56,12 @@ test('billing sub-agent avoids engineering handoff and asks for purchase context
 
   assert.equal(reports.billing?.kind, 'billing_support');
   assert.equal(reports.engineering, null);
-  assert.match(reports.internalNoteAppendix, /Ask for App Store subscription screenshot/);
+  assert.match(reports.internalNoteAppendix, /Ask for a purchase or subscription screenshot/);
 });
 
 test('feature request sub-agent adds product discovery prompts', () => {
   const reports = buildSubAgentReports({
+    productName: 'Tablet Notes',
     subject: 'Please add folders',
     latestCustomerMessage: 'I wish there was a way to organize sermons into folders.',
     detectedMetadata: {}
@@ -73,6 +76,22 @@ test('feature request sub-agent adds product discovery prompts', () => {
   assert.equal(reports.product?.kind, 'feature_request_intake');
   assert.match(reports.linearAppendix, /Product Sub-Agent/);
   assert.match(reports.linearAppendix, /What workflow is blocked/);
+});
+
+test('reply safety sub-agent replaces another inbox identity', () => {
+  const review = sanitizeDraftReplyWithReview(
+    'Hi Jordan,\n\nThanks for contacting Tablet Notes.\n\nThanks,\nTablet Notes Support',
+    {
+      productName: 'Granted AI',
+      supportSignature: 'Granted AI Support',
+      forbiddenIdentities: ['Tablet Notes Support', 'Tablet Notes']
+    }
+  );
+
+  assert.equal(review.changed, true);
+  assert.doesNotMatch(review.draftReply, /Tablet Notes/);
+  assert.match(review.draftReply, /Granted AI Support/);
+  assert.match(review.reviewNotes.join('\n'), /another support inbox identity/);
 });
 
 test('reply safety sub-agent removes auto-send language and appends human review note', () => {

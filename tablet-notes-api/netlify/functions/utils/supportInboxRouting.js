@@ -25,10 +25,12 @@ function parseSupportInboxRoutes(value) {
 
     const productName = requiredString(route.productName, `Support inbox route ${mailboxId} productName is required`);
     const linearTeamId = requiredString(route.linearTeamId, `Support inbox route ${mailboxId} linearTeamId is required`);
+    const agentGuidance = requiredString(route.agentGuidance, `Support inbox route ${mailboxId} agentGuidance is required`);
 
     return [mailboxId, {
       productName,
       supportSignature: optionalString(route.supportSignature) || `${productName} Support`,
+      agentGuidance,
       linearTeamId,
       ...(optionalString(route.linearProjectId) ? { linearProjectId: route.linearProjectId.trim() } : {}),
       ...(optionalString(route.linearAssigneeId) ? { linearAssigneeId: route.linearAssigneeId.trim() } : {}),

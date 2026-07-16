@@ -55,10 +55,14 @@ const sampleConversation = {
 const inboxRoutes = {
   '42': {
     productName: 'Tablet Notes',
+    supportSignature: 'Tablet Notes Support',
+    agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
     linearTeamId: 'tablet-notes-team'
   },
   '84': {
     productName: 'Granted AI',
+    supportSignature: 'Granted AI Support',
+    agentGuidance: 'Use only details present in the ticket.',
     linearTeamId: 'granted-ai-team'
   }
 };
@@ -180,6 +184,7 @@ test('runs the support workflow with injected clients', async () => {
       inboxRoutes: {
         '42': {
           productName: 'Tablet Notes',
+          agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
           linearTeamId: 'team-uuid',
           linearProjectId: 'project-uuid'
         }
@@ -263,6 +268,39 @@ test('skips an unconfigured Help Scout inbox without downstream writes', async (
   assert.equal(result.processed, false);
   assert.equal(result.reason, 'Ignored unconfigured Help Scout mailbox: 999');
   assert.deepEqual(writes, []);
+});
+
+test('replaces a model-generated identity from another inbox before drafting', async () => {
+  let draftedText;
+  const helpScoutClient = {
+    getConversation: async () => ({
+      ...sampleConversation,
+      mailbox: { id: 84, name: 'Granted AI Support' }
+    }),
+    createDraftReply: async (conversationId, input) => {
+      draftedText = input.text;
+      return { id: 999 };
+    },
+    createNote: async () => ({ id: 1000 })
+  };
+  const supportAgent = {
+    analyze: async (context, fallbackTriage) => ({
+      triage: fallbackTriage,
+      draftReply: 'Hi Jordan,\n\nThanks for contacting Tablet Notes.\n\nThanks,\nTablet Notes Support'
+    })
+  };
+
+  await runSupportWorkflow({
+    eventName: 'convo.created',
+    payload: { id: 123 },
+    helpScoutClient,
+    linearClient: { createIssue: async () => ({ id: 'issue-id' }) },
+    supportAgent,
+    config: { inboxRoutes }
+  });
+
+  assert.doesNotMatch(draftedText, /Tablet Notes/);
+  assert.match(draftedText, /Granted AI Support/);
 });
 
 test('runs the support workflow with agent-generated triage and draft reply', async () => {
