@@ -55,12 +55,17 @@ const sampleConversation = {
 const inboxRoutes = {
   '42': {
     productName: 'Tablet Notes',
+    mailboxName: 'TabletNotes-support',
+    supportEmail: 'support@tabletnotes.io',
+    identityAliases: ['TabletNotes'],
     supportSignature: 'Tablet Notes Support',
     agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
     linearTeamId: 'tablet-notes-team'
   },
   '84': {
     productName: 'Granted AI',
+    mailboxName: 'Granted AI Support',
+    supportEmail: 'support@grantedai.app',
     supportSignature: 'Granted AI Support',
     agentGuidance: 'Use only details present in the ticket.',
     linearTeamId: 'granted-ai-team'
@@ -184,6 +189,8 @@ test('runs the support workflow with injected clients', async () => {
       inboxRoutes: {
         '42': {
           productName: 'Tablet Notes',
+          mailboxName: 'TabletNotes-support',
+          supportEmail: 'support@tabletnotes.io',
           supportSignature: 'Tablet Notes Support',
           agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
           linearTeamId: 'team-uuid',
@@ -295,7 +302,7 @@ test('replaces a model-generated identity from another inbox before drafting', a
         summary: 'Tablet Notes crashes during setup.',
         labels: ['support', 'tablet-notes']
       },
-      draftReply: 'Hi Jordan,\n\nThanks for contacting Tablet Notes.\n\nThanks,\nTablet Notes Support'
+      draftReply: 'Hi Jordan,\n\nThanks for contacting TabletNotes-support at support@tabletnotes.io.\n\nThanks,\nTablet Notes Support'
     })
   };
 
@@ -309,6 +316,9 @@ test('replaces a model-generated identity from another inbox before drafting', a
   });
 
   assert.doesNotMatch(draftedText, /Tablet Notes/);
+  assert.doesNotMatch(draftedText, /TabletNotes-support/);
+  assert.doesNotMatch(draftedText, /support@tabletnotes\.io/);
+  assert.match(draftedText, /support@grantedai\.app/);
   assert.match(draftedText, /Granted AI Support/);
   assert.doesNotMatch(result.triage.summary, /Tablet Notes/);
   assert.doesNotMatch(result.triage.labels.join(' '), /tablet-notes/);

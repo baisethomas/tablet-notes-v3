@@ -7,11 +7,16 @@ test('parses independent Help Scout mailbox routes from production configuration
   const routes = parseSupportInboxRoutes(JSON.stringify({
     360464: {
       productName: 'Tablet Notes',
+      mailboxName: 'TabletNotes-support',
+      supportEmail: 'support@tabletnotes.io',
+      identityAliases: ['TabletNotes'],
       agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
       linearTeamId: '38abf509-9400-4268-a35d-cb64cc6db607'
     },
     371514: {
       productName: 'Granted AI',
+      mailboxName: 'Granted AI Support',
+      supportEmail: 'support@grantedai.app',
       supportSignature: 'Granted AI Support',
       agentGuidance: 'Use only details present in the ticket.',
       linearTeamId: 'ec3442ea-feb0-42a3-a355-bdb373c9bc0c',
@@ -21,6 +26,9 @@ test('parses independent Help Scout mailbox routes from production configuration
 
   assert.deepEqual(routes['360464'], {
     productName: 'Tablet Notes',
+    mailboxName: 'TabletNotes-support',
+    supportEmail: 'support@tabletnotes.io',
+    identityAliases: ['TabletNotes'],
     supportSignature: 'Tablet Notes Support',
     agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
     linearTeamId: '38abf509-9400-4268-a35d-cb64cc6db607',
@@ -42,7 +50,12 @@ test('rejects missing or invalid support inbox routing configuration', () => {
   );
   assert.throws(
     () => parseSupportInboxRoutes(JSON.stringify({
-      371514: { productName: 'Granted AI', agentGuidance: 'Ticket-only support.' }
+      371514: {
+        productName: 'Granted AI',
+        mailboxName: 'Granted AI Support',
+        supportEmail: 'support@grantedai.app',
+        agentGuidance: 'Ticket-only support.'
+      }
     })),
     /linearTeamId is required/
   );

@@ -24,17 +24,22 @@ function parseSupportInboxRoutes(value) {
     }
 
     const productName = requiredString(route.productName, `Support inbox route ${mailboxId} productName is required`);
+    const mailboxName = requiredString(route.mailboxName, `Support inbox route ${mailboxId} mailboxName is required`);
+    const supportEmail = requiredString(route.supportEmail, `Support inbox route ${mailboxId} supportEmail is required`);
     const linearTeamId = requiredString(route.linearTeamId, `Support inbox route ${mailboxId} linearTeamId is required`);
     const agentGuidance = requiredString(route.agentGuidance, `Support inbox route ${mailboxId} agentGuidance is required`);
 
     return [mailboxId, {
       productName,
+      mailboxName,
+      supportEmail,
+      identityAliases: normalizeStringArray(route.identityAliases, mailboxId, 'identityAliases'),
       supportSignature: optionalString(route.supportSignature) || `${productName} Support`,
       agentGuidance,
       linearTeamId,
       ...(optionalString(route.linearProjectId) ? { linearProjectId: route.linearProjectId.trim() } : {}),
       ...(optionalString(route.linearAssigneeId) ? { linearAssigneeId: route.linearAssigneeId.trim() } : {}),
-      linearLabelIds: normalizeStringArray(route.linearLabelIds, mailboxId)
+      linearLabelIds: normalizeStringArray(route.linearLabelIds, mailboxId, 'linearLabelIds')
     }];
   }));
 }
@@ -51,13 +56,13 @@ function optionalString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function normalizeStringArray(value, mailboxId) {
+function normalizeStringArray(value, mailboxId, fieldName) {
   if (value === undefined) {
     return [];
   }
 
   if (!Array.isArray(value) || value.some((item) => !optionalString(item))) {
-    throw new Error(`Support inbox route ${mailboxId} linearLabelIds must be an array of strings`);
+    throw new Error(`Support inbox route ${mailboxId} ${fieldName} must be an array of strings`);
   }
 
   return Array.from(new Set(value.map((item) => item.trim())));

@@ -144,7 +144,7 @@ HELPSCOUT_WEBHOOK_SECRET=your-helpscout-webhook-secret
 HELPSCOUT_APP_ID=your-helpscout-oauth-app-id
 HELPSCOUT_APP_SECRET=your-helpscout-oauth-app-secret
 LINEAR_API_KEY=your-linear-personal-api-key
-SUPPORT_INBOX_ROUTES='{"360464":{"productName":"Tablet Notes","agentGuidance":"Tablet Notes is an iOS and iPadOS note-taking and recording app. Prioritize lost recordings, transcription or data loss, crashes, and App Store launch issues.","linearTeamId":"38abf509-9400-4268-a35d-cb64cc6db607"},"371514":{"productName":"Granted AI","agentGuidance":"Use only details present in the ticket. Do not assume iOS, App Store, recording, or Tablet Notes workflows.","linearTeamId":"ec3442ea-feb0-42a3-a355-bdb373c9bc0c"}}'
+SUPPORT_INBOX_ROUTES='{"360464":{"productName":"Tablet Notes","mailboxName":"TabletNotes-support","supportEmail":"support@tabletnotes.io","identityAliases":["TabletNotes"],"agentGuidance":"Tablet Notes is an iOS and iPadOS note-taking and recording app. Prioritize lost recordings, transcription or data loss, crashes, and App Store launch issues.","linearTeamId":"38abf509-9400-4268-a35d-cb64cc6db607"},"371514":{"productName":"Granted AI","mailboxName":"Granted AI Support","supportEmail":"support@grantedai.app","agentGuidance":"Use only details present in the ticket. Do not assume iOS, App Store, recording, or Tablet Notes workflows.","linearTeamId":"ec3442ea-feb0-42a3-a355-bdb373c9bc0c"}}'
 SUPPORT_AGENT_MODEL=gpt-4o-mini
 
 # Security Configuration  
@@ -214,11 +214,13 @@ draft reply for human review, add an internal triage note, and create a Linear
 issue for bug or feature-request categories in that mailbox's configured team.
 
 `SUPPORT_INBOX_ROUTES` is a JSON object keyed by Help Scout mailbox ID. Each
-route requires `productName`, `agentGuidance`, and `linearTeamId`. A route may
-also define `supportSignature`, `linearProjectId`, `linearAssigneeId`, and a
-`linearLabelIds` array. Product names, support signatures, and guidance are used
-in the AI prompt and customer draft. The reply safety pass also replaces any
-configured identity from another inbox before saving the draft.
+route requires `productName`, `mailboxName`, `supportEmail`, `agentGuidance`,
+and `linearTeamId`. A route may also define `identityAliases`,
+`supportSignature`, `linearProjectId`, `linearAssigneeId`, and a
+`linearLabelIds` array. Product names, mailbox names, email addresses, aliases,
+support signatures, and guidance are used in the AI prompt and safety pass. Any
+configured identity from another inbox is replaced before saving drafts,
+internal triage, or Linear issue content.
 
 The support workflow includes specialist sub-agents:
 - Engineering sub-agent: adds bug investigation steps, known/missing metadata,

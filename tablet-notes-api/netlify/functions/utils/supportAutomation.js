@@ -263,7 +263,13 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
       .filter((candidate) => candidate !== route)
       .flatMap((candidate) => [
         { forbidden: candidate.supportSignature, replacement: context.supportSignature },
-        { forbidden: candidate.productName, replacement: context.productName }
+        { forbidden: candidate.productName, replacement: context.productName },
+        { forbidden: candidate.mailboxName, replacement: route.mailboxName },
+        { forbidden: candidate.supportEmail, replacement: route.supportEmail },
+        ...(candidate.identityAliases || []).map((alias) => ({
+          forbidden: alias,
+          replacement: context.productName
+        }))
       ])
       .filter((replacement) => replacement.forbidden && replacement.replacement)
   };
@@ -495,7 +501,7 @@ function resolveInboxRoute(mailboxId, inboxRoutes) {
   }
 
   const route = inboxRoutes[String(mailboxId)];
-  if (!route?.productName || !route?.supportSignature || !route?.agentGuidance || !route?.linearTeamId) {
+  if (!route?.productName || !route?.mailboxName || !route?.supportEmail || !route?.supportSignature || !route?.agentGuidance || !route?.linearTeamId) {
     return null;
   }
 
