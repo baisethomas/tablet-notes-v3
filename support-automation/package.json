@@ -1,0 +1,14 @@
+{
+  "name": "loom-logic-support-automation",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test src/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "openai": "^4.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

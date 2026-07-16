@@ -139,14 +139,6 @@ ASSEMBLYAI_API_KEY=your-assemblyai-key
 OPENAI_API_KEY=your-openai-key
 BIBLE_API_KEY=your-bible-api-key
 
-# Support automation
-HELPSCOUT_WEBHOOK_SECRET=your-helpscout-webhook-secret
-HELPSCOUT_APP_ID=your-helpscout-oauth-app-id
-HELPSCOUT_APP_SECRET=your-helpscout-oauth-app-secret
-LINEAR_API_KEY=your-linear-personal-api-key
-SUPPORT_INBOX_ROUTES='{"360464":{"productName":"Tablet Notes","mailboxName":"TabletNotes-support","supportEmail":"support@tabletnotes.io","identityAliases":["TabletNotes"],"agentGuidance":"Tablet Notes is an iOS and iPadOS note-taking and recording app. Prioritize lost recordings, transcription or data loss, crashes, and App Store launch issues.","linearTeamId":"38abf509-9400-4268-a35d-cb64cc6db607"},"371514":{"productName":"Granted AI","mailboxName":"Granted AI Support","supportEmail":"support@grantedai.app","agentGuidance":"Use only details present in the ticket. Do not assume iOS, App Store, recording, or Tablet Notes workflows.","linearTeamId":"ec3442ea-feb0-42a3-a355-bdb373c9bc0c"}}'
-SUPPORT_AGENT_MODEL=gpt-4o-mini
-
 # Security Configuration  
 ALLOWED_ORIGINS=https://tabletnotes.io,https://www.tabletnotes.io
 NODE_ENV=production
@@ -196,45 +188,11 @@ LOG_LEVEL=DEBUG
 
 ## Testing Security Features
 
-### Support Automation Webhook
+### Support Automation
 
-Configure Help Scout's Webhooks app to send `convo.created` and
-`convo.customer.reply.created` events to:
-
-```text
-https://your-api.netlify.app/api/support-webhook
-```
-
-The webhook secret must match `HELPSCOUT_WEBHOOK_SECRET`. The handler verifies
-Help Scout's `X-HelpScout-Signature`, fetches the full conversation, and selects
-the product route by immutable Help Scout mailbox ID. Unknown or unconfigured
-mailboxes are ignored without creating a draft, note, or Linear issue. Known
-mailboxes run the support agent with deterministic triage fallback, create a
-draft reply for human review, add an internal triage note, and create a Linear
-issue for bug or feature-request categories in that mailbox's configured team.
-
-`SUPPORT_INBOX_ROUTES` is a JSON object keyed by Help Scout mailbox ID. Each
-route requires `productName`, `mailboxName`, `supportEmail`, `agentGuidance`,
-and `linearTeamId`. A route may also define `identityAliases`,
-`supportSignature`, `linearProjectId`, `linearAssigneeId`, and a
-`linearLabelIds` array. Product names, mailbox names, email addresses, aliases,
-support signatures, and guidance are used in the AI prompt and safety pass. Any
-configured identity from another inbox is replaced before saving drafts,
-internal triage, or Linear issue content.
-
-The support workflow includes specialist sub-agents:
-- Engineering sub-agent: adds bug investigation steps, known/missing metadata,
-  and customer follow-up questions to Linear issues.
-- Billing sub-agent: adds purchase/restore checklist items to the internal
-  Help Scout note without creating engineering work by default.
-- Product sub-agent: adds discovery prompts for feature requests.
-- Reply safety sub-agent: removes unsafe promises from draft replies before
-  they are stored in Help Scout.
-
-For Linear personal API keys, set `LINEAR_API_KEY` directly. If you later switch
-to OAuth, set `LINEAR_AUTH_HEADER_VALUE="Bearer <access-token>"` instead. Each
-`linearTeamId` in `SUPPORT_INBOX_ROUTES` should be a Linear team UUID. Short
-team keys are also resolved by the backend, but UUIDs are preferred.
+Shared Help Scout and Linear support automation no longer runs in the Tablet
+Notes Netlify environment. It is maintained as the standalone
+`support-automation` Vercel project at the repository root.
 
 ### 1. Rate Limiting Test
 ```bash

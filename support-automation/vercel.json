@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/support-webhook.js": {
+      "maxDuration": 60
+    }
+  }
+}

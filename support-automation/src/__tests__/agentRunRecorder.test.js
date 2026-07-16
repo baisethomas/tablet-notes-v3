@@ -9,6 +9,7 @@ function sampleResult(overrides = {}) {
       conversationId: 123,
       conversationNumber: 42,
       subject: 'Recording lost after sync',
+      productName: 'Granted AI',
       url: 'https://secure.helpscout.net/conversation/123/42'
     },
     triage: {
@@ -68,6 +69,7 @@ test('buildRunProperties maps triage into Notion properties', () => {
   });
 
   assert.strictEqual(props.Run.title[0].text.content, '#42 Recording lost after sync');
+  assert.strictEqual(props.Agent.select.name, 'Granted AI Support');
   assert.strictEqual(props.Status.select.name, 'Processed');
   assert.strictEqual(props.Category.select.name, 'bug');
   assert.strictEqual(props.Priority.select.name, 'Urgent');

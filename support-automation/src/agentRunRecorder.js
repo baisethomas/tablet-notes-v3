@@ -62,7 +62,7 @@ function buildRunProperties({ result, error, startedAt, durationMs, llmEnabled }
 
   const properties = {
     Run: { title: [{ text: { content: title.slice(0, 200) } }] },
-    Agent: { select: { name: 'Tablet Support' } },
+    Agent: { select: { name: context.productName ? `${context.productName} Support` : 'Support Automation' } },
     Status: { select: { name: error ? 'Failed' : 'Processed' } },
     Started: { date: { start: new Date(startedAt).toISOString() } },
     'Duration (ms)': { number: Math.round(durationMs) },
@@ -123,9 +123,9 @@ function buildRunPageContent({ result }) {
 /**
  * Record a run. Never throws — failures are reported through the logger only.
  */
-async function recordAgentRun({ result, error, startedAt, durationMs, llmEnabled, logger }) {
-  const apiKey = process.env.NOTION_API_KEY;
-  const databaseId = process.env.NOTION_AGENT_RUNS_DB_ID;
+async function recordAgentRun({ result, error, startedAt, durationMs, llmEnabled, logger, env = process.env }) {
+  const apiKey = env.NOTION_API_KEY;
+  const databaseId = env.NOTION_AGENT_RUNS_DB_ID;
 
   if (!apiKey || !databaseId) {
     logger?.warn?.('Agent run not recorded: NOTION_API_KEY or NOTION_AGENT_RUNS_DB_ID missing');

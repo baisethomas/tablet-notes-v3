@@ -56,7 +56,7 @@ function buildSupportContext(conversation) {
     status: conversation.status || null,
     createdAt: conversation.createdAt || null,
     mailbox: {
-      id: conversation.mailbox?.id || null,
+      id: conversation.mailbox?.id || conversation.mailboxId || null,
       name: conversation.mailbox?.name || null
     },
     customer,
@@ -239,6 +239,10 @@ async function runSupportWorkflow({ eventName, payload, helpScoutClient, linearC
 
   const context = {
     ...baseContext,
+    mailbox: {
+      ...baseContext.mailbox,
+      name: baseContext.mailbox.name || route.mailboxName
+    },
     productName: route.productName,
     supportSignature: route.supportSignature,
     agentGuidance: route.agentGuidance
