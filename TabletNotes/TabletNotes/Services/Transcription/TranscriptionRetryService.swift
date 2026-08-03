@@ -278,6 +278,14 @@ class TranscriptionRetryService: ObservableObject {
         sermon.markPendingSync(metadata: true)
         try? context.save()
 
+        // Snapshot the ids as value types before the runner call — the runner
+        // can take minutes (AssemblyAI upload + poll), and `nextJob`/`sermon`
+        // are @Model references that must not be touched after that gap if
+        // their backing data was invalidated in the meantime (mirrors the
+        // same pattern in SummaryRetryService.startProcessing).
+        let jobId = nextJob.id
+        let sermonId = nextJob.sermonId
+
         let defaultRunner = transcriptionRunner ?? { url, completion in
             let transcriptionService = TranscriptionService()
             transcriptionService.transcribeAudioFileWithResult(url: url, completion: completion)
@@ -300,8 +308,8 @@ class TranscriptionRetryService: ObservableObject {
         runner(sermon.audioFileURL) { [weak self] result in
             Task { @MainActor in
                 guard let self, let context = self.modelContext else { return }
-                guard let refreshedJob = self.fetchJob(withId: nextJob.id, in: context),
-                      let refreshedSermon = self.fetchSermon(withId: nextJob.sermonId, in: context) else {
+                guard let refreshedJob = self.fetchJob(withId: jobId, in: context),
+                      let refreshedSermon = self.fetchSermon(withId: sermonId, in: context) else {
                     self.isProcessingQueue = false
                     return
                 }
