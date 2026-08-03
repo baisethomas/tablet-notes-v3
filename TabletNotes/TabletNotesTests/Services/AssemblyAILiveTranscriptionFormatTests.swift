@@ -24,4 +24,28 @@ struct AssemblyAILiveTranscriptionFormatTests {
         #expect(AssemblyAILiveTranscriptionService.isCaptureFormatUsable(sampleRate: 48000, channelCount: 1))
         #expect(AssemblyAILiveTranscriptionService.isCaptureFormatUsable(sampleRate: 44100, channelCount: 2))
     }
+
+    // The format guard cannot close the route-change window between the check
+    // and installTap/start, so those calls run inside an ObjC @try/@catch shim.
+    @Test func catchesRaisedObjCException() {
+        let exception = ObjCExceptionCatcher.catching {
+            NSException(
+                name: NSExceptionName("TNTestException"),
+                reason: "Failed to create tap due to format mismatch",
+                userInfo: nil
+            ).raise()
+        }
+
+        #expect(exception != nil)
+        #expect(exception?.name.rawValue == "TNTestException")
+        #expect(exception?.reason == "Failed to create tap due to format mismatch")
+    }
+
+    @Test func returnsNilWhenBlockCompletesNormally() {
+        var ran = false
+        let exception = ObjCExceptionCatcher.catching { ran = true }
+
+        #expect(exception == nil)
+        #expect(ran)
+    }
 }

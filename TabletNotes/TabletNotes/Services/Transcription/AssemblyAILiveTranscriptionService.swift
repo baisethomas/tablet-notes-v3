@@ -457,7 +457,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         // explicit format that drifts from the hardware (session reconfigured
         // between the read above and this call) raises an uncatchable
         // NSException ("Failed to create tap due to format mismatch").
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
+        let tapBlock: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             guard let self = self else { return }
 
             let frameLength = Int(buffer.frameLength)
@@ -545,11 +545,50 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 self.sendAudioData(convertedBuffer)
             }
         }
+
+        // The format guard above narrows, but cannot close, the window in which
+        // an OS-initiated route change invalidates the input format between the
+        // check and this call. installTap then raises an Objective-C NSException
+        // ("Failed to create tap due to format mismatch") that Swift cannot
+        // catch, killing the app mid-recording — run it through the ObjC shim
+        // and turn any exception into a throwable Swift error instead.
+        if let exception = ObjCExceptionCatcher.catching({
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil, block: tapBlock)
+        }) {
+            print("[AssemblyAI Live] ⚠️ installTap raised \(exception.name.rawValue): \(exception.reason ?? "no reason")")
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to install audio tap: \(exception.name.rawValue) — \(exception.reason ?? "no reason")"]
+            )
+        }
+        // Only mark the tap installed once installTap actually returned.
         isInputTapInstalled = true
 
         print("[AssemblyAI Live] Installing audio tap and starting engine")
-        audioEngine.prepare()
-        try audioEngine.start()
+        // audioEngine.start() throws a Swift error for ordinary failures, but
+        // can also raise an NSException on the same format race — capture both.
+        var startError: Error?
+        let startException = ObjCExceptionCatcher.catching {
+            audioEngine.prepare()
+            do {
+                try audioEngine.start()
+            } catch {
+                startError = error
+            }
+        }
+        if let startException {
+            print("[AssemblyAI Live] ⚠️ Audio engine start raised \(startException.name.rawValue): \(startException.reason ?? "no reason")")
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to start audio engine: \(startException.name.rawValue) — \(startException.reason ?? "no reason")"]
+            )
+        }
+        if let startError {
+            print("[AssemblyAI Live] ⚠️ Audio engine failed to start: \(startError)")
+            throw startError
+        }
         print("[AssemblyAI Live] Audio engine started successfully")
     }
     
