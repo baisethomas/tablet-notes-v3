@@ -117,8 +117,15 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         // Start WebSocket connection
         try await startWebSocketConnection()
 
-        // Start audio capture
-        try startAudioCapture()
+        // Start audio capture. If it fails, tear the WebSocket back down —
+        // otherwise a later SessionBegins sets isConnected with no tap
+        // installed, and every retry early-returns with silent captions.
+        do {
+            try startAudioCapture()
+        } catch {
+            stopLiveTranscription()
+            throw error
+        }
 
         // Start token renewal timer
         startTokenRenewalTimer()
