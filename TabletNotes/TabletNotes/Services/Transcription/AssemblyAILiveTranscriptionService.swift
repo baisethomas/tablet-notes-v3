@@ -304,27 +304,37 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         task.receive { [weak self] result in
             guard let self = self else { return }
 
+            // Early-out so a dead connection neither gets processed nor re-armed.
+            // This is not sufficient on its own: every state mutation below is
+            // queued onto main, so the task can be replaced between here and the
+            // mutation running. Each mutation point re-checks — see below.
             guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
                 print("[AssemblyAI Live] Ignoring message from stale WebSocket task")
-                // Do not process and do not re-arm — this connection is gone.
                 return
             }
 
             switch result {
             case .success(let message):
-                self.handleWebSocketMessage(message)
+                self.handleWebSocketMessage(message, from: task)
                 // Continue listening
                 self.startListeningForMessages()
             case .failure(let error):
                 print("[AssemblyAI Live] WebSocket error: \(error)")
-                self.handleWebSocketDisconnection(error: error)
+                self.handleWebSocketDisconnection(error: error, from: task)
                 // Don't continue listening on failure
             }
         }
     }
 
-    private func handleWebSocketDisconnection(error: Error) {
+    private func handleWebSocketDisconnection(error: Error, from task: URLSessionWebSocketTask?) {
         print("[AssemblyAI Live] Handling WebSocket disconnection: \(error.localizedDescription)")
+
+        // Check before tearing anything down: a failure delivered for a task that
+        // has already been replaced must not stop the *new* session's capture.
+        guard Self.belongsToLiveConnection(task, currentTask: webSocketTask) else {
+            print("[AssemblyAI Live] Ignoring disconnection from stale WebSocket task")
+            return
+        }
 
         // Stop audio capture immediately to prevent further send attempts
         stopAudioCapture()
@@ -333,6 +343,16 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         closeWebSocketConnection()
 
         Task { @MainActor in
+            // Queued-hop TOCTOU: the guard above ran before the teardown, and a
+            // reconnection can start between that teardown and this block. A
+            // plain identity re-check cannot be used here — closeWebSocketConnection()
+            // above deliberately nils webSocketTask, so it would always fail.
+            // Instead require that no *newer* connection exists yet.
+            guard self.webSocketTask == nil else {
+                print("[AssemblyAI Live] Ignoring disconnection from stale WebSocket task")
+                return
+            }
+
             self.isConnected = false
 
             // Determine if it's a network error
@@ -347,7 +367,13 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
     }
     
-    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
+    /// - Parameter task: the WebSocket task this message arrived on. Every state
+    ///   mutation below is queued onto main, so the task can be replaced between
+    ///   the receive completion's check and the mutation actually running
+    ///   (queued-hop TOCTOU). Each mutation therefore re-checks identity at the
+    ///   point of mutation — on main, where the mutated state is only ever
+    ///   touched — instead of trusting the earlier check.
+    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message, from task: URLSessionWebSocketTask?) {
         switch message {
         case .string(let text):
             print("[AssemblyAI Live] Received message: \(text)")
@@ -374,6 +400,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                     // Final transcript for this turn
                                     print("[AssemblyAI Live] Final turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
+                                        guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                            print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                            return
+                                        }
                                         if self.fullTranscript.isEmpty {
                                             self.fullTranscript = transcriptText
                                         } else {
@@ -386,6 +416,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                     // Partial transcript for this turn
                                     print("[AssemblyAI Live] Partial turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
+                                        guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                            print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                            return
+                                        }
                                         let combinedText = self.fullTranscript + (self.fullTranscript.isEmpty ? "" : " ") + transcriptText
                                         print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                         self.transcriptSubject.send(combinedText)
@@ -396,6 +430,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                             if let partialText = jsonObject["text"] as? String {
                                 print("[AssemblyAI Live] Partial transcript received, characters=\(partialText.count)")
                                 DispatchQueue.main.async {
+                                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                        print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                        return
+                                    }
                                     let combinedText = self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText)
                                     print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                     self.transcriptSubject.send(combinedText)
@@ -407,6 +445,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                             if let finalText = jsonObject["text"] as? String, !finalText.isEmpty {
                                 print("[AssemblyAI Live] Final transcript received, characters=\(finalText.count)")
                                 DispatchQueue.main.async {
+                                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                        print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                        return
+                                    }
                                     if self.fullTranscript.isEmpty {
                                         self.fullTranscript = finalText
                                     } else {
@@ -421,6 +463,14 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                         case "SessionBegins", "Begin":
                             print("[AssemblyAI Live] ✅ Session began successfully")
                             DispatchQueue.main.async {
+                                // Checked here, on main, immediately before the
+                                // mutation: a SessionBegins from a socket that
+                                // was torn down would otherwise flip isConnected
+                                // true with no socket and no audio tap.
+                                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                    print("[AssemblyAI Live] Ignoring SessionBegins from stale WebSocket task")
+                                    return
+                                }
                                 self.isConnected = true
                             }
                         case "SessionTerminated", "Error":
@@ -429,6 +479,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                 print("[AssemblyAI Live] Error message: \(errorMessage)")
                             }
                             DispatchQueue.main.async {
+                                // A termination for a replaced socket must not
+                                // clear the new session's connected state.
+                                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                    print("[AssemblyAI Live] Ignoring session termination from stale WebSocket task")
+                                    return
+                                }
                                 self.isConnected = false
                             }
                             // Stop listening when session terminates
@@ -708,12 +764,18 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
                 guard let self = self else { return }
 
-                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
-                    print("[AssemblyAI Live] Ignoring send failure from stale WebSocket task")
-                    return
-                }
-
                 Task { @MainActor in
+                    // Queued-hop TOCTOU: checking identity out here, on the
+                    // URLSession completion queue, leaves a window in which
+                    // reconnection replaces the task before this block runs —
+                    // the stale failure would then clear the NEW session's
+                    // isConnected and `guard isConnected` would drop its audio.
+                    // Check on main, immediately before the mutation.
+                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                        print("[AssemblyAI Live] Ignoring send failure from stale WebSocket task")
+                        return
+                    }
+
                     self.isConnected = false
                     self.wasInterrupted = true
                 }
