@@ -41,6 +41,32 @@ struct AssemblyAILiveTranscriptionFormatTests {
         #expect(exception?.reason == "Failed to create tap due to format mismatch")
     }
 
+    // A receive callback queued before stopLiveTranscription() still fires after
+    // the task is cancelled and nil'd. Processing its SessionBegins would flip
+    // isConnected true with no socket and no tap, stranding the session behind
+    // startLiveTranscription()'s `guard !isConnected`.
+    @Test func processesMessageFromTheLiveTask() {
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
+
+        #expect(AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: task, currentTask: task))
+    }
+
+    @Test func ignoresMessageFromAReplacedTask() {
+        let session = URLSession(configuration: .ephemeral)
+        let staleTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
+        let liveTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
+
+        #expect(!AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: staleTask, currentTask: liveTask))
+    }
+
+    @Test func ignoresMessageAfterTeardownClearsTheTask() {
+        let session = URLSession(configuration: .ephemeral)
+        let staleTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
+
+        #expect(!AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: staleTask, currentTask: nil))
+    }
+
     @Test func returnsNilWhenBlockCompletesNormally() {
         var ran = false
         let exception = ObjCExceptionCatcher.catching { ran = true }

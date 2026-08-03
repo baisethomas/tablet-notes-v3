@@ -276,16 +276,45 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
     }
 
     
+    /// A receive completion is only allowed to touch service state if the task
+    /// it was armed on is still the live one. After stopLiveTranscription() the
+    /// task is cancelled and nil'd, but an already-queued callback still fires —
+    /// processing a `SessionBegins` from it would flip isConnected back to true
+    /// with no socket and no audio tap, and `startLiveTranscription()` would
+    /// then early-return on `guard !isConnected` forever.
+    static func shouldProcessMessage(
+        receivedOn receivedTask: URLSessionWebSocketTask?,
+        currentTask: URLSessionWebSocketTask?
+    ) -> Bool {
+        guard let receivedTask, let currentTask else { return false }
+        return receivedTask === currentTask
+    }
+
     private func startListeningForMessages() {
-        webSocketTask?.receive { [weak self] result in
+        guard let task = webSocketTask else {
+            print("[AssemblyAI Live] No WebSocket task to listen on")
+            return
+        }
+
+        // Capture the task this receive is armed on so the completion can tell
+        // whether it is still the live connection when it fires.
+        task.receive { [weak self] result in
+            guard let self = self else { return }
+
+            guard Self.shouldProcessMessage(receivedOn: task, currentTask: self.webSocketTask) else {
+                print("[AssemblyAI Live] Ignoring message from stale WebSocket task")
+                // Do not process and do not re-arm — this connection is gone.
+                return
+            }
+
             switch result {
             case .success(let message):
-                self?.handleWebSocketMessage(message)
+                self.handleWebSocketMessage(message)
                 // Continue listening
-                self?.startListeningForMessages()
+                self.startListeningForMessages()
             case .failure(let error):
                 print("[AssemblyAI Live] WebSocket error: \(error)")
-                self?.handleWebSocketDisconnection(error: error)
+                self.handleWebSocketDisconnection(error: error)
                 // Don't continue listening on failure
             }
         }
