@@ -399,6 +399,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
     }
     
+    // Installing an AVAudioEngine tap while the input hardware reports a
+    // zero-rate/zero-channel format raises an uncatchable NSException.
+    static func isCaptureFormatUsable(sampleRate: Double, channelCount: AVAudioChannelCount) -> Bool {
+        sampleRate > 0 && channelCount > 0
+    }
+
     private func startAudioCapture() throws {
         // Use the existing audio session configuration from RecordingService
         // Don't reconfigure the audio session since RecordingService already set it up
@@ -421,14 +427,30 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         print("[AssemblyAI Live] Input format: \(recordingFormat)")
 
+        // A zero-rate/zero-channel format means the input hardware isn't ready
+        // (session race with RecordingService, route change). Installing a tap
+        // in that state raises an uncatchable NSException and kills the app
+        // mid-recording — throw a Swift error instead so live captions degrade
+        // gracefully while the recording continues.
+        guard Self.isCaptureFormatUsable(sampleRate: recordingFormat.sampleRate, channelCount: recordingFormat.channelCount) else {
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Audio input format unavailable (\(recordingFormat)); cannot start live transcription"]
+            )
+        }
+
         if isInputTapInstalled {
             print("[AssemblyAI Live] Removing stale audio tap before installing a new one")
             inputNode.removeTap(onBus: 0)
             isInputTapInstalled = false
         }
 
-        // Use input format directly to avoid unnecessary conversion
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
+        // format: nil = tap uses the node's current format at install time. An
+        // explicit format that drifts from the hardware (session reconfigured
+        // between the read above and this call) raises an uncatchable
+        // NSException ("Failed to create tap due to format mismatch").
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self = self else { return }
 
             let frameLength = Int(buffer.frameLength)
@@ -439,18 +461,25 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 return
             }
 
-            // Check if we need to convert the sample rate
-            let inputSampleRate = recordingFormat.sampleRate
+            // Derive the format from the buffer itself, not the format read
+            // before install — they can differ after a route change.
+            let inputFormat = buffer.format
+            let inputSampleRate = inputFormat.sampleRate
             let targetSampleRate = self.sampleRate
 
+            guard Self.isCaptureFormatUsable(sampleRate: inputSampleRate, channelCount: inputFormat.channelCount) else {
+                print("[AssemblyAI Live] ⚠️ Received buffer with invalid format: \(inputFormat)")
+                return
+            }
+
             // AssemblyAI Universal-Streaming requires PCM16, mono audio
-            let needsConversion = recordingFormat.channelCount != 1 ||
-                                recordingFormat.commonFormat != .pcmFormatInt16 ||
+            let needsConversion = inputFormat.channelCount != 1 ||
+                                inputFormat.commonFormat != .pcmFormatInt16 ||
                                 !([8000, 16000, 22050, 44100, 48000].contains(inputSampleRate))
 
             if !needsConversion {
                 // Use input format directly - already mono, PCM16, and supported sample rate
-                print("[AssemblyAI Live] Using input format directly: \(inputSampleRate)Hz, \(recordingFormat.channelCount) channel(s)")
+                print("[AssemblyAI Live] Using input format directly: \(inputSampleRate)Hz, \(inputFormat.channelCount) channel(s)")
                 self.sendAudioData(buffer)
             } else {
                 // Convert to the format AssemblyAI Universal-Streaming expects (PCM16, mono, target sample rate)
@@ -464,8 +493,8 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                     return
                 }
 
-                guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
-                    print("[AssemblyAI Live] Failed to create audio converter from \(recordingFormat) to \(outputFormat)")
+                guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+                    print("[AssemblyAI Live] Failed to create audio converter from \(inputFormat) to \(outputFormat)")
                     return
                 }
 
