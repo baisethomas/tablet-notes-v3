@@ -87,7 +87,15 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
             }
         } catch {
             print("[AssemblyAI Live] ⚠️ Reconnection failed: \(error)")
-            // Will try again on next network check
+            // A partial reconnection (token + WebSocket succeeded, audio capture
+            // threw) would otherwise leave an open socket with no audio tap —
+            // silent captions that never recover, because the retry only fires
+            // on the next disconnected→connected transition. Tear down honestly.
+            stopLiveTranscription()
+            // stopLiveTranscription() does not touch wasInterrupted, but set it
+            // explicitly after the teardown so a later network transition can
+            // still retry this reconnection.
+            wasInterrupted = true
         }
     }
     
@@ -117,8 +125,15 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         // Start WebSocket connection
         try await startWebSocketConnection()
 
-        // Start audio capture
-        try startAudioCapture()
+        // Start audio capture. If it fails, tear the WebSocket back down —
+        // otherwise a later SessionBegins sets isConnected with no tap
+        // installed, and every retry early-returns with silent captions.
+        do {
+            try startAudioCapture()
+        } catch {
+            stopLiveTranscription()
+            throw error
+        }
 
         // Start token renewal timer
         startTokenRenewalTimer()
@@ -240,6 +255,11 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         let request = URLRequest(url: url)
         // No Authorization header needed when using token query parameter
 
+        // Cancel any task left over from a previous session before replacing it —
+        // on reconnection the old task would otherwise leak and keep receiving.
+        // closeWebSocketConnection() is safe when webSocketTask is already nil.
+        closeWebSocketConnection()
+
         webSocketTask = session.webSocketTask(with: request)
 
         // Add connection state tracking
@@ -256,23 +276,65 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
     }
 
     
+    /// Whether `task` is still the live WebSocket connection.
+    ///
+    /// A receive or send completion is only allowed to touch service state if
+    /// the task it was armed on is still current. Teardown and reconnection
+    /// both cancel the old task, but callbacks already queued on it still fire:
+    /// a `SessionBegins` from a dead socket would flip isConnected true with no
+    /// socket and no audio tap (stranding `startLiveTranscription()` behind
+    /// `guard !isConnected`), and a cancelled send's error would clear
+    /// isConnected on the *new* session, dropping its audio buffers.
+    static func belongsToLiveConnection(
+        _ task: URLSessionWebSocketTask?,
+        currentTask: URLSessionWebSocketTask?
+    ) -> Bool {
+        guard let task, let currentTask else { return false }
+        return task === currentTask
+    }
+
     private func startListeningForMessages() {
-        webSocketTask?.receive { [weak self] result in
+        guard let task = webSocketTask else {
+            print("[AssemblyAI Live] No WebSocket task to listen on")
+            return
+        }
+
+        // Capture the task this receive is armed on so the completion can tell
+        // whether it is still the live connection when it fires.
+        task.receive { [weak self] result in
+            guard let self = self else { return }
+
+            // Early-out so a dead connection neither gets processed nor re-armed.
+            // This is not sufficient on its own: every state mutation below is
+            // queued onto main, so the task can be replaced between here and the
+            // mutation running. Each mutation point re-checks — see below.
+            guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                print("[AssemblyAI Live] Ignoring message from stale WebSocket task")
+                return
+            }
+
             switch result {
             case .success(let message):
-                self?.handleWebSocketMessage(message)
+                self.handleWebSocketMessage(message, from: task)
                 // Continue listening
-                self?.startListeningForMessages()
+                self.startListeningForMessages()
             case .failure(let error):
                 print("[AssemblyAI Live] WebSocket error: \(error)")
-                self?.handleWebSocketDisconnection(error: error)
+                self.handleWebSocketDisconnection(error: error, from: task)
                 // Don't continue listening on failure
             }
         }
     }
 
-    private func handleWebSocketDisconnection(error: Error) {
+    private func handleWebSocketDisconnection(error: Error, from task: URLSessionWebSocketTask?) {
         print("[AssemblyAI Live] Handling WebSocket disconnection: \(error.localizedDescription)")
+
+        // Check before tearing anything down: a failure delivered for a task that
+        // has already been replaced must not stop the *new* session's capture.
+        guard Self.belongsToLiveConnection(task, currentTask: webSocketTask) else {
+            print("[AssemblyAI Live] Ignoring disconnection from stale WebSocket task")
+            return
+        }
 
         // Stop audio capture immediately to prevent further send attempts
         stopAudioCapture()
@@ -281,6 +343,16 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         closeWebSocketConnection()
 
         Task { @MainActor in
+            // Queued-hop TOCTOU: the guard above ran before the teardown, and a
+            // reconnection can start between that teardown and this block. A
+            // plain identity re-check cannot be used here — closeWebSocketConnection()
+            // above deliberately nils webSocketTask, so it would always fail.
+            // Instead require that no *newer* connection exists yet.
+            guard self.webSocketTask == nil else {
+                print("[AssemblyAI Live] Ignoring disconnection from stale WebSocket task")
+                return
+            }
+
             self.isConnected = false
 
             // Determine if it's a network error
@@ -295,7 +367,13 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
     }
     
-    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
+    /// - Parameter task: the WebSocket task this message arrived on. Every state
+    ///   mutation below is queued onto main, so the task can be replaced between
+    ///   the receive completion's check and the mutation actually running
+    ///   (queued-hop TOCTOU). Each mutation therefore re-checks identity at the
+    ///   point of mutation — on main, where the mutated state is only ever
+    ///   touched — instead of trusting the earlier check.
+    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message, from task: URLSessionWebSocketTask?) {
         switch message {
         case .string(let text):
             print("[AssemblyAI Live] Received message: \(text)")
@@ -322,6 +400,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                     // Final transcript for this turn
                                     print("[AssemblyAI Live] Final turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
+                                        guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                            print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                            return
+                                        }
                                         if self.fullTranscript.isEmpty {
                                             self.fullTranscript = transcriptText
                                         } else {
@@ -334,6 +416,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                     // Partial transcript for this turn
                                     print("[AssemblyAI Live] Partial turn transcript characters=\(transcriptText.count)")
                                     DispatchQueue.main.async {
+                                        guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                            print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                            return
+                                        }
                                         let combinedText = self.fullTranscript + (self.fullTranscript.isEmpty ? "" : " ") + transcriptText
                                         print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                         self.transcriptSubject.send(combinedText)
@@ -344,6 +430,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                             if let partialText = jsonObject["text"] as? String {
                                 print("[AssemblyAI Live] Partial transcript received, characters=\(partialText.count)")
                                 DispatchQueue.main.async {
+                                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                        print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                        return
+                                    }
                                     let combinedText = self.fullTranscript + (partialText.isEmpty ? "" : " " + partialText)
                                     print("[AssemblyAI Live] Sending partial transcript to UI, characters=\(combinedText.count)")
                                     self.transcriptSubject.send(combinedText)
@@ -355,6 +445,10 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                             if let finalText = jsonObject["text"] as? String, !finalText.isEmpty {
                                 print("[AssemblyAI Live] Final transcript received, characters=\(finalText.count)")
                                 DispatchQueue.main.async {
+                                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                        print("[AssemblyAI Live] Dropping transcript from stale WebSocket task")
+                                        return
+                                    }
                                     if self.fullTranscript.isEmpty {
                                         self.fullTranscript = finalText
                                     } else {
@@ -369,6 +463,14 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                         case "SessionBegins", "Begin":
                             print("[AssemblyAI Live] ✅ Session began successfully")
                             DispatchQueue.main.async {
+                                // Checked here, on main, immediately before the
+                                // mutation: a SessionBegins from a socket that
+                                // was torn down would otherwise flip isConnected
+                                // true with no socket and no audio tap.
+                                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                    print("[AssemblyAI Live] Ignoring SessionBegins from stale WebSocket task")
+                                    return
+                                }
                                 self.isConnected = true
                             }
                         case "SessionTerminated", "Error":
@@ -377,6 +479,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                                 print("[AssemblyAI Live] Error message: \(errorMessage)")
                             }
                             DispatchQueue.main.async {
+                                // A termination for a replaced socket must not
+                                // clear the new session's connected state.
+                                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                                    print("[AssemblyAI Live] Ignoring session termination from stale WebSocket task")
+                                    return
+                                }
                                 self.isConnected = false
                             }
                             // Stop listening when session terminates
@@ -399,6 +507,12 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
     }
     
+    // Installing an AVAudioEngine tap while the input hardware reports a
+    // zero-rate/zero-channel format raises an uncatchable NSException.
+    static func isCaptureFormatUsable(sampleRate: Double, channelCount: AVAudioChannelCount) -> Bool {
+        sampleRate > 0 && channelCount > 0
+    }
+
     private func startAudioCapture() throws {
         // Use the existing audio session configuration from RecordingService
         // Don't reconfigure the audio session since RecordingService already set it up
@@ -421,14 +535,30 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         print("[AssemblyAI Live] Input format: \(recordingFormat)")
 
+        // A zero-rate/zero-channel format means the input hardware isn't ready
+        // (session race with RecordingService, route change). Installing a tap
+        // in that state raises an uncatchable NSException and kills the app
+        // mid-recording — throw a Swift error instead so live captions degrade
+        // gracefully while the recording continues.
+        guard Self.isCaptureFormatUsable(sampleRate: recordingFormat.sampleRate, channelCount: recordingFormat.channelCount) else {
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Audio input format unavailable (\(recordingFormat)); cannot start live transcription"]
+            )
+        }
+
         if isInputTapInstalled {
             print("[AssemblyAI Live] Removing stale audio tap before installing a new one")
             inputNode.removeTap(onBus: 0)
             isInputTapInstalled = false
         }
 
-        // Use input format directly to avoid unnecessary conversion
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
+        // format: nil = tap uses the node's current format at install time. An
+        // explicit format that drifts from the hardware (session reconfigured
+        // between the read above and this call) raises an uncatchable
+        // NSException ("Failed to create tap due to format mismatch").
+        let tapBlock: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             guard let self = self else { return }
 
             let frameLength = Int(buffer.frameLength)
@@ -439,18 +569,25 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 return
             }
 
-            // Check if we need to convert the sample rate
-            let inputSampleRate = recordingFormat.sampleRate
+            // Derive the format from the buffer itself, not the format read
+            // before install — they can differ after a route change.
+            let inputFormat = buffer.format
+            let inputSampleRate = inputFormat.sampleRate
             let targetSampleRate = self.sampleRate
 
+            guard Self.isCaptureFormatUsable(sampleRate: inputSampleRate, channelCount: inputFormat.channelCount) else {
+                print("[AssemblyAI Live] ⚠️ Received buffer with invalid format: \(inputFormat)")
+                return
+            }
+
             // AssemblyAI Universal-Streaming requires PCM16, mono audio
-            let needsConversion = recordingFormat.channelCount != 1 ||
-                                recordingFormat.commonFormat != .pcmFormatInt16 ||
+            let needsConversion = inputFormat.channelCount != 1 ||
+                                inputFormat.commonFormat != .pcmFormatInt16 ||
                                 !([8000, 16000, 22050, 44100, 48000].contains(inputSampleRate))
 
             if !needsConversion {
                 // Use input format directly - already mono, PCM16, and supported sample rate
-                print("[AssemblyAI Live] Using input format directly: \(inputSampleRate)Hz, \(recordingFormat.channelCount) channel(s)")
+                print("[AssemblyAI Live] Using input format directly: \(inputSampleRate)Hz, \(inputFormat.channelCount) channel(s)")
                 self.sendAudioData(buffer)
             } else {
                 // Convert to the format AssemblyAI Universal-Streaming expects (PCM16, mono, target sample rate)
@@ -464,8 +601,8 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                     return
                 }
 
-                guard let converter = AVAudioConverter(from: recordingFormat, to: outputFormat) else {
-                    print("[AssemblyAI Live] Failed to create audio converter from \(recordingFormat) to \(outputFormat)")
+                guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+                    print("[AssemblyAI Live] Failed to create audio converter from \(inputFormat) to \(outputFormat)")
                     return
                 }
 
@@ -509,11 +646,50 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                 self.sendAudioData(convertedBuffer)
             }
         }
+
+        // The format guard above narrows, but cannot close, the window in which
+        // an OS-initiated route change invalidates the input format between the
+        // check and this call. installTap then raises an Objective-C NSException
+        // ("Failed to create tap due to format mismatch") that Swift cannot
+        // catch, killing the app mid-recording — run it through the ObjC shim
+        // and turn any exception into a throwable Swift error instead.
+        if let exception = ObjCExceptionCatcher.catching({
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil, block: tapBlock)
+        }) {
+            print("[AssemblyAI Live] ⚠️ installTap raised \(exception.name.rawValue): \(exception.reason ?? "no reason")")
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to install audio tap: \(exception.name.rawValue) — \(exception.reason ?? "no reason")"]
+            )
+        }
+        // Only mark the tap installed once installTap actually returned.
         isInputTapInstalled = true
 
         print("[AssemblyAI Live] Installing audio tap and starting engine")
-        audioEngine.prepare()
-        try audioEngine.start()
+        // audioEngine.start() throws a Swift error for ordinary failures, but
+        // can also raise an NSException on the same format race — capture both.
+        var startError: Error?
+        let startException = ObjCExceptionCatcher.catching {
+            audioEngine.prepare()
+            do {
+                try audioEngine.start()
+            } catch {
+                startError = error
+            }
+        }
+        if let startException {
+            print("[AssemblyAI Live] ⚠️ Audio engine start raised \(startException.name.rawValue): \(startException.reason ?? "no reason")")
+            throw NSError(
+                domain: "AudioCaptureError",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to start audio engine: \(startException.name.rawValue) — \(startException.reason ?? "no reason")"]
+            )
+        }
+        if let startError {
+            print("[AssemblyAI Live] ⚠️ Audio engine failed to start: \(startError)")
+            throw startError
+        }
         print("[AssemblyAI Live] Audio engine started successfully")
     }
     
@@ -573,11 +749,33 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
 
         // Send binary audio data directly (AssemblyAI Universal-Streaming expects PCM16 binary data)
-        webSocketTask?.send(.data(data)) { [weak self] error in
+        guard let task = webSocketTask else {
+            print("[AssemblyAI Live] No WebSocket task to send audio data on")
+            return
+        }
+
+        // Capture the task this send was issued on: reconnection and token
+        // renewal cancel the old task, and its in-flight sends then fail with a
+        // cancellation error. Without the identity check below that error would
+        // clear the NEW session's isConnected, and `guard isConnected` above
+        // would silently drop its audio buffers.
+        task.send(.data(data)) { [weak self] error in
             if let error = error {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
                 guard let self = self else { return }
+
                 Task { @MainActor in
+                    // Queued-hop TOCTOU: checking identity out here, on the
+                    // URLSession completion queue, leaves a window in which
+                    // reconnection replaces the task before this block runs —
+                    // the stale failure would then clear the NEW session's
+                    // isConnected and `guard isConnected` would drop its audio.
+                    // Check on main, immediately before the mutation.
+                    guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                        print("[AssemblyAI Live] Ignoring send failure from stale WebSocket task")
+                        return
+                    }
+
                     self.isConnected = false
                     self.wasInterrupted = true
                 }
@@ -675,6 +873,11 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                     print("[AssemblyAI Live] Audio engine resumed successfully")
                 } catch {
                     print("[AssemblyAI Live] Failed to resume audio engine after interruption: \(error)")
+                    // Leaving isConnected true here would strand the session:
+                    // the socket stays open with no audio tap, and a manual
+                    // restart early-returns on `guard !isConnected`. Tear the
+                    // session down so the user-facing restart path works.
+                    stopLiveTranscription()
                     DispatchQueue.main.async {
                         self.error = "Failed to resume live transcription after interruption"
                     }
