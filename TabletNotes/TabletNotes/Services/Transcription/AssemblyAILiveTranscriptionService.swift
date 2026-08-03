@@ -87,7 +87,15 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
             }
         } catch {
             print("[AssemblyAI Live] ⚠️ Reconnection failed: \(error)")
-            // Will try again on next network check
+            // A partial reconnection (token + WebSocket succeeded, audio capture
+            // threw) would otherwise leave an open socket with no audio tap —
+            // silent captions that never recover, because the retry only fires
+            // on the next disconnected→connected transition. Tear down honestly.
+            stopLiveTranscription()
+            // stopLiveTranscription() does not touch wasInterrupted, but set it
+            // explicitly after the teardown so a later network transition can
+            // still retry this reconnection.
+            wasInterrupted = true
         }
     }
     
@@ -246,6 +254,11 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
 
         let request = URLRequest(url: url)
         // No Authorization header needed when using token query parameter
+
+        // Cancel any task left over from a previous session before replacing it —
+        // on reconnection the old task would otherwise leak and keep receiving.
+        // closeWebSocketConnection() is safe when webSocketTask is already nil.
+        closeWebSocketConnection()
 
         webSocketTask = session.webSocketTask(with: request)
 
@@ -750,6 +763,11 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
                     print("[AssemblyAI Live] Audio engine resumed successfully")
                 } catch {
                     print("[AssemblyAI Live] Failed to resume audio engine after interruption: \(error)")
+                    // Leaving isConnected true here would strand the session:
+                    // the socket stays open with no audio tap, and a manual
+                    // restart early-returns on `guard !isConnected`. Tear the
+                    // session down so the user-facing restart path works.
+                    stopLiveTranscription()
                     DispatchQueue.main.async {
                         self.error = "Failed to resume live transcription after interruption"
                     }
