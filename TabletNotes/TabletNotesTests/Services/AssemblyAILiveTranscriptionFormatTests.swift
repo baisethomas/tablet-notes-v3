@@ -41,30 +41,38 @@ struct AssemblyAILiveTranscriptionFormatTests {
         #expect(exception?.reason == "Failed to create tap due to format mismatch")
     }
 
-    // A receive callback queued before stopLiveTranscription() still fires after
-    // the task is cancelled and nil'd. Processing its SessionBegins would flip
-    // isConnected true with no socket and no tap, stranding the session behind
-    // startLiveTranscription()'s `guard !isConnected`.
-    @Test func processesMessageFromTheLiveTask() {
+    // Receive and send callbacks queued on a task that teardown or reconnection
+    // already cancelled still fire. Acting on them would flip isConnected true
+    // with no socket and no tap (stranding startLiveTranscription() behind
+    // `guard !isConnected`), or clear the new session's isConnected and drop its
+    // audio buffers. Both paths gate on belongsToLiveConnection.
+    @Test func acceptsCallbackFromTheLiveTask() {
         let session = URLSession(configuration: .ephemeral)
         let task = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
 
-        #expect(AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: task, currentTask: task))
+        #expect(AssemblyAILiveTranscriptionService.belongsToLiveConnection(task, currentTask: task))
     }
 
-    @Test func ignoresMessageFromAReplacedTask() {
+    @Test func rejectsCallbackFromAReplacedTask() {
         let session = URLSession(configuration: .ephemeral)
         let staleTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
         let liveTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
 
-        #expect(!AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: staleTask, currentTask: liveTask))
+        #expect(!AssemblyAILiveTranscriptionService.belongsToLiveConnection(staleTask, currentTask: liveTask))
     }
 
-    @Test func ignoresMessageAfterTeardownClearsTheTask() {
+    @Test func rejectsCallbackAfterTeardownClearsTheTask() {
         let session = URLSession(configuration: .ephemeral)
         let staleTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
 
-        #expect(!AssemblyAILiveTranscriptionService.shouldProcessMessage(receivedOn: staleTask, currentTask: nil))
+        #expect(!AssemblyAILiveTranscriptionService.belongsToLiveConnection(staleTask, currentTask: nil))
+    }
+
+    @Test func rejectsCallbackWhenNoTaskWasCaptured() {
+        let session = URLSession(configuration: .ephemeral)
+        let liveTask = session.webSocketTask(with: URL(string: "wss://example.com/socket")!)
+
+        #expect(!AssemblyAILiveTranscriptionService.belongsToLiveConnection(nil, currentTask: liveTask))
     }
 
     @Test func returnsNilWhenBlockCompletesNormally() {

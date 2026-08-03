@@ -276,18 +276,21 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
     }
 
     
-    /// A receive completion is only allowed to touch service state if the task
-    /// it was armed on is still the live one. After stopLiveTranscription() the
-    /// task is cancelled and nil'd, but an already-queued callback still fires —
-    /// processing a `SessionBegins` from it would flip isConnected back to true
-    /// with no socket and no audio tap, and `startLiveTranscription()` would
-    /// then early-return on `guard !isConnected` forever.
-    static func shouldProcessMessage(
-        receivedOn receivedTask: URLSessionWebSocketTask?,
+    /// Whether `task` is still the live WebSocket connection.
+    ///
+    /// A receive or send completion is only allowed to touch service state if
+    /// the task it was armed on is still current. Teardown and reconnection
+    /// both cancel the old task, but callbacks already queued on it still fire:
+    /// a `SessionBegins` from a dead socket would flip isConnected true with no
+    /// socket and no audio tap (stranding `startLiveTranscription()` behind
+    /// `guard !isConnected`), and a cancelled send's error would clear
+    /// isConnected on the *new* session, dropping its audio buffers.
+    static func belongsToLiveConnection(
+        _ task: URLSessionWebSocketTask?,
         currentTask: URLSessionWebSocketTask?
     ) -> Bool {
-        guard let receivedTask, let currentTask else { return false }
-        return receivedTask === currentTask
+        guard let task, let currentTask else { return false }
+        return task === currentTask
     }
 
     private func startListeningForMessages() {
@@ -301,7 +304,7 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         task.receive { [weak self] result in
             guard let self = self else { return }
 
-            guard Self.shouldProcessMessage(receivedOn: task, currentTask: self.webSocketTask) else {
+            guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
                 print("[AssemblyAI Live] Ignoring message from stale WebSocket task")
                 // Do not process and do not re-arm — this connection is gone.
                 return
@@ -690,10 +693,26 @@ class AssemblyAILiveTranscriptionService: NSObject, @unchecked Sendable {
         }
 
         // Send binary audio data directly (AssemblyAI Universal-Streaming expects PCM16 binary data)
-        webSocketTask?.send(.data(data)) { [weak self] error in
+        guard let task = webSocketTask else {
+            print("[AssemblyAI Live] No WebSocket task to send audio data on")
+            return
+        }
+
+        // Capture the task this send was issued on: reconnection and token
+        // renewal cancel the old task, and its in-flight sends then fail with a
+        // cancellation error. Without the identity check below that error would
+        // clear the NEW session's isConnected, and `guard isConnected` above
+        // would silently drop its audio buffers.
+        task.send(.data(data)) { [weak self] error in
             if let error = error {
                 print("[AssemblyAI Live] Failed to send audio data: \(error)")
                 guard let self = self else { return }
+
+                guard Self.belongsToLiveConnection(task, currentTask: self.webSocketTask) else {
+                    print("[AssemblyAI Live] Ignoring send failure from stale WebSocket task")
+                    return
+                }
+
                 Task { @MainActor in
                     self.isConnected = false
                     self.wasInterrupted = true
