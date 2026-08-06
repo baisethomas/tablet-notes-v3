@@ -52,7 +52,48 @@ test('a mismatched owner is reported so the caller can hard-deny', async () => {
 });
 
 test('without Redis env the store reports itself non-durable', () => {
-  // The transcribe-status handler keys its fail-open/fail-closed decision on
-  // this: UNKNOWN denies only when the store is durable (Redis-backed).
+  // Informational since PR #35 round 2: authorization no longer branches on
+  // durability (a positive proof — recorded owner or audio-url owner — is
+  // always required), but the flag still documents which store is active.
   assert.equal(isDurableOwnershipStore(), false);
+});
+
+// --- ownerIdFromAudioUrl: durable, store-free ownership proof (PR #35 R2) ---
+
+const { ownerIdFromAudioUrl } = require('../transcriptOwnership');
+
+test('extracts the owner from a Supabase signed URL', () => {
+  const url = 'https://proj.supabase.co/storage/v1/object/sign/sermon-audio/11111111-1111-1111-1111-111111111111/abc.m4a?token=xyz';
+  assert.equal(ownerIdFromAudioUrl(url), '11111111-1111-1111-1111-111111111111');
+});
+
+test('extracts the owner from a public object URL', () => {
+  const url = 'https://proj.supabase.co/storage/v1/object/public/sermon-audio/user-a/abc.m4a';
+  assert.equal(ownerIdFromAudioUrl(url), 'user-a');
+});
+
+test('decodes percent-encoded path segments', () => {
+  const url = 'https://proj.supabase.co/storage/v1/object/sign/sermon-audio/user%2Da/abc.m4a?token=t';
+  assert.equal(ownerIdFromAudioUrl(url), 'user-a');
+});
+
+test('returns null when the bucket is absent', () => {
+  assert.equal(ownerIdFromAudioUrl('https://proj.supabase.co/storage/v1/object/sign/other-bucket/user-a/abc.m4a'), null);
+});
+
+test('returns null when no file segment follows the owner', () => {
+  // A URL ending at the owner segment is not a real object path.
+  assert.equal(ownerIdFromAudioUrl('https://proj.supabase.co/storage/v1/object/sign/sermon-audio/user-a'), null);
+});
+
+test('returns null for garbage, empty, and non-string input', () => {
+  assert.equal(ownerIdFromAudioUrl('not a url'), null);
+  assert.equal(ownerIdFromAudioUrl(''), null);
+  assert.equal(ownerIdFromAudioUrl(null), null);
+  assert.equal(ownerIdFromAudioUrl(42), null);
+});
+
+test('a mismatched audio-url owner cannot prove ownership for another caller', () => {
+  const url = 'https://proj.supabase.co/storage/v1/object/sign/sermon-audio/user-a/abc.m4a?token=t';
+  assert.notEqual(ownerIdFromAudioUrl(url), 'user-b');
 });

@@ -124,10 +124,58 @@ async function lookupTranscriptOwnership(transcriptId) {
   }
 }
 
+// Storage bucket whose object paths are namespaced by owner:
+// {userId}/{uuid}.{ext} — enforced at upload-URL mint time
+// (generate-upload-url.js) and at submission (checkResourceOwnership).
+const AUDIO_BUCKET = 'sermon-audio';
+
+/**
+ * Derive the owner user id from a transcript's audio URL.
+ *
+ * Every transcription is submitted to AssemblyAI with a Supabase signed URL
+ * of the shape .../object/sign/sermon-audio/{userId}/{file}?token=..., and
+ * AssemblyAI echoes that URL back as `audio_url` on the transcript. The
+ * {userId} path segment is therefore a DURABLE ownership proof carried by the
+ * transcript itself — no Redis, no cross-container state, and it covers
+ * legacy jobs submitted before ownership recording existed.
+ *
+ * @returns {string|null} the owner segment, or null when the URL is missing,
+ * unparseable, or not a sermon-audio object URL.
+ */
+function ownerIdFromAudioUrl(audioUrl) {
+  if (typeof audioUrl !== 'string' || audioUrl.length === 0) return null;
+
+  let pathname;
+  try {
+    pathname = new URL(audioUrl).pathname;
+  } catch {
+    return null;
+  }
+
+  const segments = pathname.split('/').filter(Boolean).map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  });
+
+  const bucketIndex = segments.indexOf(AUDIO_BUCKET);
+  if (bucketIndex === -1 || bucketIndex + 2 > segments.length - 1) {
+    // Need both an owner segment AND a file segment after the bucket —
+    // a URL ending at the owner segment is not a real object path.
+    return null;
+  }
+
+  const owner = segments[bucketIndex + 1];
+  return owner.length > 0 ? owner : null;
+}
+
 module.exports = {
   recordTranscriptOwner,
   lookupTranscriptOwnership,
   isDurableOwnershipStore,
+  ownerIdFromAudioUrl,
   OWNERSHIP,
   OWNER_TTL_SECONDS,
   // Exported for tests only.

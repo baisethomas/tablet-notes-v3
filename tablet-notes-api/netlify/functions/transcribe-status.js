@@ -13,7 +13,7 @@ const {
 const { withLogging } = require('./utils/logger');
 const {
   lookupTranscriptOwnership,
-  isDurableOwnershipStore,
+  ownerIdFromAudioUrl,
   OWNERSHIP
 } = require('./utils/transcriptOwnership');
 
@@ -92,17 +92,22 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
       );
     }
 
-    // Server-side ownership binding (TAB-69). The client-supplied userId above
-    // is defense-in-depth only — it can simply be omitted. The authoritative
-    // check is the owner recorded at submission time, and unresolved ownership
-    // fails CLOSED whenever the store is durable (PR #35 review):
-    //   owned by someone else      → 403, always
-    //   store errored              → 503 (retryable — never authorize on "don't know")
-    //   unknown, durable store     → 403 (no mapping exists; the read is unproven)
-    //   unknown, in-memory fallback→ allow + log (submission and polling land on
-    //     different containers, so "unknown" is non-authoritative there; failing
-    //     closed would break all status polling until Upstash is provisioned)
-    // The durable fix is the Phase 2 processing_jobs table (TAB-72).
+    // Server-side ownership binding (TAB-69, hardened in PR #35 review rounds
+    // 1-2). The client-supplied userId above is defense-in-depth only — it can
+    // simply be omitted. Authorization requires a positive proof and ALWAYS
+    // fails closed; there is no allow-on-unknown path in any configuration.
+    //
+    // Two independent proofs, either sufficient:
+    //   1. The owner recorded at submission time (Redis / in-memory).
+    //   2. The transcript's own audio_url: every job is submitted with a
+    //      Supabase signed URL whose path is {userId}/{file} inside the
+    //      sermon-audio bucket, and AssemblyAI echoes it back — a durable
+    //      proof carried by the transcript itself, covering legacy jobs and
+    //      no-Redis deployments. Checked after the fetch, before returning
+    //      any transcript data.
+    //
+    // A recorded owner that isn't the caller denies immediately (no AssemblyAI
+    // call). The durable replacement is the Phase 2 processing_jobs table.
     const ownership = await lookupTranscriptOwnership(sanitizedId);
     if (ownership.status === OWNERSHIP.OWNED && ownership.owner !== user.id) {
       logger.security('unauthorized_transcription_access', {
@@ -115,33 +120,6 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
         new Error('Access denied: You can only check your own transcriptions'),
         403
       );
-    }
-    if (ownership.status === OWNERSHIP.UNAVAILABLE) {
-      logger.error('Ownership store unavailable — refusing transcript read', {
-        transcriptionId: sanitizedId,
-        userId: user.id
-      });
-      return createErrorResponse(
-        new Error('Could not verify transcript ownership. Please retry shortly.'),
-        503
-      );
-    }
-    if (ownership.status === OWNERSHIP.UNKNOWN) {
-      if (isDurableOwnershipStore()) {
-        logger.security('unproven_transcription_access_denied', {
-          transcriptionId: sanitizedId,
-          userId: user.id,
-          ip: event.headers['x-forwarded-for']
-        });
-        return createErrorResponse(
-          new Error('Access denied: This transcription has no recorded owner'),
-          403
-        );
-      }
-      logger.info('No recorded owner (in-memory fallback store, non-authoritative) — allowing', {
-        transcriptionId: sanitizedId,
-        userId: user.id
-      });
     }
 
     logger.info('Checking transcription status', {
@@ -165,6 +143,28 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
     );
     
     const transcript = await getTranscriptWithTimeout();
+
+    // Positive ownership proof required before ANY transcript data leaves this
+    // function (see the block above). No proof — recorded or path-derived —
+    // means no read, regardless of store availability.
+    const hasRecordedProof =
+      ownership.status === OWNERSHIP.OWNED && ownership.owner === user.id;
+    const audioUrlOwner = ownerIdFromAudioUrl(transcript.audio_url);
+    const hasAudioUrlProof = audioUrlOwner !== null && audioUrlOwner === user.id;
+
+    if (!hasRecordedProof && !hasAudioUrlProof) {
+      logger.security('unproven_transcription_access_denied', {
+        transcriptionId: sanitizedId,
+        userId: user.id,
+        recordedOwnershipStatus: ownership.status,
+        audioUrlOwnerPresent: audioUrlOwner !== null,
+        ip: event.headers['x-forwarded-for']
+      });
+      return createErrorResponse(
+        new Error('Access denied: You can only check your own transcriptions'),
+        403
+      );
+    }
 
     logger.info('Transcription status retrieved successfully', {
       transcriptionId: sanitizedId,
