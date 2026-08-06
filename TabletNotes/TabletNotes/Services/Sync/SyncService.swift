@@ -24,6 +24,13 @@ final class SermonSyncEngine {
     /// fully successful when the local copy actually matches the cloud.
     private var currentSyncTask: Task<Bool, Error>?
     private var lastPullFailureCount = 0
+    /// Audio downloads that failed during the pull. Tracked separately from
+    /// row-level pull failures because the pull deliberately keeps the sermon
+    /// metadata when its audio fails (TAB-53) — but a restore with missing
+    /// audio is NOT a fully successful restore, and reporting it as one made
+    /// performCloudRestore clear the preserved-audio recovery catalog while
+    /// rows still pointed at files that don't exist locally (TAB-66).
+    private var lastAudioDownloadFailureCount = 0
     /// Whether the most recent sync's push phase failed (e.g. upload rate limit).
     /// Recorded for visibility; it does NOT gate the restore-success signal —
     /// restore completeness is about the pull (TAB-55).
@@ -58,7 +65,10 @@ final class SermonSyncEngine {
 
         let task = Task { @MainActor () throws -> Bool in
             try await self.runSyncPhases(userId: userId)
-            return self.lastPullFailureCount == 0
+            // Fully successful = every remote sermon row restored AND every
+            // missing audio file downloaded. Both are retried next sync; the
+            // caller must not clear recovery state until both are clean (TAB-66).
+            return self.lastPullFailureCount == 0 && self.lastAudioDownloadFailureCount == 0
         }
 
         currentSyncTask = task
@@ -98,6 +108,7 @@ final class SermonSyncEngine {
 
     private func runSyncPhases(userId: UUID) async throws {
         lastPullFailureCount = 0
+        lastAudioDownloadFailureCount = 0
         lastPushFailed = false
 
         // Push and pull are independent. A push failure (e.g. the upload rate
@@ -315,6 +326,7 @@ final class SermonSyncEngine {
                 for: remoteSermon.localId
             )
         } catch {
+            lastAudioDownloadFailureCount += 1
             print("[SyncService] ⚠️ Audio download failed for new sermon \(remoteSermon.id); metadata kept, will retry next sync: \(error.localizedDescription)")
         }
     }
@@ -335,6 +347,7 @@ final class SermonSyncEngine {
                 )
                 print("[SyncService] ✅ Audio file downloaded successfully")
             } catch {
+                lastAudioDownloadFailureCount += 1
                 print("[SyncService] ⚠️ Audio download failed, but continuing with sermon sync: \(error.localizedDescription)")
             }
         }

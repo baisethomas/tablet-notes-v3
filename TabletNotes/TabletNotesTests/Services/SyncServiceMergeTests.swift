@@ -1205,9 +1205,40 @@ struct SyncServiceMergeTests {
         let allSermons = try modelContext.fetch(FetchDescriptor<Sermon>())
         #expect(allSermons.count == 2)
         #expect(Set(allSermons.compactMap(\.remoteId)) == ["remote-a", "remote-b"])
-        // A failed audio download is not a pull failure — the metadata row was
-        // still restored (audio retries later), so the sync reports success.
-        #expect(fullySucceeded == true)
+        // The batch still restores every metadata row (one bad download must
+        // not abort the pull), but the sync must NOT report full success while
+        // audio is missing — performCloudRestore clears the preserved-audio
+        // recovery catalog on that signal, and rows would be left pointing at
+        // files that don't exist locally (TAB-66). Audio retries next sync and
+        // the signal turns true once every download lands (see test below).
+        #expect(fullySucceeded == false)
+    }
+
+    @Test func syncReportsFullSuccessOnceFailedAudioDownloadRecovers() async throws {
+        let user = makeSyncUser()
+        let recorder = CallRecorder()
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let first = makeRemoteSermon(id: "remote-a", localId: UUID(), userId: user.id, title: "First")
+        let second = makeRemoteSermon(id: "remote-b", localId: UUID(), userId: user.id, title: "Second")
+        let remoteGateway = SyncRemoteGatewaySpy(
+            recorder: recorder,
+            fetchedRemoteSermonPages: [[first, second], [first, second]]
+        )
+        remoteGateway.failingDownloadURLs = [first.audioFileURL]
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: remoteGateway)
+
+        // First sync: rows restored, one audio download failed → incomplete.
+        let firstResult = try await engine.sync(userId: user.id)
+        #expect(firstResult == false)
+
+        // The failure clears (network recovered); the next sync re-attempts the
+        // missing audio via the merge path and only then reports full success,
+        // allowing cloud restore to clear its recovery flags.
+        remoteGateway.failingDownloadURLs = []
+        let secondResult = try await engine.sync(userId: user.id)
+        #expect(secondResult == true)
     }
 
     /// Forwards to a real repository but throws when creating one targeted
