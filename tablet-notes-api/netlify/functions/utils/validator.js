@@ -99,7 +99,20 @@ const schemas = {
     type: Joi.string()
       .valid('sermon', 'general', 'notes')
       .default('sermon'),
-    
+
+    // Free-form service label chosen in the app ("Sunday Service", "Bible
+    // Study", "Youth Group", ...). Structure-validated (allowlisted characters,
+    // bounded length), never text-escaped — it is interpolated into the LLM
+    // prompt, not into HTML. Without this key, stripUnknown removed the field
+    // and every user got the default sermon prompt (TAB-68).
+    serviceType: Joi.string()
+      .trim()
+      .pattern(/^[A-Za-z0-9 \-']{1,50}$/)
+      .optional()
+      .messages({
+        'string.pattern.base': 'serviceType may only contain letters, numbers, spaces, hyphens, and apostrophes (max 50 characters).'
+      }),
+
     length: Joi.string()
       .valid('short', 'medium', 'long')
       .default('medium'),
@@ -274,6 +287,37 @@ class Validator {
     // Handle newlines
     if (!allowNewlines) {
       sanitized = sanitized.replace(/[\r\n]/g, ' ');
+    }
+
+    // Remove control characters except tabs and newlines
+    sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+    return sanitized;
+  }
+
+  /**
+   * Sanitize free text destined for an LLM prompt.
+   *
+   * HTML entity escaping is the wrong transform for this sink (named failure
+   * mode #7): it mangles every apostrophe/quote/slash in a transcript
+   * ("God's" -> "God&#x27;s"), degrading summary quality and inflating token
+   * cost ~4x per escaped character. LLM-bound text needs length bounds and
+   * control-character stripping only — the model consumes it as plain text.
+   * @param {string} text - Text to sanitize
+   * @param {Object} options - { maxLength }
+   * @returns {string} Sanitized text (never HTML-escaped)
+   */
+  static sanitizeLLMText(text, options = {}) {
+    if (typeof text !== 'string') {
+      return '';
+    }
+
+    const { maxLength = LIMITS.TEXT_LENGTH } = options;
+
+    let sanitized = text.trim();
+
+    if (sanitized.length > maxLength) {
+      sanitized = sanitized.substring(0, maxLength);
     }
 
     // Remove control characters except tabs and newlines

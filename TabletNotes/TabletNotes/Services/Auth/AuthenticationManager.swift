@@ -13,6 +13,13 @@ final class AuthenticationManager {
     private(set) var currentUser: User? = nil
     private(set) var isInitialized = false
 
+    /// True only while an unauthenticated transition was caused by the user
+    /// explicitly signing out (or deleting their account). Session-expiry,
+    /// offline launches, and failed token refreshes also produce
+    /// `.unauthenticated`, and destructive reactions (local data wipe) must
+    /// key off THIS flag, never off the transition itself (TAB-65).
+    private(set) var isUserInitiatedSignOutInProgress = false
+
     // MARK: - Combine Publishers (for backward compatibility during migration)
     @ObservationIgnored @Published var authStatePublished: AuthState = .loading
     
@@ -83,7 +90,17 @@ final class AuthenticationManager {
     }
     
     func signOut() async throws {
-        try await authService.signOut()
+        // Mark intent BEFORE the service call: the resulting unauthenticated
+        // transition is observed asynchronously and must see the flag set.
+        isUserInitiatedSignOutInProgress = true
+        do {
+            try await authService.signOut()
+        } catch {
+            // Sign-out failed — the session may still be live; do not leave a
+            // stale "user wanted out" marker for a later unrelated transition.
+            isUserInitiatedSignOutInProgress = false
+            throw error
+        }
     }
     
     func resetPassword(email: String) async throws {
@@ -103,7 +120,15 @@ final class AuthenticationManager {
     }
     
     func deleteAccount() async throws {
-        try await authService.deleteAccount()
+        // Account deletion is an explicit user decision to remove their data;
+        // the subsequent unauthenticated transition is user-initiated.
+        isUserInitiatedSignOutInProgress = true
+        do {
+            try await authService.deleteAccount()
+        } catch {
+            isUserInitiatedSignOutInProgress = false
+            throw error
+        }
     }
     
     func refreshSession() async throws {
@@ -132,6 +157,10 @@ final class AuthenticationManager {
                 guard let self = self else { return }
                 self.authState = state
                 self.authStatePublished = state // Sync for backward compat
+                if case .authenticated = state {
+                    // A completed sign-in clears any prior sign-out intent.
+                    self.isUserInitiatedSignOutInProgress = false
+                }
                 self.updateCrashlyticsUserContext(user: self.currentUser, authState: state)
             }
             .store(in: &cancellables)

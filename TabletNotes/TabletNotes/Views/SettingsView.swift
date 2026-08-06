@@ -784,33 +784,38 @@ struct UsageLimitsView: View {
                 .foregroundColor(.secondary)
             
             VStack(spacing: 6) {
-                if let remaining = user.remainingRecordings() {
+                // Unwrap the limit itself rather than force-unwrapping on the
+                // back of remaining*() being non-nil — the two live in
+                // different files and were only nil together by coincidence.
+                if let remaining = user.remainingRecordings(),
+                   let maxRecordings = user.usageLimits.maxRecordings {
                     UsageBarView(
                         title: "Recordings",
                         current: user.monthlyRecordingCount,
-                        max: user.usageLimits.maxRecordings!,
+                        max: maxRecordings,
                         remaining: remaining
                     )
                 }
-                
-                if let remaining = user.remainingRecordingMinutes() {
+
+                if let remaining = user.remainingRecordingMinutes(),
+                   let maxMinutes = user.usageLimits.maxRecordingMinutes {
                     UsageBarView(
                         title: "Recording Time",
                         current: user.monthlyRecordingMinutes,
-                        max: user.usageLimits.maxRecordingMinutes!,
+                        max: maxMinutes,
                         remaining: remaining,
                         suffix: "min"
                     )
                 }
-                
-                if let remaining = user.remainingStorageGB() {
+
+                if let remaining = user.remainingStorageGB(),
+                   let maxStorage = user.usageLimits.maxStorageGB {
                     UsageBarView(
                         title: "Storage",
                         current: user.currentStorageUsedGB,
-                        max: user.usageLimits.maxStorageGB!,
+                        max: maxStorage,
                         remaining: remaining,
-                        suffix: "GB",
-                        isDouble: true
+                        suffix: "GB"
                     )
                 }
             }
@@ -824,85 +829,77 @@ struct UsageLimitsView: View {
 // MARK: - Usage Bar View
 struct UsageBarView: View {
     let title: String
-    let current: any Numeric
-    let max: any Numeric
-    let remaining: any Numeric
+    let current: Double
+    let max: Double
+    let remaining: Double
     let suffix: String
-    let isDouble: Bool
-    
+    // Int-backed bars show whole numbers; Double-backed bars show one decimal.
+    private let showsDecimals: Bool
+
     init(title: String, current: Int, max: Int, remaining: Int, suffix: String = "") {
         self.title = title
-        self.current = current
-        self.max = max
-        self.remaining = remaining
+        self.current = Double(current)
+        self.max = Double(max)
+        self.remaining = Double(remaining)
         self.suffix = suffix
-        self.isDouble = false
+        self.showsDecimals = false
     }
-    
-    init(title: String, current: Double, max: Double, remaining: Double, suffix: String = "", isDouble: Bool = true) {
+
+    init(title: String, current: Double, max: Double, remaining: Double, suffix: String = "") {
         self.title = title
         self.current = current
         self.max = max
         self.remaining = remaining
         self.suffix = suffix
-        self.isDouble = isDouble
+        self.showsDecimals = true
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
-                if isDouble {
-                    Text("\(String(format: "%.1f", current as! Double))/\(String(format: "%.1f", max as! Double)) \(suffix)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("\(current)/\(max) \(suffix)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+
+                Text("\(formatted(current))/\(formatted(max)) \(suffix)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
-            
+
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Rectangle()
                         .fill(Color.adaptiveSecondaryBackground.opacity(0.5))
                         .frame(height: 4)
                         .cornerRadius(2)
-                    
+
                     Rectangle()
                         .fill(progressColor)
-                        .frame(width: progressWidth(geometry.size.width), height: 4)
+                        .frame(width: geometry.size.width * progress, height: 4)
                         .cornerRadius(2)
                 }
             }
             .frame(height: 4)
         }
     }
-    
-    private func progressWidth(_ totalWidth: CGFloat) -> CGFloat {
-        let progress: Double
-        if isDouble {
-            progress = (current as! Double) / (max as! Double)
-        } else {
-            progress = Double(current as! Int) / Double(max as! Int)
-        }
-        return totalWidth * min(progress, 1.0)
+
+    private func formatted(_ value: Double) -> String {
+        String(format: showsDecimals ? "%.1f" : "%.0f", value)
     }
-    
+
+    /// Clamped to 0...1 and guarded against a zero/invalid limit — a zero max
+    /// previously produced NaN, and NaN reaching .frame(width:) aborts in
+    /// CoreGraphics (TAB-67). A non-positive limit with usage shows a full bar.
+    private var progress: Double {
+        guard max > 0 else { return current > 0 ? 1.0 : 0.0 }
+        let ratio = current / max
+        guard ratio.isFinite else { return 0.0 }
+        return Swift.min(Swift.max(ratio, 0.0), 1.0)
+    }
+
     private var progressColor: Color {
-        let progress: Double
-        if isDouble {
-            progress = (current as! Double) / (max as! Double)
-        } else {
-            progress = Double(current as! Int) / Double(max as! Int)
-        }
-        
         if progress >= 0.9 {
             return .recordingRed
         } else if progress >= 0.7 {

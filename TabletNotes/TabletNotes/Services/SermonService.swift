@@ -109,8 +109,7 @@ class SermonService {
                         self.wasAuthenticated = true
                     case .unauthenticated:
                         if self.wasAuthenticated {
-                            print("[SermonService] User signed out — clearing local data")
-                            self.deleteAllLocalUserData()
+                            self.handleSignOutTransition()
                         }
                         self.wasAuthenticated = false
                     case .loading, .error:
@@ -940,6 +939,55 @@ class SermonService {
             print("[SermonService] Successfully deleted all sermons")
         } catch {
             print("[SermonService] Failed to delete all sermons: \(error)")
+        }
+    }
+
+    /// Decides whether an authenticated → unauthenticated transition may wipe
+    /// local data (TAB-65). Two independent gates, both required:
+    ///
+    /// 1. **User intent.** The transition must come from an explicit sign-out
+    ///    or account deletion. Failed token refreshes, Supabase outages, and
+    ///    offline launches also land in `.unauthenticated`, and wiping there
+    ///    destroyed entire libraries — unrecoverably for free-tier users, who
+    ///    cannot sync.
+    /// 2. **Nothing unsynced.** Even a real sign-out must not destroy the only
+    ///    copy of a recording. If any sermon has pending sync work, no cloud
+    ///    copy, or an interrupted-recording manifest exists, the data is
+    ///    preserved. The existing ownership check
+    ///    (`ensureLocalDataBelongsToCurrentUser`) still prevents a *different*
+    ///    user who signs in later from seeing it.
+    private func handleSignOutTransition() {
+        guard authManager.isUserInitiatedSignOutInProgress else {
+            print("[SermonService] Session became unauthenticated without user sign-out — preserving local data")
+            return
+        }
+
+        if hasUnsyncedLocalWork() {
+            print("[SermonService] User signed out with unsynced local work — preserving local data (will be reclaimed on next sign-in or wiped on different-user sign-in)")
+            return
+        }
+
+        print("[SermonService] User signed out with everything synced — clearing local data")
+        deleteAllLocalUserData()
+    }
+
+    /// True when any on-device content exists whose only copy is local:
+    /// a sermon with pending sync scopes, a sermon that never reached the
+    /// cloud, or an interrupted-recording manifest (in-flight or unrecovered
+    /// recording). Errs on the side of "unsynced" when the store can't be read.
+    private func hasUnsyncedLocalWork() -> Bool {
+        if InterruptedRecordingRecoveryStore.load() != nil {
+            return true
+        }
+
+        guard let allSermons = try? modelContext.fetch(FetchDescriptor<Sermon>()) else {
+            // Cannot verify — treat as unsynced rather than risk deleting the
+            // only copy (the unforgivable failure per the operating manual).
+            return true
+        }
+
+        return allSermons.contains { sermon in
+            sermon.remoteId == nil || sermon.hasPendingSyncWork
         }
     }
 
