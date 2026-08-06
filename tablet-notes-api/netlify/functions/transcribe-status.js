@@ -11,6 +11,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { getTranscriptOwner } = require('./utils/transcriptOwnership');
 
 // Circuit breaker for AssemblyAI API
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
@@ -82,9 +83,35 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
         ip: event.headers['x-forwarded-for']
       });
       return createErrorResponse(
-        new Error('Access denied: You can only check your own transcriptions'), 
+        new Error('Access denied: You can only check your own transcriptions'),
         403
       );
+    }
+
+    // Server-side ownership binding (TAB-69). The client-supplied userId above
+    // is defense-in-depth only — it can simply be omitted. The authoritative
+    // check is the owner recorded at submission time. A recorded owner that
+    // isn't the caller is a hard deny; an unknown owner (legacy in-flight job,
+    // mapping expired/unavailable) is allowed but logged, so pre-deploy jobs
+    // keep working. The durable fix is the Phase 2 processing_jobs table.
+    const recordedOwner = await getTranscriptOwner(sanitizedId);
+    if (recordedOwner && recordedOwner !== user.id) {
+      logger.security('unauthorized_transcription_access', {
+        userId: user.id,
+        recordedOwner,
+        transcriptionId: sanitizedId,
+        ip: event.headers['x-forwarded-for']
+      });
+      return createErrorResponse(
+        new Error('Access denied: You can only check your own transcriptions'),
+        403
+      );
+    }
+    if (!recordedOwner) {
+      logger.info('No recorded owner for transcription (legacy job or mapping unavailable)', {
+        transcriptionId: sanitizedId,
+        userId: user.id
+      });
     }
 
     logger.info('Checking transcription status', {

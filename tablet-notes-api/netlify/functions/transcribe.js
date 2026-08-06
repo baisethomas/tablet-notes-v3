@@ -12,6 +12,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { recordTranscriptOwner } = require('./utils/transcriptOwnership');
 
 // Circuit breaker for AssemblyAI API
 const assemblyAIBreaker = new CircuitBreaker(3, 60000); // 3 failures, 1 minute timeout
@@ -155,11 +156,16 @@ exports.handler = withLogging('transcribe', async (event, context) => {
         
         const transcript = await transcriptWithTimeout();
         
-        logger.info('Transcription submitted successfully', { 
+        logger.info('Transcription submitted successfully', {
             transcriptId: transcript.id,
             userId: user.id,
-            status: transcript.status 
+            status: transcript.status
         });
+
+        // Bind the transcript to its submitter server-side so transcribe-status
+        // can enforce ownership (TAB-69). Best-effort: a recording failure is
+        // logged inside the helper and must not fail the submission.
+        await recordTranscriptOwner(transcript.id, user.id);
 
         const responseData = {
             id: transcript.id,

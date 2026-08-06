@@ -94,3 +94,24 @@ test('expired entries are pruned to admit new keys at capacity', () => {
   assert.equal(store.counters.size, 2);
   assert.equal(store.counters.has('stale'), false);
 });
+
+test('middleware fails closed with 503 when limit evaluation throws (TAB-69)', async () => {
+  const { createRateLimitMiddleware } = require('../rateLimiter');
+  const middleware = createRateLimitMiddleware('no-such-limit-type');
+  const response = await middleware({ headers: {} }, {});
+
+  assert.ok(response, 'expected a blocking response, not null (fail-open)');
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.headers['Retry-After'], '30');
+  assert.match(JSON.parse(response.body).error, /Rate limiting unavailable/);
+});
+
+test('middleware still allows requests when limits evaluate normally', async () => {
+  const { createRateLimitMiddleware } = require('../rateLimiter');
+  const middleware = createRateLimitMiddleware('general');
+  const context = {};
+  const response = await middleware({ headers: {} }, context);
+
+  assert.equal(response, null);
+  assert.ok(context.rateLimitHeaders['X-RateLimit-Limit']);
+});

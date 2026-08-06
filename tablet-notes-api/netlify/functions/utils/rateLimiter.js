@@ -368,8 +368,23 @@ function createRateLimitMiddleware(limitType = 'general') {
       return null; // Continue processing
     } catch (error) {
       console.error('[RateLimitMiddleware] Error:', error);
-      // Don't block requests on rate limiter errors
-      return null;
+      // Fail closed (TAB-69): an unexpected limiter error must not disable
+      // rate limiting for the request. Redis outages never reach this catch —
+      // checkLimit degrades to the in-memory limiter internally — so anything
+      // caught here is a genuine malfunction (e.g. a misconfigured limit
+      // type). Serve a retryable 503 instead of allowing unmetered traffic.
+      return {
+        statusCode: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '30'
+        },
+        body: JSON.stringify({
+          error: 'Rate limiting unavailable',
+          message: 'The service could not evaluate rate limits for this request. Please retry shortly.',
+          retryAfter: 30
+        })
+      };
     }
   };
 }
