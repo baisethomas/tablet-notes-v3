@@ -6,15 +6,28 @@ const { Redis } = require('@upstash/redis');
 // be omitted, letting any authenticated user read any transcript by ID.
 //
 // The durable fix is the Phase 2 processing_jobs table (TAB-72); this module
-// is deliberately small so it can be deleted when that lands. Mappings are
-// best-effort: a missing mapping (legacy in-flight job, Redis eviction, cold
-// container on the in-memory fallback) must NOT block a legitimate status
-// check, so callers treat "unknown" as allow-with-logging and a *mismatched*
-// owner as a hard deny.
+// is deliberately small so it can be deleted when that lands.
+//
+// Fail-closed policy (PR #35 review): when the store is DURABLE (Redis),
+// an unknown mapping denies the read and a store outage is a retryable
+// unavailability — "we can't prove ownership" must not authorize the read.
+// Only the per-container in-memory fallback (Redis not configured) reports
+// unknowns as non-authoritative, because there submission and polling
+// routinely land on different containers and failing closed would break all
+// status polling; that residual gap closes when Upstash is provisioned or
+// TAB-72 lands.
 
-// 24h covers AssemblyAI's worst-case queue + processing time for a long sermon.
-const OWNER_TTL_SECONDS = 24 * 60 * 60;
+// Must outlive any legitimate resumed poll of a slow job. AssemblyAI jobs
+// finish in minutes-to-hours; 7 days is comfortable margin without letting
+// mappings accumulate forever.
+const OWNER_TTL_SECONDS = 7 * 24 * 60 * 60;
 const KEY_PREFIX = 'transcript_owner:';
+
+const OWNERSHIP = {
+  OWNED: 'owned', // mapping found — result.owner is authoritative
+  UNKNOWN: 'unknown', // store answered: no mapping exists
+  UNAVAILABLE: 'unavailable', // store errored — could not determine
+};
 
 let redis = null;
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -24,11 +37,17 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   });
 }
 
-// Per-container fallback when Redis is not configured. Not shared across
-// containers, so it only best-effort protects; the fail-open-on-unknown
-// posture above makes that acceptable for this interim module.
+// Per-container fallback when Redis is not configured.
 const memoryOwners = new Map();
 const MEMORY_MAX_ENTRIES = 10000;
+
+/**
+ * Whether the ownership store is durable/shared across containers. When true,
+ * an UNKNOWN answer is authoritative and callers must fail closed on it.
+ */
+function isDurableOwnershipStore() {
+  return redis !== null;
+}
 
 function pruneMemory(now) {
   for (const [key, entry] of memoryOwners) {
@@ -72,36 +91,44 @@ async function recordTranscriptOwner(transcriptId, userId) {
 }
 
 /**
- * Look up the recorded owner of a transcript.
- * @returns {Promise<string|null>} the owner's userId, or null when unknown
- * (never submitted through this path, expired, or the store is unavailable).
+ * Look up the recorded ownership of a transcript.
+ * @returns {Promise<{status: 'owned', owner: string} |
+ *                   {status: 'unknown'} |
+ *                   {status: 'unavailable'}>}
+ * Callers combine this with isDurableOwnershipStore(): on a durable store,
+ * 'unknown' must deny and 'unavailable' must be a retryable failure.
  */
-async function getTranscriptOwner(transcriptId) {
-  if (!transcriptId) return null;
+async function lookupTranscriptOwnership(transcriptId) {
+  if (!transcriptId) return { status: OWNERSHIP.UNKNOWN };
   const key = `${KEY_PREFIX}${transcriptId}`;
 
   try {
     if (redis) {
       const owner = await redis.get(key);
-      return typeof owner === 'string' && owner.length > 0 ? owner : null;
+      if (typeof owner === 'string' && owner.length > 0) {
+        return { status: OWNERSHIP.OWNED, owner };
+      }
+      return { status: OWNERSHIP.UNKNOWN };
     }
 
     const entry = memoryOwners.get(key);
-    if (!entry) return null;
+    if (!entry) return { status: OWNERSHIP.UNKNOWN };
     if (entry.expiresAt <= Date.now()) {
       memoryOwners.delete(key);
-      return null;
+      return { status: OWNERSHIP.UNKNOWN };
     }
-    return entry.userId;
+    return { status: OWNERSHIP.OWNED, owner: entry.userId };
   } catch (error) {
     console.error('[TranscriptOwnership] Failed to look up owner:', error);
-    return null;
+    return { status: OWNERSHIP.UNAVAILABLE };
   }
 }
 
 module.exports = {
   recordTranscriptOwner,
-  getTranscriptOwner,
+  lookupTranscriptOwnership,
+  isDurableOwnershipStore,
+  OWNERSHIP,
   OWNER_TTL_SECONDS,
   // Exported for tests only.
   _memoryOwners: memoryOwners,

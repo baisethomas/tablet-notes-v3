@@ -11,7 +11,11 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
-const { getTranscriptOwner } = require('./utils/transcriptOwnership');
+const {
+  lookupTranscriptOwnership,
+  isDurableOwnershipStore,
+  OWNERSHIP
+} = require('./utils/transcriptOwnership');
 
 // Circuit breaker for AssemblyAI API
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
@@ -90,15 +94,20 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
 
     // Server-side ownership binding (TAB-69). The client-supplied userId above
     // is defense-in-depth only — it can simply be omitted. The authoritative
-    // check is the owner recorded at submission time. A recorded owner that
-    // isn't the caller is a hard deny; an unknown owner (legacy in-flight job,
-    // mapping expired/unavailable) is allowed but logged, so pre-deploy jobs
-    // keep working. The durable fix is the Phase 2 processing_jobs table.
-    const recordedOwner = await getTranscriptOwner(sanitizedId);
-    if (recordedOwner && recordedOwner !== user.id) {
+    // check is the owner recorded at submission time, and unresolved ownership
+    // fails CLOSED whenever the store is durable (PR #35 review):
+    //   owned by someone else      → 403, always
+    //   store errored              → 503 (retryable — never authorize on "don't know")
+    //   unknown, durable store     → 403 (no mapping exists; the read is unproven)
+    //   unknown, in-memory fallback→ allow + log (submission and polling land on
+    //     different containers, so "unknown" is non-authoritative there; failing
+    //     closed would break all status polling until Upstash is provisioned)
+    // The durable fix is the Phase 2 processing_jobs table (TAB-72).
+    const ownership = await lookupTranscriptOwnership(sanitizedId);
+    if (ownership.status === OWNERSHIP.OWNED && ownership.owner !== user.id) {
       logger.security('unauthorized_transcription_access', {
         userId: user.id,
-        recordedOwner,
+        recordedOwner: ownership.owner,
         transcriptionId: sanitizedId,
         ip: event.headers['x-forwarded-for']
       });
@@ -107,8 +116,29 @@ exports.handler = withLogging('transcribe-status', async (event, context) => {
         403
       );
     }
-    if (!recordedOwner) {
-      logger.info('No recorded owner for transcription (legacy job or mapping unavailable)', {
+    if (ownership.status === OWNERSHIP.UNAVAILABLE) {
+      logger.error('Ownership store unavailable — refusing transcript read', {
+        transcriptionId: sanitizedId,
+        userId: user.id
+      });
+      return createErrorResponse(
+        new Error('Could not verify transcript ownership. Please retry shortly.'),
+        503
+      );
+    }
+    if (ownership.status === OWNERSHIP.UNKNOWN) {
+      if (isDurableOwnershipStore()) {
+        logger.security('unproven_transcription_access_denied', {
+          transcriptionId: sanitizedId,
+          userId: user.id,
+          ip: event.headers['x-forwarded-for']
+        });
+        return createErrorResponse(
+          new Error('Access denied: This transcription has no recorded owner'),
+          403
+        );
+      }
+      logger.info('No recorded owner (in-memory fallback store, non-authoritative) — allowing', {
         transcriptionId: sanitizedId,
         userId: user.id
       });
