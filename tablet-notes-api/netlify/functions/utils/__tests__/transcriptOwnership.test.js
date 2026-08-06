@@ -52,9 +52,10 @@ test('a mismatched owner is reported so the caller can hard-deny', async () => {
 });
 
 test('without Redis env the store reports itself non-durable', () => {
-  // Informational since PR #35 round 2: authorization no longer branches on
-  // durability (a positive proof — recorded owner or audio-url owner — is
-  // always required), but the flag still documents which store is active.
+  // transcribe-status gates its PRE-FETCH deny on this (PR #35 round 3):
+  // a durable store's definitive unknown/unavailable denies before the
+  // AssemblyAI call; the non-durable in-memory store must fall through to
+  // the fetch so the transcript-carried audio_url proof can authorize.
   assert.equal(isDurableOwnershipStore(), false);
 });
 
