@@ -88,11 +88,11 @@ exports.handler = withLogging('summarize', async (event, context) => {
       tone
     });
     
-    // Sanitize input text
-    const sanitizedText = Validator.sanitizeText(text, {
-      maxLength: LIMITS.SUMMARY_TEXT_LENGTH,
-      allowHtml: false,
-      allowNewlines: true
+    // Sanitize input text for the LLM sink: length bound + control-character
+    // strip only. sanitizeText's HTML escaping corrupted every apostrophe in
+    // the transcript and inflated token cost (TAB-68).
+    const sanitizedText = Validator.sanitizeLLMText(text, {
+      maxLength: LIMITS.SUMMARY_TEXT_LENGTH
     });
     
     // Debug logging after sanitization
