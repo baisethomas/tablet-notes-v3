@@ -3,232 +3,66 @@ import Observation
 #if canImport(AVFoundation) && os(iOS)
 import AVFoundation
 import Combine
-import UIKit
 
-struct InterruptedRecordingManifest: Codable, Equatable {
-    let sessionId: String
-    let serviceType: String
-    let audioFileName: String
-    let startedAt: Date
-    /// Owner at recording time; recovery is only allowed for the same signed-in user.
-    let userId: UUID?
-}
-
-enum InterruptedRecordingRecoveryStore {
-    private static let activeRecordingKey = "active_recording_manifest"
-    private static let userDefaults = UserDefaults.standard
-
-    static func save(_ manifest: InterruptedRecordingManifest) {
-        guard let data = try? JSONEncoder().encode(manifest) else { return }
-        userDefaults.set(data, forKey: activeRecordingKey)
-    }
-
-    static func load() -> InterruptedRecordingManifest? {
-        guard let data = userDefaults.data(forKey: activeRecordingKey) else { return nil }
-        return try? JSONDecoder().decode(InterruptedRecordingManifest.self, from: data)
-    }
-
-    static func clear() {
-        userDefaults.removeObject(forKey: activeRecordingKey)
-    }
-}
-
+/// Recording facade (TAB-71 rewrite). The public surface is unchanged from
+/// the AVAudioRecorder-era service — same observable properties, publishers,
+/// and methods — but capture now runs on `AudioCaptureEngine`, the single
+/// owner of the audio session. This class holds NO audio hardware: it manages
+/// subscription limits, the recovery manifest, the duration timer, and the
+/// Combine bridge the views consume.
+///
+/// Deliberately not `@MainActor` (house rule): engine events arrive off-main;
+/// UI-facing state updates hop to main explicitly.
 @Observable
-class RecordingService: NSObject {
-    private var audioRecorder: AVAudioRecorder?
-    private let recordingSession = AVAudioSession.sharedInstance()
-    private let fileManager = FileManager.default
+class RecordingService {
+    private let captureEngine: any AudioCapturing
     private var recordingURL: URL?
     var isRecording: Bool = false
     var isPaused: Bool = false
     var recordingDuration: TimeInterval = 0
     var remainingTime: TimeInterval? = nil
     private var cachedMaxDuration: TimeInterval? = nil
-    
-    // Publishers
+
+    // Publishers (bridged for the views' existing .onReceive wiring)
     let isRecordingPublisher: AnyPublisher<Bool, Never>
     let audioFileURLPublisher: AnyPublisher<URL?, Never>
     let audioFileNamePublisher: AnyPublisher<String?, Never>
     let isPausedPublisher: AnyPublisher<Bool, Never>
+    /// Deliberately a PassthroughSubject (no replay): MainAppView is the sole
+    /// auto-stop save owner *because* late subscribers never see a stale stop
+    /// event. A replaying subject here would double-save auto-stops.
     let recordingStoppedPublisher: AnyPublisher<(URL?, Bool), Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
     private let audioFileNameSubject = CurrentValueSubject<String?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
     private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
-    
-    // Duration tracking
-    private var durationTimer: Timer?
-    private var recordingStartTime: Date?
-    private let authManager = AuthenticationManager.shared
+
+    private var durationTask: Task<Void, Never>?
+    private let authManager: AuthenticationManager
     private var activeRecoverySessionId: String?
 
-    override init() {
+    init(
+        captureEngine: (any AudioCapturing)? = nil,
+        authManager: AuthenticationManager? = nil
+    ) {
+        self.captureEngine = captureEngine ?? AudioCaptureEngine.shared
+        self.authManager = authManager ?? AuthenticationManager.shared
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
         audioFileNamePublisher = audioFileNameSubject.eraseToAnyPublisher()
         isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
         recordingStoppedPublisher = recordingStoppedSubject.eraseToAnyPublisher()
-        super.init()
-        
-        // Create audio recordings directory if it doesn't exist
-        createAudioRecordingsDirectory()
-        
-        // Setup app lifecycle notifications for background handling
-        setupAppLifecycleObservers()
+
+        captureEngine.onEvent = { [weak self] event in
+            self?.handleEngineEvent(event)
+        }
     }
-    
+
     deinit {
-        stopDurationTimer()
-        NotificationCenter.default.removeObserver(self)
-    }
-    
-    private func setupAppLifecycleObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appWillTerminate),
-            name: UIApplication.willTerminateNotification,
-            object: nil
-        )
-
-        // Handle audio session interruptions
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAudioSessionInterruption),
-            name: AVAudioSession.interruptionNotification,
-            object: recordingSession
-        )
+        durationTask?.cancel()
     }
 
-    @objc private func appDidEnterBackground() {
-        // Ensure audio session remains active in background with background audio mode
-        if isRecording {
-            do {
-                // Set audio session to allow background recording
-                try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers])
-                try recordingSession.setActive(true)
-                print("[RecordingService] Audio session configured for background recording")
-            } catch {
-                print("[RecordingService] Failed to maintain audio session in background: \(error)")
-            }
-        }
-    }
-
-    @objc private func appWillEnterForeground() {
-        // Reactivate audio session when returning to foreground
-        if isRecording {
-            do {
-                try recordingSession.setActive(true)
-
-                // Check if recorder is still valid, if not resume it
-                if let recorder = audioRecorder {
-                    if !recorder.isRecording && !isPaused {
-                        print("[RecordingService] Recorder stopped during backgrounding, resuming...")
-                        let didResume = recorder.record()
-                        if !didResume {
-                            print("[RecordingService] Recorder failed to resume after foreground transition")
-                        }
-                    }
-                } else {
-                    print("[RecordingService] Audio recorder was deallocated, cannot resume")
-                }
-            } catch {
-                print("[RecordingService] Failed to reactivate audio session: \(error)")
-            }
-        }
-    }
-
-    @objc private func appWillTerminate() {
-        finalizeRecordingForRecovery()
-    }
-
-    @objc private func handleAudioSessionInterruption(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
-            return
-        }
-
-        switch type {
-        case .began:
-            print("[RecordingService] Audio session interrupted (phone call, alarm, etc.)")
-            // iOS will pause the recorder automatically, but we need to update our state
-            if isRecording && !isPaused {
-                // Stop the duration timer since recording is paused
-                stopDurationTimer()
-
-                // Update the paused state
-                isPaused = true
-                isPausedSubject.send(true)
-                print("[RecordingService] Recording paused due to interruption")
-            }
-
-        case .ended:
-            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
-                print("[RecordingService] Interruption ended but no options provided")
-                return
-            }
-            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-
-            if options.contains(.shouldResume) && isRecording && isPaused {
-                print("[RecordingService] Resuming recording after interruption")
-                do {
-                    try recordingSession.setActive(true)
-                    let didResume = audioRecorder?.record() ?? false
-                    guard didResume else {
-                        print("[RecordingService] Failed to resume recorder after interruption")
-                        return
-                    }
-
-                    // Resume the duration timer
-                    startDurationTimer()
-
-                    // Update the paused state
-                    isPaused = false
-                    isPausedSubject.send(false)
-                    print("[RecordingService] Recording resumed successfully")
-                } catch {
-                    print("[RecordingService] Failed to resume after interruption: \(error)")
-                    // Keep paused state since we couldn't resume
-                }
-            } else {
-                print("[RecordingService] Interruption ended but should not resume: shouldResume=\(options.contains(.shouldResume)), isRecording=\(isRecording), isPaused=\(isPaused)")
-            }
-
-        @unknown default:
-            break
-        }
-    }
-    
-    private func createAudioRecordingsDirectory() {
-        do {
-            let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let audioPath = documentsPath.appendingPathComponent("AudioRecordings")
-            try fileManager.createDirectory(at: audioPath, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            print("[RecordingService] Failed to create audio recordings directory: \(error)")
-        }
-    }
-    
-    private func getAudioRecordingsDirectory() -> URL {
-        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsPath.appendingPathComponent("AudioRecordings")
-    }
-    
     // MARK: - Duration Limit Checking
 
     /// Check if user can start a new recording based on subscription limits
@@ -238,7 +72,6 @@ class RecordingService: NSObject {
             return (false, "User not authenticated")
         }
 
-        // Check if user can create new recordings (monthly limit)
         if !currentUser.canCreateNewRecording() {
             let remaining = currentUser.remainingRecordings() ?? 0
             return (false, "Monthly recording limit reached. \(remaining) recordings remaining this month.")
@@ -254,102 +87,71 @@ class RecordingService: NSObject {
               let maxMinutes = currentUser.maxRecordingDuration() else {
             return nil // Unlimited
         }
-        return TimeInterval(maxMinutes * 60) // Convert to seconds
+        return TimeInterval(maxMinutes * 60)
     }
-    
-    /// Check if current recording duration exceeds limit
-    private func checkDurationLimit() {
-        guard let maxDuration = cachedMaxDuration else {
-            // No limit, update remaining time to nil
-            remainingTime = nil
-            return
-        }
 
-        let remaining = maxDuration - recordingDuration
-        remainingTime = max(0, remaining)
-
-        // Auto-stop if limit reached
-        if recordingDuration >= maxDuration {
-            print("[RecordingService] Recording duration limit reached (\(Int(maxDuration/60)) minutes), auto-stopping")
-            let audioURL = stopRecording()
-            // Emit auto-stop event with the audio URL and auto-stop flag
-            recordingStoppedSubject.send((audioURL, true))
-        }
-    }
+    // MARK: - Recording lifecycle
 
     func startRecording(serviceType: String) async throws {
-        // Check if user can start recording
         let (canStart, reason) = await canStartRecording()
         if !canStart {
             throw RecordingError.limitExceeded(reason: reason ?? "Recording limit exceeded")
         }
 
-        // Cache the max duration for this recording session
         cachedMaxDuration = await getMaxRecordingDuration()
 
-        try recordingSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
-        try recordingSession.setActive(true)
-
-        // Use permanent storage instead of temporary directory
-        let filename = "sermon_\(UUID().uuidString).m4a"
-        let url = getAudioRecordingsDirectory().appendingPathComponent(filename)
-
-        // Resolve the recovery user id up front. AuthenticationManager is
-        // @MainActor, so this hop must happen *before* record() — that way the
-        // manifest can be written synchronously the instant recording starts,
-        // with no suspension point in between. A suspension there could leave an
-        // orphaned on-disk recording with no manifest if the app is interrupted
-        // or terminated before the save lands.
+        // Resolve the recovery user id up front (AuthenticationManager is
+        // @MainActor). The manifest must be written with no suspension point
+        // after capture starts, so every await happens BEFORE start().
+        let manager = authManager
         let recordingUserId: UUID? = await MainActor.run {
-            AuthenticationManager.shared.currentUser?.id
+            manager.currentUser?.id
         }
+        let startedAt = Date()
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        audioRecorder = try AVAudioRecorder(url: url, settings: settings)
-        audioRecorder?.delegate = self
-        audioRecorder?.prepareToRecord()
-        let didStartRecording = audioRecorder?.record() ?? false
-        guard didStartRecording else {
-            print("[RecordingService] Failed to start AVAudioRecorder.record() for file: \(url.lastPathComponent)")
-            if fileManager.fileExists(atPath: url.path) {
-                try? fileManager.removeItem(at: url)
-            }
-            audioRecorder = nil
+        let started: AudioCaptureEngine.StartedCapture
+        do {
+            // Synchronous: when this returns the engine is running and the
+            // file exists on disk.
+            started = try captureEngine.start()
+        } catch {
+            print("[RecordingService] Capture start failed: \(error)")
             throw RecordingError.recordingFailed
         }
-        recordingURL = url
 
-        // Start duration tracking
+        recordingURL = started.url
+        // Synchronous — no await between engine start and this save. An
+        // interruption or termination in that gap would otherwise leave an
+        // orphaned on-disk recording with no manifest.
+        saveRecoveryManifest(
+            serviceType: serviceType,
+            audioFileName: started.fileName,
+            startedAt: startedAt,
+            userId: recordingUserId
+        )
+
         recordingDuration = 0
-        recordingStartTime = Date()
-        // Synchronous — no await between record() and this save (see above).
-        saveRecoveryManifest(serviceType: serviceType, audioFileName: filename, userId: recordingUserId)
-        startDurationTimer()
-
         isRecording = true
+        isPaused = false
         isRecordingSubject.send(true)
-        audioFileURLSubject.send(url)
-        audioFileNameSubject.send(filename)
+        isPausedSubject.send(false)
+        audioFileURLSubject.send(started.url)
+        audioFileNameSubject.send(started.fileName)
+        startDurationTask()
 
-        // Log the duration limit for this recording
         if let maxDuration = cachedMaxDuration {
-            let maxMinutes = Int(maxDuration / 60)
-            print("[RecordingService] Started recording with \(maxMinutes) minute limit")
+            print("[RecordingService] Started recording with \(Int(maxDuration / 60)) minute limit")
         } else {
             print("[RecordingService] Started recording with no duration limit")
         }
     }
 
     func stopRecording() -> URL? {
-        let currentURL = recordingURL
-        let currentTime = audioRecorder?.currentTime ?? 0
-        audioRecorder?.stop()
-        stopDurationTimer()
+        // Engine stop is synchronous and finalizes the m4a before returning —
+        // callers hand the URL straight to the save/transcribe pipeline.
+        let currentURL = captureEngine.stop() ?? recordingURL
+        durationTask?.cancel()
+        durationTask = nil
         recordingURL = nil
 
         isRecording = false
@@ -357,31 +159,46 @@ class RecordingService: NSObject {
         isRecordingSubject.send(false)
         isPausedSubject.send(false)
 
-        // Reset duration tracking
         recordingDuration = 0
         remainingTime = nil
-        recordingStartTime = nil
         cachedMaxDuration = nil
         activeRecoverySessionId = nil
         InterruptedRecordingRecoveryStore.clear()
 
-        if let currentURL = currentURL {
-            let fileSize = (try? fileManager.attributesOfItem(atPath: currentURL.path)[.size] as? NSNumber)?.intValue ?? 0
-            print("[RecordingService] stopRecording() called for \(currentURL.lastPathComponent) - recorderTime=\(String(format: "%.2f", currentTime))s, fileSize=\(fileSize) bytes")
+        if let currentURL {
+            print("[RecordingService] stopRecording() finalized \(currentURL.lastPathComponent)")
         }
-
         return currentURL
     }
+
+    func pauseRecording() throws {
+        guard isRecording, !isPaused else { return }
+        captureEngine.pause()
+        isPaused = true
+        isPausedSubject.send(true)
+    }
+
+    func resumeRecording() throws {
+        guard isRecording, isPaused else { return }
+        do {
+            try captureEngine.resume()
+        } catch {
+            print("[RecordingService] Failed to resume capture: \(error)")
+            throw RecordingError.resumeFailed
+        }
+        isPaused = false
+        isPausedSubject.send(false)
+    }
+
+    // MARK: - Recovery manifest
 
     func prepareRecoverySession(sessionId: String) {
         activeRecoverySessionId = sessionId
     }
 
-    /// Persists the recovery manifest. Synchronous by design: the caller invokes
-    /// it with no suspension point between AVAudioRecorder.record() and this save,
-    /// so an interruption can't leave an orphaned recording without a manifest.
-    /// `userId` is resolved on the main actor by the caller before recording starts.
-    private func saveRecoveryManifest(serviceType: String, audioFileName: String, userId: UUID?) {
+    /// Persists the recovery manifest. Synchronous by design — see the call
+    /// site in `startRecording` for the invariant.
+    private func saveRecoveryManifest(serviceType: String, audioFileName: String, startedAt: Date, userId: UUID?) {
         guard let activeRecoverySessionId else {
             print("[RecordingService] No recovery session ID was set before recording started")
             return
@@ -392,129 +209,84 @@ class RecordingService: NSObject {
                 sessionId: activeRecoverySessionId,
                 serviceType: serviceType,
                 audioFileName: audioFileName,
-                startedAt: recordingStartTime ?? Date(),
+                startedAt: startedAt,
                 userId: userId
             )
         )
     }
 
-    private func finalizeRecordingForRecovery() {
+    // MARK: - Engine events
+
+    private func handleEngineEvent(_ event: AudioCaptureEngine.Event) {
+        Task { @MainActor in
+            // Queued-hop guard (PR #36 review rounds 2-3): this main-actor
+            // task can run AFTER the capture it describes was stopped and a
+            // new one started. Every event is tagged with its capture's URL —
+            // act only when that is still the capture we're tracking. A stale
+            // interruption must not phantom-pause a new recording; a stale
+            // failure must not stop one or clear its manifest.
+            guard let eventURL = event.captureURL, eventURL == self.recordingURL else {
+                print("[RecordingService] Ignoring stale engine event for \(event.captureURL?.lastPathComponent ?? "unknown file")")
+                return
+            }
+
+            switch event {
+            case .interruptionBegan:
+                guard self.isRecording, !self.isPaused else { return }
+                self.isPaused = true
+                self.isPausedSubject.send(true)
+                print("[RecordingService] Recording paused due to interruption")
+
+            case .interruptionEndedAndResumed:
+                guard self.isRecording, self.isPaused else { return }
+                self.isPaused = false
+                self.isPausedSubject.send(false)
+                print("[RecordingService] Recording resumed after interruption")
+
+            case .captureFailed(_, let reason):
+                print("[RecordingService] Capture failed (\(reason)) — finalizing what was recorded")
+                // The engine has already finalized the file. Emit a stop so
+                // the auto-stop save owner (MainAppView) persists the partial
+                // recording instead of losing it.
+                _ = self.stopRecording()
+                self.recordingStoppedSubject.send((eventURL, true))
+            }
+        }
+    }
+
+    // MARK: - Duration tracking
+
+    private func startDurationTask() {
+        durationTask?.cancel()
+        durationTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                // Weakly re-resolved each tick: binding self for the loop's
+                // remainder would keep the service alive through its own task.
+                guard let service = self else { return }
+                service.tickDuration()
+            }
+        }
+    }
+
+    @MainActor
+    private func tickDuration() {
         guard isRecording else { return }
+        // Frame-based: pauses and interruptions don't inflate the duration
+        // (the old wall-clock implementation drifted across pauses).
+        recordingDuration = captureEngine.recordedDuration
 
-        print("[RecordingService] Finalizing active recording for recovery before termination")
-        stopDurationTimer()
-        audioRecorder?.stop()
-        isPaused = false
-        isPausedSubject.send(false)
-    }
-    
-    func pauseRecording() throws {
-        guard isRecording, !isPaused else { return }
-        audioRecorder?.pause()
-        stopDurationTimer()
-        isPaused = true
-        isPausedSubject.send(true)
-    }
-
-    func resumeRecording() throws {
-        guard isRecording, isPaused else { return }
-        let didResume = audioRecorder?.record() ?? false
-        guard didResume else {
-            print("[RecordingService] Failed to resume AVAudioRecorder.record()")
-            throw RecordingError.resumeFailed
-        }
-        startDurationTimer()
-        isPaused = false
-        isPausedSubject.send(false)
-    }
-    
-    // MARK: - Duration Timer Management
-    
-    private func startDurationTimer() {
-        // Ensure timer is created on main thread for proper scheduling
-        DispatchQueue.main.async { [weak self] in
-            self?.stopDurationTimer() // Ensure no duplicate timers
-
-            print("[RecordingService] Starting duration timer on main thread")
-            self?.durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.updateDuration()
-            }
-        }
-    }
-    
-    private func stopDurationTimer() {
-        // Ensure timer is stopped on main thread
-        if Thread.isMainThread {
-            durationTimer?.invalidate()
-            durationTimer = nil
-        } else {
-            DispatchQueue.main.sync {
-                durationTimer?.invalidate()
-                durationTimer = nil
-            }
-        }
-    }
-    
-    private func updateDuration() {
-        guard let startTime = recordingStartTime else {
-            print("[RecordingService] updateDuration: No start time set")
+        guard let maxDuration = cachedMaxDuration else {
+            remainingTime = nil
             return
         }
+        remainingTime = max(0, maxDuration - recordingDuration)
 
-        let currentDuration = Date().timeIntervalSince(startTime)
-        print("[RecordingService] updateDuration: \(String(format: "%.1f", currentDuration))s")
-
-        recordingDuration = currentDuration
-        checkDurationLimit()
-    }
-    
-    // MARK: - File Management
-    
-    /// Move a temporary audio file to permanent storage
-    func moveToPermamentStorage(temporaryURL: URL) -> URL? {
-        let filename = "sermon_\(UUID().uuidString).m4a"
-        let permanentURL = getAudioRecordingsDirectory().appendingPathComponent(filename)
-        
-        do {
-            // Move file from temporary to permanent location
-            try fileManager.moveItem(at: temporaryURL, to: permanentURL)
-            print("[RecordingService] Moved audio file to permanent storage: \(permanentURL)")
-            return permanentURL
-        } catch {
-            print("[RecordingService] Failed to move audio file to permanent storage: \(error)")
-            return nil
-        }
-    }
-    
-    /// Check if an audio file exists at the given URL
-    func audioFileExists(at url: URL) -> Bool {
-        return fileManager.fileExists(atPath: url.path)
-    }
-    
-    
-    /// Delete an audio file
-    func deleteAudioFile(at url: URL) {
-        do {
-            try fileManager.removeItem(at: url)
-            print("[RecordingService] Deleted audio file: \(url)")
-        } catch {
-            print("[RecordingService] Failed to delete audio file: \(error)")
-        }
-    }
-}
-
-extension RecordingService: AVAudioRecorderDelegate {
-    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        isRecording = false
-        isPaused = false
-        isRecordingSubject.send(false)
-        isPausedSubject.send(false)
-        if flag {
-            audioFileURLSubject.send(recorder.url)
-            audioFileNameSubject.send(recorder.url.lastPathComponent)
-        } else {
-            audioFileURLSubject.send(nil)
-            audioFileNameSubject.send(nil)
+        if recordingDuration >= maxDuration {
+            print("[RecordingService] Recording duration limit reached (\(Int(maxDuration / 60)) minutes), auto-stopping")
+            let audioURL = stopRecording()
+            recordingStoppedSubject.send((audioURL, true))
         }
     }
 }
