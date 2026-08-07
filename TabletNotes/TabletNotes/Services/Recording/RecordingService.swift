@@ -15,7 +15,7 @@ import Combine
 /// UI-facing state updates hop to main explicitly.
 @Observable
 class RecordingService {
-    private let captureEngine = AudioCaptureEngine.shared
+    private let captureEngine: any AudioCapturing
     private var recordingURL: URL?
     var isRecording: Bool = false
     var isPaused: Bool = false
@@ -39,10 +39,15 @@ class RecordingService {
     private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
 
     private var durationTask: Task<Void, Never>?
-    private let authManager = AuthenticationManager.shared
+    private let authManager: AuthenticationManager
     private var activeRecoverySessionId: String?
 
-    init() {
+    init(
+        captureEngine: (any AudioCapturing)? = nil,
+        authManager: AuthenticationManager? = nil
+    ) {
+        self.captureEngine = captureEngine ?? AudioCaptureEngine.shared
+        self.authManager = authManager ?? AuthenticationManager.shared
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
         audioFileNamePublisher = audioFileNameSubject.eraseToAnyPublisher()
@@ -98,8 +103,9 @@ class RecordingService {
         // Resolve the recovery user id up front (AuthenticationManager is
         // @MainActor). The manifest must be written with no suspension point
         // after capture starts, so every await happens BEFORE start().
+        let manager = authManager
         let recordingUserId: UUID? = await MainActor.run {
-            AuthenticationManager.shared.currentUser?.id
+            manager.currentUser?.id
         }
         let startedAt = Date()
 

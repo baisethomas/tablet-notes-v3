@@ -28,6 +28,21 @@ enum AudioCaptureError: LocalizedError {
     }
 }
 
+/// Seam for the capture engine (house rule: new services get a protocol and a
+/// mock) so `RecordingService` is testable without AVFoundation hardware —
+/// including the restart-failure, interruption, and finalization paths.
+protocol AudioCapturing: AnyObject {
+    var state: AudioCaptureEngine.State { get }
+    var recordedDuration: TimeInterval { get }
+    var onEvent: ((AudioCaptureEngine.Event) -> Void)? { get set }
+    func start() throws -> AudioCaptureEngine.StartedCapture
+    func pause()
+    func resume() throws
+    @discardableResult func stop() -> URL?
+    func finalizeForTermination()
+    func makeCaptionStream() -> AsyncStream<AudioChunk>
+}
+
 /// The ONLY object in the app that touches `AVAudioSession` or audio-capture
 /// hardware (TAB-71). Before this existed, `AVAudioRecorder` (disk) and a
 /// second `AVAudioEngine` tap (live captions) ran simultaneously against the
@@ -51,7 +66,7 @@ enum AudioCaptureError: LocalizedError {
 /// ever touched from the tap's serial callback context plus lock-guarded
 /// reads. This mirrors the house precedent that recording infrastructure is
 /// intentionally not `@MainActor`.
-final class AudioCaptureEngine: @unchecked Sendable {
+final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
     static let shared = AudioCaptureEngine()
 
     enum State: Equatable {
@@ -304,16 +319,24 @@ final class AudioCaptureEngine: @unchecked Sendable {
             try installTapAndStartLocked(sink: sink)
             print("[AudioCaptureEngine] Tap reinstalled after configuration change")
         } catch {
-            // Capture could not survive the configuration change. Finalize
-            // what is on disk (recording is sacred — partial audio beats none)
-            // and surface the failure.
-            print("[AudioCaptureEngine] ⚠️ Failed to reinstall tap: \(error)")
-            engine.stop()
-            sink.finishCaptionStream()
-            self.sink = nil
-            stateLocked = .idle
-            onEvent?(.interruptionEndedResumeFailed(error.localizedDescription))
+            failCaptureLocked(context: "reinstall tap after configuration change", error: error)
         }
+    }
+
+    /// Precondition: lock held. Capture cannot continue: finalize what is on
+    /// disk (recording is sacred — partial audio beats none) and surface the
+    /// failure so the facade auto-stop-saves the partial recording. Silently
+    /// staying in `.recording` here would show a live recording UI while no
+    /// audio is being written — the worst possible failure mode for this app.
+    private func failCaptureLocked(context: String, error: Error) {
+        print("[AudioCaptureEngine] ⚠️ Capture failed (\(context)): \(error)")
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        sink?.finishCaptionStream()
+        sink = nil
+        stateLocked = .idle
+        // The facade's handler dispatches async immediately; safe under lock.
+        onEvent?(.interruptionEndedResumeFailed(error.localizedDescription))
     }
 
     // MARK: - Notifications
@@ -361,7 +384,14 @@ final class AudioCaptureEngine: @unchecked Sendable {
             self.lock.lock()
             if self.stateLocked == .recording && !self.engine.isRunning {
                 print("[AudioCaptureEngine] Engine stopped during backgrounding; restarting")
-                try? self.resumeEngineLocked()
+                do {
+                    try self.resumeEngineLocked()
+                } catch {
+                    // A swallowed restart failure would leave the UI showing a
+                    // live recording while nothing is written (PR #36 review):
+                    // finalize the partial recording and surface the failure.
+                    self.failCaptureLocked(context: "restart after foregrounding", error: error)
+                }
             }
             self.lock.unlock()
         })

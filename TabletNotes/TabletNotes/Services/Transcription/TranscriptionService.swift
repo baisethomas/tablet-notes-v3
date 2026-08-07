@@ -71,6 +71,12 @@ class TranscriptionService: NSObject, ObservableObject {
             return
         }
 
+        // A fresh session must not replay the previous recording's transcript:
+        // this CurrentValueSubject otherwise feeds the last sermon's text into
+        // the new RecordingView (and its scripture detection) until the first
+        // new turn arrives — or indefinitely if caption startup fails.
+        transcriptSubject.send("")
+
         // Wire the transcript feed before starting so no update is missed.
         let updates = await liveTranscriber.transcriptUpdates()
         transcriptForwardingTask?.cancel()

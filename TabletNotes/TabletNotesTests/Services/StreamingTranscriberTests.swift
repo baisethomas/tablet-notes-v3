@@ -323,6 +323,25 @@ struct StreamingTranscriberTests {
         #expect(!collector.updates.contains { $0.contains("stale ghost text") })
     }
 
+    @Test func serverErrorMessageTriggersReconnect() async throws {
+        let (transcriber, factory, _) = makeTranscriber()
+        let (chunks, continuation) = makeChunkStream()
+        defer { continuation.finish() }
+
+        try await transcriber.start(chunks: chunks, sampleRate: 16000)
+        let firstSocket = factory.sockets[0]
+        firstSocket.deliver(beginMessage())
+        #expect(await eventually { await transcriber.connectionState == .streaming })
+
+        // A server-declared error must enter the degraded → reconnect flow,
+        // not silently keep feeding a dead session (PR #36 review).
+        firstSocket.deliver(#"{"type": "Error", "error": "session exploded"}"#)
+        #expect(await eventually { factory.sockets.count == 2 })
+
+        factory.sockets[1].deliver(beginMessage())
+        #expect(await eventually { await transcriber.connectionState == .streaming })
+    }
+
     @Test func stopCancelsSocketAndBecomesInactive() async throws {
         let (transcriber, factory, _) = makeTranscriber()
         let (chunks, continuation) = makeChunkStream()

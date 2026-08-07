@@ -309,7 +309,18 @@ actor StreamingTranscriber {
             ))
 
         case "Error":
-            print("[StreamingTranscriber] Server error message: \(json["error"] as? String ?? "unknown")")
+            // A server-declared error means this session is done for — staying
+            // in .streaming would keep feeding a dead session while captions
+            // fall silent (PR #36 review). Route through the same degraded →
+            // reconnect flow as terminations and socket failures.
+            let reason = json["error"] as? String ?? "unknown server error"
+            print("[StreamingTranscriber] Server error message: \(reason)")
+            let gen = generation
+            handleDisconnect(generation: gen, error: NSError(
+                domain: "StreamingTranscriber",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: reason]
+            ))
 
         default:
             break
