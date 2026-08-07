@@ -232,12 +232,20 @@ class RecordingService {
                 self.isPausedSubject.send(false)
                 print("[RecordingService] Recording resumed after interruption")
 
-            case .interruptionEndedResumeFailed(let reason):
-                print("[RecordingService] Capture could not resume (\(reason)) — finalizing what was recorded")
+            case .captureFailed(let url, let reason):
+                // Queued-hop guard (PR #36 review round 2): this main-actor
+                // task can run AFTER a new recording started. The event is
+                // tagged with the failed capture's URL — act only if that is
+                // still the capture we're tracking; a stale failure must not
+                // stop the new recording or clear its manifest.
+                guard let url, url == self.recordingURL else {
+                    print("[RecordingService] Ignoring stale capture failure for \(url?.lastPathComponent ?? "unknown file")")
+                    return
+                }
+                print("[RecordingService] Capture failed (\(reason)) — finalizing what was recorded")
                 // The engine has already finalized the file. Emit a stop so
                 // the auto-stop save owner (MainAppView) persists the partial
                 // recording instead of losing it.
-                let url = self.recordingURL
                 _ = self.stopRecording()
                 self.recordingStoppedSubject.send((url, true))
             }

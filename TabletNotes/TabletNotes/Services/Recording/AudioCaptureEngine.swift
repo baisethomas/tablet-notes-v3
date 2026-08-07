@@ -85,7 +85,12 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
     enum Event {
         case interruptionBegan
         case interruptionEndedAndResumed
-        case interruptionEndedResumeFailed(String)
+        /// Capture failed unrecoverably and the file was finalized. `url`
+        /// identifies WHICH capture failed: the facade's handler runs on a
+        /// queued main-actor hop, and a new recording may have started before
+        /// it executes — a stale failure must not stop the new capture
+        /// (PR #36 review round 2).
+        case captureFailed(url: URL?, reason: String)
     }
 
     private let lock = NSLock()
@@ -330,13 +335,15 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
     /// audio is being written — the worst possible failure mode for this app.
     private func failCaptureLocked(context: String, error: Error) {
         print("[AudioCaptureEngine] ⚠️ Capture failed (\(context)): \(error)")
+        let failedURL = currentURL
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         sink?.finishCaptionStream()
         sink = nil
+        currentURL = nil
         stateLocked = .idle
         // The facade's handler dispatches async immediately; safe under lock.
-        onEvent?(.interruptionEndedResumeFailed(error.localizedDescription))
+        onEvent?(.captureFailed(url: failedURL, reason: error.localizedDescription))
     }
 
     // MARK: - Notifications
@@ -436,9 +443,11 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
                 print("[AudioCaptureEngine] Resumed after interruption")
                 onEvent?(.interruptionEndedAndResumed)
             } catch {
+                // Same unrecoverable-failure path as configuration changes and
+                // foreground restarts: finalize the partial recording and
+                // surface a URL-tagged failure.
+                failCaptureLocked(context: "resume after interruption", error: error)
                 lock.unlock()
-                print("[AudioCaptureEngine] ⚠️ Failed to resume after interruption: \(error)")
-                onEvent?(.interruptionEndedResumeFailed(error.localizedDescription))
             }
 
         @unknown default:

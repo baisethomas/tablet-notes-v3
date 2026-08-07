@@ -101,12 +101,31 @@ struct RecordingServiceFacadeTests {
         // The engine reports an unrecoverable failure (foreground restart or
         // configuration change): the facade must auto-stop-save the partial
         // recording, never leave the UI claiming an active recording.
-        engine.emit(.interruptionEndedResumeFailed("engine could not restart"))
+        engine.emit(.captureFailed(url: startedURL, reason: "engine could not restart"))
 
         #expect(await eventually { collector.events.count == 1 })
         #expect(collector.events.first?.0 == startedURL)
         #expect(collector.events.first?.1 == true)
         #expect(!service.isRecording)
+    }
+
+    @Test func staleCaptureFailureForAnotherRecordingIsIgnored() async throws {
+        let (service, engine) = makeService()
+        defer { InterruptedRecordingRecoveryStore.clear() }
+
+        service.prepareRecoverySession(sessionId: "session-123")
+        try await service.startRecording(serviceType: "Sunday Service")
+
+        // A failure event queued for a PREVIOUS capture (different URL) runs
+        // after this recording started: it must not stop this recording or
+        // clear its manifest (PR #36 review round 2).
+        let staleURL = FileManager.default.temporaryDirectory.appendingPathComponent("sermon_previous.m4a")
+        engine.emit(.captureFailed(url: staleURL, reason: "stale failure"))
+
+        // Give the main-actor hop time to run, then confirm nothing changed.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(service.isRecording)
+        #expect(InterruptedRecordingRecoveryStore.load() != nil)
     }
 
     @Test func interruptionEventsTogglePausedState() async throws {
