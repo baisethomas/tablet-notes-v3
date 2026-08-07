@@ -11,6 +11,7 @@ const {
   planFailure
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
+const { claimJob, releaseClaim } = require('./utils/jobClaim');
 
 /**
  * Scheduled reaper for processing_jobs (TAB-72).
@@ -42,13 +43,26 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
     return;
   }
 
+  // Claim BEFORE spending money (PR #37 review round 2). Two overlapping
+  // sweeps — or a sweep racing POST /api/jobs — could otherwise both submit
+  // this row to AssemblyAI, billing twice and leaving one provider job
+  // unreconcilable when the second id overwrote the first.
+  const claimed = await claimJob({ supabase, jobId: job.id });
+  if (!claimed) {
+    logger.info('Reaper skipping job claimed by another worker', { jobId: job.id });
+    return;
+  }
+
   const { data: signed, error: signedError } = await supabase
     .storage.from('sermon-audio')
     .createSignedUrl(job.audio_file_path, 7200);
 
   if (signedError || !signed?.signedUrl) {
-    const failure = planFailure(job, `signed url failed: ${signedError?.message || 'unknown'}`);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await releaseClaim({
+      supabase,
+      jobId: job.id,
+      error: `signed url failed: ${signedError?.message || 'unknown'}`
+    });
     return;
   }
 
@@ -66,12 +80,11 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
       webhook_auth_header_value: process.env.ASSEMBLYAI_WEBHOOK_SECRET
     });
 
+    // Already claimed as 'submitted'; record the provider id and attempt count.
     await supabase
       .from('processing_jobs')
       .update({
-        status: JOB_STATUS.SUBMITTED,
         provider_job_id: transcript.id,
-        submitted_at: new Date().toISOString(),
         attempts: (job.attempts || 0) + 1,
         last_error: null,
         next_attempt_at: null
@@ -80,8 +93,13 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
 
     logger.info('Reaper resubmitted transcription', { jobId: job.id, providerJobId: transcript.id });
   } catch (error) {
+    // The submit itself failed, so no provider job exists: release the claim
+    // and let planFailure's backoff/attempt accounting govern the retry.
     const failure = planFailure(job, error);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await supabase
+      .from('processing_jobs')
+      .update({ ...failure, submitted_at: null })
+      .eq('id', job.id);
     logger.warn('Reaper resubmission failed', { jobId: job.id, status: failure.status });
   }
 }
@@ -131,6 +149,14 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
 }
 
 async function runSummary({ supabase, job, logger }) {
+  // Same claim discipline as transcription: OpenAI calls cost money, and two
+  // overlapping sweeps must not both generate a summary for one job.
+  const claimed = await claimJob({ supabase, jobId: job.id, toStatus: JOB_STATUS.RUNNING });
+  if (!claimed) {
+    logger.info('Reaper skipping summary job claimed by another worker', { jobId: job.id });
+    return;
+  }
+
   const { data: transcript } = await supabase
     .from('transcripts')
     .select('text')
