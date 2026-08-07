@@ -219,6 +219,17 @@ class RecordingService {
 
     private func handleEngineEvent(_ event: AudioCaptureEngine.Event) {
         Task { @MainActor in
+            // Queued-hop guard (PR #36 review rounds 2-3): this main-actor
+            // task can run AFTER the capture it describes was stopped and a
+            // new one started. Every event is tagged with its capture's URL —
+            // act only when that is still the capture we're tracking. A stale
+            // interruption must not phantom-pause a new recording; a stale
+            // failure must not stop one or clear its manifest.
+            guard let eventURL = event.captureURL, eventURL == self.recordingURL else {
+                print("[RecordingService] Ignoring stale engine event for \(event.captureURL?.lastPathComponent ?? "unknown file")")
+                return
+            }
+
             switch event {
             case .interruptionBegan:
                 guard self.isRecording, !self.isPaused else { return }
@@ -232,22 +243,13 @@ class RecordingService {
                 self.isPausedSubject.send(false)
                 print("[RecordingService] Recording resumed after interruption")
 
-            case .captureFailed(let url, let reason):
-                // Queued-hop guard (PR #36 review round 2): this main-actor
-                // task can run AFTER a new recording started. The event is
-                // tagged with the failed capture's URL — act only if that is
-                // still the capture we're tracking; a stale failure must not
-                // stop the new recording or clear its manifest.
-                guard let url, url == self.recordingURL else {
-                    print("[RecordingService] Ignoring stale capture failure for \(url?.lastPathComponent ?? "unknown file")")
-                    return
-                }
+            case .captureFailed(_, let reason):
                 print("[RecordingService] Capture failed (\(reason)) — finalizing what was recorded")
                 // The engine has already finalized the file. Emit a stop so
                 // the auto-stop save owner (MainAppView) persists the partial
                 // recording instead of losing it.
                 _ = self.stopRecording()
-                self.recordingStoppedSubject.send((url, true))
+                self.recordingStoppedSubject.send((eventURL, true))
             }
         }
     }

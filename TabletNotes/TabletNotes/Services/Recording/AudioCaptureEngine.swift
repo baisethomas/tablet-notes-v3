@@ -82,15 +82,27 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
 
     /// Events the owning facade (RecordingService) reacts to. Delivered on an
     /// arbitrary queue; the facade is responsible for any main-actor hops.
+    ///
+    /// EVERY event carries the URL of the capture it belongs to: the facade's
+    /// handlers run on queued main-actor hops, and a new recording may start
+    /// before a queued event executes. The facade drops any event whose URL is
+    /// not the capture it is currently tracking — a stale interruption must
+    /// not phantom-pause a new recording, and a stale failure must not stop
+    /// one (PR #36 review rounds 2-3).
     enum Event {
-        case interruptionBegan
-        case interruptionEndedAndResumed
-        /// Capture failed unrecoverably and the file was finalized. `url`
-        /// identifies WHICH capture failed: the facade's handler runs on a
-        /// queued main-actor hop, and a new recording may have started before
-        /// it executes — a stale failure must not stop the new capture
-        /// (PR #36 review round 2).
+        case interruptionBegan(url: URL?)
+        case interruptionEndedAndResumed(url: URL?)
+        /// Capture failed unrecoverably and the file was finalized.
         case captureFailed(url: URL?, reason: String)
+
+        var captureURL: URL? {
+            switch self {
+            case .interruptionBegan(let url),
+                 .interruptionEndedAndResumed(let url),
+                 .captureFailed(let url, _):
+                return url
+            }
+        }
     }
 
     private let lock = NSLock()
@@ -415,6 +427,7 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
         case .began:
             lock.lock()
             let wasRecording = stateLocked == .recording
+            let interruptedURL = currentURL
             if wasRecording {
                 engine.pause()
                 stateLocked = .paused
@@ -422,7 +435,7 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
             lock.unlock()
             if wasRecording {
                 print("[AudioCaptureEngine] Interrupted (call/alarm) — paused")
-                onEvent?(.interruptionBegan)
+                onEvent?(.interruptionBegan(url: interruptedURL))
             }
 
         case .ended:
@@ -439,9 +452,10 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
                 try AVAudioSession.sharedInstance().setActive(true)
                 try resumeEngineLocked()
                 stateLocked = .recording
+                let resumedURL = currentURL
                 lock.unlock()
                 print("[AudioCaptureEngine] Resumed after interruption")
-                onEvent?(.interruptionEndedAndResumed)
+                onEvent?(.interruptionEndedAndResumed(url: resumedURL))
             } catch {
                 // Same unrecoverable-failure path as configuration changes and
                 // foreground restarts: finalize the partial recording and

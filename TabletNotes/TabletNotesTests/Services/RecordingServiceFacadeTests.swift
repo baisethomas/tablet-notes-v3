@@ -133,12 +133,29 @@ struct RecordingServiceFacadeTests {
         defer { InterruptedRecordingRecoveryStore.clear() }
 
         try await service.startRecording(serviceType: "Sunday Service")
+        let url = engine.lastStartedURL
 
-        engine.emit(.interruptionBegan)
+        engine.emit(.interruptionBegan(url: url))
         #expect(await eventually { service.isPaused })
 
-        engine.emit(.interruptionEndedAndResumed)
+        engine.emit(.interruptionEndedAndResumed(url: url))
         #expect(await eventually { !service.isPaused })
+        #expect(service.isRecording)
+    }
+
+    @Test func staleInterruptionForAnotherRecordingIsIgnored() async throws {
+        let (service, engine) = makeService()
+        defer { InterruptedRecordingRecoveryStore.clear() }
+
+        try await service.startRecording(serviceType: "Sunday Service")
+
+        // An interruption queued for a PREVIOUS capture must not phantom-pause
+        // this recording (PR #36 review round 3).
+        let staleURL = FileManager.default.temporaryDirectory.appendingPathComponent("sermon_previous.m4a")
+        engine.emit(.interruptionBegan(url: staleURL))
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(!service.isPaused)
         #expect(service.isRecording)
     }
 
