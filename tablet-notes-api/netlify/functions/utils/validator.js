@@ -125,6 +125,27 @@ const schemas = {
       .default('conversational')
   }),
 
+  // Processing job creation (TAB-72): POST /api/jobs
+  processingJob: Joi.object({
+    // The client's local sermon UUID; the server resolves it to sermons.id.
+    sermonLocalId: Joi.string()
+      .guid({ version: ['uuidv4', 'uuidv5'] })
+      .required()
+      .messages({ 'string.guid': 'sermonLocalId must be a UUID.' }),
+
+    // Storage path; ownership is additionally enforced server-side against the
+    // authenticated user's id prefix (checkResourceOwnership).
+    filePath: Joi.string()
+      .trim()
+      .min(1)
+      .max(500)
+      .required(),
+
+    kind: Joi.string()
+      .valid('transcription', 'summary')
+      .default('transcription')
+  }),
+
   // Bible API request validation
   bibleApi: Joi.object({
     endpoint: Joi.string()

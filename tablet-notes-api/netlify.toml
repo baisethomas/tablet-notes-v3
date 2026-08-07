@@ -2,11 +2,19 @@
   base = "tablet-notes-api"
   functions = "netlify/functions"
 
-# Netlify synchronous functions run up to 60 seconds (not configurable via
-# this file). Keep each handler's internal timeouts just under that ceiling
-# so slow work returns a clean 408 instead of an opaque platform 502.
+# Netlify's synchronous function limit is 60s (26s on some plans for the
+# streaming path). Handlers keep their internal budgets just under the ceiling
+# so failures surface as clean 408s rather than opaque 502s.
 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
-  status = 200 
+  status = 200
+
+# TAB-72: safety net for the webhook-driven job pipeline. Webhooks get dropped
+# and providers stall, so this sweep resubmits queued jobs, reconciles stale
+# submitted ones against AssemblyAI's actual state, and runs queued summaries.
+# A -background function (15-minute budget) because a single sweep may run
+# several ~55s summaries.
+[functions."jobs-reaper-background"]
+  schedule = "*/5 * * * *"
