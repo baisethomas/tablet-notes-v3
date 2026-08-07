@@ -42,12 +42,15 @@ struct RemoteProcessingJob: Codable, Sendable, Equatable {
 
 enum ProcessingJobClientError: LocalizedError {
     case notAuthenticated
+    case offline
     case requestFailed(status: Int, body: String)
 
     var errorDescription: String? {
         switch self {
         case .notAuthenticated:
             return "You need to be signed in to process recordings."
+        case .offline:
+            return "You're offline. Processing will start automatically when you reconnect."
         case .requestFailed(let status, _):
             return "Could not start processing (HTTP \(status)). It will be retried automatically."
         }
@@ -70,12 +73,15 @@ protocol ProcessingJobRequesting: Sendable {
 struct ProcessingJobClient: ProcessingJobRequesting {
     private let baseURL: URL
     private let tokenProvider: @Sendable () async throws -> String
+    private let isNetworkAvailable: @Sendable () -> Bool
 
     init(
         baseURL: URL = URL(string: "https://comfy-daffodil-7ecc55.netlify.app")!,
+        isNetworkAvailable: @escaping @Sendable () -> Bool = { NetworkMonitor.shared.isConnected },
         tokenProvider: (@Sendable () async throws -> String)? = nil
     ) {
         self.baseURL = baseURL
+        self.isNetworkAvailable = isNetworkAvailable
         self.tokenProvider = tokenProvider ?? {
             do {
                 return try await SupabaseService.shared.client.auth.session.accessToken
@@ -87,6 +93,13 @@ struct ProcessingJobClient: ProcessingJobRequesting {
     }
 
     func requestTranscription(sermonLocalId: UUID, filePath: String) async throws -> RemoteProcessingJob {
+        // House rule: check connectivity before starting network-dependent work
+        // (a known-offline call would otherwise burn a token refresh and three
+        // backoff attempts). Not proof of success — only a cheap early exit.
+        guard isNetworkAvailable() else {
+            throw ProcessingJobClientError.offline
+        }
+
         var request = URLRequest(url: baseURL.appendingPathComponent("api/jobs"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

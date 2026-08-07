@@ -97,6 +97,16 @@ function planFailure(job, error, { now = Date.now() } = {}) {
 }
 
 /**
+ * Whether finishing this transcription should chain a summary job.
+ * Mirrors summarize.js's own floor: below 50 characters there is nothing
+ * meaningful to summarize and the summary job would only fail.
+ */
+function shouldChainSummary(job, text) {
+  if (job?.kind !== JOB_KINDS.TRANSCRIPTION) return false;
+  return typeof text === 'string' && text.trim().length >= 50;
+}
+
+/**
  * Normalizes an AssemblyAI webhook body to a decision.
  * AssemblyAI posts { transcript_id, status } where status is
  * 'completed' | 'error' (and historically 'transcript.completed' style events).
@@ -149,6 +159,7 @@ module.exports = {
   nextAttemptAt,
   isStale,
   planFailure,
+  shouldChainSummary,
   interpretWebhook,
   secretMatches
 };

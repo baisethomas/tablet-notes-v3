@@ -125,6 +125,39 @@ exports.handler = withDefaults(
       return createErrorResponse(new Error('Could not create processing job'), 500);
     }
 
+    // Atomically CLAIM the job before spending money (PR #37 review).
+    // The unique idempotency key stops duplicate *rows*, but two overlapping
+    // requests could both read "no existing job", both upsert onto the same
+    // row, and both call AssemblyAI — two billable transcriptions, with the
+    // second provider id overwriting the first (leaving one unreconcilable).
+    // This conditional update is the serialization point: Postgres applies the
+    // `eq('status', QUEUED)` predicate atomically, so exactly one caller sees a
+    // row returned and becomes the submitter. Everyone else backs off.
+    const { data: claimed } = await supabase
+      .from('processing_jobs')
+      .update({ status: JOB_STATUS.SUBMITTED, submitted_at: new Date().toISOString() })
+      .eq('id', job.id)
+      .eq('status', JOB_STATUS.QUEUED)
+      .select()
+      .maybeSingle();
+
+    if (!claimed) {
+      // Someone else (a concurrent request, or the reaper) already claimed it.
+      logger.info('Job already claimed by another submitter; returning existing', {
+        jobId: job.id,
+        userId: user.id
+      });
+      const { data: current } = await supabase
+        .from('processing_jobs')
+        .select('*')
+        .eq('id', job.id)
+        .single();
+      return createSuccessResponse({ job: current || job, reused: true }, 200, {
+        ...(context.rateLimitHeaders || {}),
+        origin: event.headers.origin
+      });
+    }
+
     // Signed URL for the provider to pull the audio. 7200s matches the existing
     // transcribe.js budget; the reaper re-mints on resubmit.
     const { data: signedUrlData, error: signedUrlError } = await withTimeout(
@@ -134,7 +167,18 @@ exports.handler = withDefaults(
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       logger.error('Signed URL creation failed', { filePath, userId: user.id }, signedUrlError);
-      // Leave the job queued: the reaper retries with a fresh URL.
+      // Release the claim so the reaper (or a retry) can pick it up again —
+      // leaving it 'submitted' with no provider id would strand the job until
+      // the stale window elapsed.
+      await supabase
+        .from('processing_jobs')
+        .update({
+          status: JOB_STATUS.QUEUED,
+          submitted_at: null,
+          last_error: 'signed url creation failed',
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString()
+        })
+        .eq('id', job.id);
       return createErrorResponse(new Error('Failed to access audio file in storage'), 500);
     }
 
@@ -158,12 +202,11 @@ exports.handler = withDefaults(
         20000
       )();
 
+      // Already claimed as 'submitted' above; record the provider id.
       const { data: submitted } = await supabase
         .from('processing_jobs')
         .update({
-          status: JOB_STATUS.SUBMITTED,
           provider_job_id: transcript.id,
-          submitted_at: new Date().toISOString(),
           last_error: null
         })
         .eq('id', job.id)
@@ -181,10 +224,15 @@ exports.handler = withDefaults(
         origin: event.headers.origin
       });
     } catch (error) {
-      // The row stays queued with the error recorded; the reaper resubmits.
+      // Release the claim and record the error; the reaper resubmits.
       await supabase
         .from('processing_jobs')
-        .update({ last_error: error.message, next_attempt_at: new Date(Date.now() + 60_000).toISOString() })
+        .update({
+          status: JOB_STATUS.QUEUED,
+          submitted_at: null,
+          last_error: error.message,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString()
+        })
         .eq('id', job.id);
 
       logger.error('Provider submission failed; job left queued for the reaper', {

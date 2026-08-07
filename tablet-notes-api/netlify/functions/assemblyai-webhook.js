@@ -1,19 +1,19 @@
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
 const { withLogging } = require('./utils/logger');
+const { Validator } = require('./utils/validator');
 const {
   withTimeout,
   createErrorResponse,
   createSuccessResponse
 } = require('./utils/security');
 const {
-  JOB_KINDS,
   JOB_STATUS,
-  idempotencyKey,
   interpretWebhook,
   planFailure,
   secretMatches
 } = require('./utils/processingJobs');
+const { completeTranscriptionJob } = require('./utils/completeTranscription');
 
 const WEBHOOK_SECRET_HEADER = 'x-tabletnotes-webhook-secret';
 
@@ -53,11 +53,29 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
     return createErrorResponse(new Error('Unauthorized'), 401);
   }
 
+  // Size cap before parsing. The endpoint is secret-gated rather than rate
+  // limited (a per-user limiter has no user to key on, and throttling the
+  // provider's callbacks would strand completed transcriptions), so bounding
+  // the payload is the abuse control that actually applies here.
+  const sizeValidation = Validator.validateRequestSize(event);
+  if (!sizeValidation.valid) {
+    return createErrorResponse(new Error(sizeValidation.error), 413);
+  }
+
   let body;
   try {
     body = JSON.parse(event.body || '{}');
   } catch (_) {
     return createErrorResponse(new Error('Invalid JSON in request body'), 400);
+  }
+
+  // Structural validation of the only two fields we consume. Everything else
+  // this handler writes is derived from the job row, never from this body.
+  if (body.transcript_id !== undefined && typeof body.transcript_id !== 'string') {
+    return createErrorResponse(new Error('transcript_id must be a string'), 400);
+  }
+  if (typeof body.transcript_id === 'string' && body.transcript_id.length > 100) {
+    return createErrorResponse(new Error('transcript_id is too long'), 400);
   }
 
   const interpreted = interpretWebhook(body);
@@ -116,71 +134,19 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
       25000
     )();
 
-    const text = transcript.text || '';
-    const segments = Array.isArray(transcript.words) ? transcript.words : [];
+    // Single shared completion path — the reaper's lost-webhook recovery calls
+    // the exact same function, so the two can't drift (they already had:
+    // the reaper was silently skipping summary chaining).
+    const result = await completeTranscriptionJob({ supabase, job, transcript, logger });
 
-    // Write-then-mark: the transcript row must land before the job is marked
-    // done, or a client reacting to 'done' could read a missing transcript
-    // (CLAUDE.md §9 #2 — never acknowledge before the write is confirmed).
-    const { error: transcriptError } = await supabase
-      .from('transcripts')
-      .upsert(
-        {
-          sermon_id: job.sermon_id,
-          user_id: job.user_id,
-          text,
-          // Prod stores segments as JSON; null when the provider returned none.
-          segments: segments.length > 0 ? segments : null,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'sermon_id' }
-      );
-
-    if (transcriptError) {
-      // Do NOT mark the job done — leave it retryable.
-      const failure = planFailure(job, `transcript persist failed: ${transcriptError.message}`);
-      await supabase.from('processing_jobs').update(failure).eq('id', job.id);
-      logger.error('Failed to persist transcript', { jobId: job.id }, transcriptError);
+    if (!result.ok) {
       return createErrorResponse(new Error('Failed to persist transcript'), 500);
     }
 
-    await supabase
-      .from('processing_jobs')
-      .update({
-        status: JOB_STATUS.DONE,
-        completed_at: new Date().toISOString(),
-        last_error: null,
-        next_attempt_at: null
-      })
-      .eq('id', job.id);
-
-    // Chain the summary stage as its own durable job, so a summary failure
-    // never costs the transcript and the reaper can drive it independently.
-    if (job.kind === JOB_KINDS.TRANSCRIPTION && text.trim().length >= 50) {
-      await supabase
-        .from('processing_jobs')
-        .upsert(
-          {
-            user_id: job.user_id,
-            sermon_id: job.sermon_id,
-            sermon_local_id: job.sermon_local_id,
-            kind: JOB_KINDS.SUMMARY,
-            status: JOB_STATUS.QUEUED,
-            idempotency_key: idempotencyKey(job.sermon_id, JOB_KINDS.SUMMARY),
-            attempts: 0
-          },
-          { onConflict: 'idempotency_key', ignoreDuplicates: true }
-        );
-    }
-
-    logger.info('Transcription completed via webhook', {
-      jobId: job.id,
-      sermonId: job.sermon_id,
-      textLength: text.length,
-      segmentCount: segments.length
-    });
-
-    return createSuccessResponse({ handled: true, status: JOB_STATUS.DONE }, 200);
+    return createSuccessResponse(
+      { handled: true, status: JOB_STATUS.DONE, summaryChained: result.summaryChained },
+      200
+    );
   } catch (error) {
     const failure = planFailure(job, error);
     await supabase.from('processing_jobs').update(failure).eq('id', job.id);

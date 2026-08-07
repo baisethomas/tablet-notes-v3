@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
 const { withLogging } = require('./utils/logger');
@@ -9,6 +10,7 @@ const {
   isStale,
   planFailure
 } = require('./utils/processingJobs');
+const { completeTranscriptionJob } = require('./utils/completeTranscription');
 
 /**
  * Scheduled reaper for processing_jobs (TAB-72).
@@ -98,38 +100,17 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
     const transcript = await assembly.transcripts.get(job.provider_job_id);
 
     if (transcript.status === 'completed') {
-      // The webhook was lost. Persist exactly what the webhook would have.
-      const text = transcript.text || '';
-      const segments = Array.isArray(transcript.words) ? transcript.words : [];
-
-      const { error: transcriptError } = await supabase.from('transcripts').upsert(
-        {
-          sermon_id: job.sermon_id,
-          user_id: job.user_id,
-          text,
-          segments: segments.length > 0 ? segments : null,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'sermon_id' }
-      );
-
-      if (transcriptError) {
-        const failure = planFailure(job, `transcript persist failed: ${transcriptError.message}`);
-        await supabase.from('processing_jobs').update(failure).eq('id', job.id);
-        return;
+      // The webhook was lost. Run the SAME completion path the webhook runs —
+      // transcript persist, job done, and summary chaining — rather than a
+      // parallel copy that can drift (PR #37 review: this path was silently
+      // skipping the summary job, so recovered sermons never got summarized).
+      const result = await completeTranscriptionJob({ supabase, job, transcript, logger });
+      if (result.ok) {
+        logger.info('Reaper recovered a lost webhook completion', {
+          jobId: job.id,
+          summaryChained: result.summaryChained
+        });
       }
-
-      await supabase
-        .from('processing_jobs')
-        .update({
-          status: JOB_STATUS.DONE,
-          completed_at: new Date().toISOString(),
-          last_error: null,
-          next_attempt_at: null
-        })
-        .eq('id', job.id);
-
-      logger.info('Reaper recovered a lost webhook completion', { jobId: job.id });
       return;
     }
 
@@ -170,25 +151,71 @@ async function runSummary({ supabase, job, logger }) {
     .maybeSingle();
 
   try {
+    // Reuses the real /api/summarize endpoint over its internal service path
+    // (shared secret + explicit acting user). PR #37 review correctly caught
+    // that the endpoint this used to call, /api/summarize-internal, did not
+    // exist — every summary job would have retried into 'dead'. Calling the
+    // live endpoint also keeps exactly one copy of the summarization prompt.
     const response = await withTimeout(
-      () => fetch(`${process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app'}/api/summarize-internal`, {
+      () => fetch(`${process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app'}/api/summarize`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-tabletnotes-webhook-secret': process.env.ASSEMBLYAI_WEBHOOK_SECRET || ''
+          'x-tabletnotes-internal-secret': process.env.ASSEMBLYAI_WEBHOOK_SECRET || ''
         },
         body: JSON.stringify({
           text,
           serviceType: sermon?.service_type || 'Sermon',
-          userId: job.user_id,
-          sermonId: job.sermon_id
+          userId: job.user_id
         })
       }),
       120000
     )();
 
     if (!response.ok) {
-      throw new Error(`summarize-internal returned ${response.status}`);
+      const body = await response.text().catch(() => '');
+      throw new Error(`summarize returned ${response.status}: ${body.slice(0, 200)}`);
+    }
+
+    const payload = await response.json();
+    const title = payload?.data?.title || null;
+    const summaryText = payload?.data?.summary || '';
+
+    if (!summaryText.trim()) {
+      throw new Error('summarize returned an empty summary');
+    }
+
+    // Persist BEFORE marking done, same rule as transcript completion: a client
+    // reacting to 'done' must never find a missing summary.
+    const { data: existingSummary } = await supabase
+      .from('summaries')
+      .select('local_id')
+      .eq('sermon_id', job.sermon_id)
+      .maybeSingle();
+
+    const { error: summaryError } = await supabase.from('summaries').upsert(
+      {
+        local_id: existingSummary?.local_id || randomUUID(),
+        sermon_id: job.sermon_id,
+        user_id: job.user_id,
+        text: summaryText,
+        status: 'complete',
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'sermon_id' }
+    );
+
+    if (summaryError) {
+      throw new Error(`summary persist failed: ${summaryError.message}`);
+    }
+
+    // The generated title is worth keeping on the sermon, mirroring what the
+    // client's SummaryRetryService does with it today.
+    if (title) {
+      await supabase
+        .from('sermons')
+        .update({ title, updated_at: new Date().toISOString() })
+        .eq('id', job.sermon_id);
     }
 
     await supabase
@@ -201,7 +228,7 @@ async function runSummary({ supabase, job, logger }) {
       })
       .eq('id', job.id);
 
-    logger.info('Reaper completed summary job', { jobId: job.id });
+    logger.info('Reaper completed summary job', { jobId: job.id, hasTitle: !!title });
   } catch (error) {
     const failure = planFailure(job, error);
     await supabase.from('processing_jobs').update(failure).eq('id', job.id);

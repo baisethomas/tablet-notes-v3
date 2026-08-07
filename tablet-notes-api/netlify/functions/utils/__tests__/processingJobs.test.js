@@ -148,3 +148,30 @@ test('secretMatches rejects missing or non-string input (fails closed)', () => {
   assert.equal(secretMatches(null, null), false);
   assert.equal(secretMatches(123, 123), false);
 });
+
+// --- summary chaining predicate (PR #37 review round 1) ---
+// The reaper's lost-webhook recovery silently skipped summary chaining because
+// the logic existed twice. It now lives here, once, used by the single shared
+// completion writer that both the webhook and the reaper call.
+
+const { shouldChainSummary } = require('../processingJobs');
+
+test('a completed transcription with real text chains a summary', () => {
+  const job = { kind: 'transcription' };
+  assert.equal(shouldChainSummary(job, 'x'.repeat(50)), true);
+  assert.equal(shouldChainSummary(job, 'A real sermon transcript that is comfortably long enough.'), true);
+});
+
+test('a too-short transcript does not chain a summary that would only fail', () => {
+  const job = { kind: 'transcription' };
+  assert.equal(shouldChainSummary(job, 'too short'), false);
+  assert.equal(shouldChainSummary(job, '   '.repeat(40)), false); // whitespace doesn't count
+  assert.equal(shouldChainSummary(job, ''), false);
+  assert.equal(shouldChainSummary(job, null), false);
+});
+
+test('a summary job never chains another summary', () => {
+  assert.equal(shouldChainSummary({ kind: 'summary' }, 'x'.repeat(500)), false);
+  assert.equal(shouldChainSummary({}, 'x'.repeat(500)), false);
+  assert.equal(shouldChainSummary(null, 'x'.repeat(500)), false);
+});
