@@ -317,7 +317,17 @@ final class SermonProcessingCoordinator {
             // would go to the provider twice.
             if let adoptedJob {
                 modelContext.delete(adoptedJob)
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    // The handover did not persist, so the legacy queue still
+                    // owns this sermon — and would still submit it. Dispatching
+                    // anyway is the optimistic ack that bills twice. Leave it to
+                    // its existing owner and try again next sweep.
+                    modelContext.rollback()
+                    print("[SermonProcessingCoordinator] Could not release legacy job for \(sermon.id); leaving it with the legacy queue: \(error.localizedDescription)")
+                    continue
+                }
             }
 
             let dispatched = await dispatcher.dispatch(sermonLocalId: sermon.id)

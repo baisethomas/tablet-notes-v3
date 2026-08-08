@@ -131,14 +131,83 @@ exports.handler = withDefaults(
       attempts: 0
     };
 
-    const { data: job, error: insertError } = await supabase
-      .from('processing_jobs')
-      .upsert(jobPayload, { onConflict: 'idempotency_key' })
-      .select()
-      .single();
+    // Deliberately NOT an upsert-on-conflict (PR #37 review round 8). An upsert
+    // writes status back to 'queued' over whatever is already there, so a second
+    // concurrent request would reset a row the first request had just claimed —
+    // both would then win the queued->submitted claim and both would pay for a
+    // transcription. The claim cannot defend itself if its own precondition is
+    // being rewritten underneath it.
+    let job;
 
-    if (insertError || !job) {
-      logger.error('Failed to create processing job', { userId: user.id }, insertError);
+    if (existing) {
+      // Reached only for a dead/failed row (active ones returned above). Revive
+      // it, but conditionally: `.in('status', [...])` means a row someone else
+      // has already revived and claimed is left alone.
+      const { data: revived } = await supabase
+        .from('processing_jobs')
+        .update({
+          status: JOB_STATUS.QUEUED,
+          audio_file_path: filePath,
+          attempts: 0,
+          last_error: null,
+          next_attempt_at: null,
+          provider_job_id: null,
+          submitted_at: null,
+          completed_at: null
+        })
+        .eq('id', existing.id)
+        .in('status', [JOB_STATUS.DEAD, JOB_STATUS.FAILED])
+        .select()
+        .maybeSingle();
+
+      if (!revived) {
+        const { data: current } = await supabase
+          .from('processing_jobs')
+          .select('*')
+          .eq('id', existing.id)
+          .maybeSingle();
+        logger.info('Job was revived by a concurrent request; returning it', { jobId: existing.id });
+        return createSuccessResponse({ job: current || existing, reused: true }, 200, {
+          ...(context.rateLimitHeaders || {}),
+          origin: event.headers.origin
+        });
+      }
+      job = revived;
+    } else {
+      const { data: inserted, error: insertError } = await supabase
+        .from('processing_jobs')
+        .insert(jobPayload)
+        .select()
+        .single();
+
+      if (insertError) {
+        // 23505 = unique violation on idempotency_key: a concurrent request got
+        // there first. That is the constraint doing its job, not an error —
+        // return their row rather than racing them for the provider.
+        if (insertError.code === '23505') {
+          const { data: current } = await supabase
+            .from('processing_jobs')
+            .select('*')
+            .eq('idempotency_key', key)
+            .maybeSingle();
+
+          if (current) {
+            logger.info('Lost the insert race; returning the concurrent job', { jobId: current.id });
+            return createSuccessResponse({ job: current, reused: true }, 200, {
+              ...(context.rateLimitHeaders || {}),
+              origin: event.headers.origin
+            });
+          }
+        }
+
+        logger.error('Failed to create processing job', { userId: user.id }, insertError);
+        return createErrorResponse(new Error('Could not create processing job'), 500);
+      }
+      job = inserted;
+    }
+
+    if (!job) {
+      logger.error('Failed to create processing job', { userId: user.id });
       return createErrorResponse(new Error('Could not create processing job'), 500);
     }
 
