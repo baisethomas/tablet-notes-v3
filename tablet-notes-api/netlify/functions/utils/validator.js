@@ -125,6 +125,29 @@ const schemas = {
       .default('conversational')
   }),
 
+  // Processing job creation (TAB-72): POST /api/jobs
+  processingJob: Joi.object({
+    // The client's local sermon UUID; the server resolves it to sermons.id.
+    sermonLocalId: Joi.string()
+      .guid({ version: ['uuidv4', 'uuidv5'] })
+      .required()
+      .messages({ 'string.guid': 'sermonLocalId must be a UUID.' }),
+
+    // Optional storage path. When omitted the server uses the sermon row's own
+    // audio_file_path, which it wrote itself and therefore trusts — that is the
+    // preferred call shape. When supplied, ownership is enforced against the
+    // authenticated user's id prefix (checkResourceOwnership) before use.
+    filePath: Joi.string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional(),
+
+    kind: Joi.string()
+      .valid('transcription', 'summary')
+      .default('transcription')
+  }),
+
   // Bible API request validation
   bibleApi: Joi.object({
     endpoint: Joi.string()
