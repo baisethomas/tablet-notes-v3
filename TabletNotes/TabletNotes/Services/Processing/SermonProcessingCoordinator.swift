@@ -255,14 +255,22 @@ final class SermonProcessingCoordinator {
     func dispatchPendingDurableJobs() async {
         guard isDurableProcessingEnabled(), let modelContext else { return }
 
+        // The predicate deliberately covers only the string statuses. SwiftData's
+        // handling of `optional != nil` inside #Predicate is unreliable, and no
+        // other predicate in this codebase relies on it — the uploaded check is
+        // done in memory below, over an already-small result set.
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
-                sermon.remoteId != nil &&
-                (sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed")
+                sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed"
             }
         )
 
-        guard let pending = try? modelContext.fetch(descriptor), !pending.isEmpty else { return }
+        guard let candidates = try? modelContext.fetch(descriptor) else { return }
+
+        // Only sermons whose audio actually reached the server can be processed;
+        // the rest are waiting on a sync push that hasn't happened yet.
+        let pending = candidates.filter { $0.remoteId != nil }
+        guard !pending.isEmpty else { return }
 
         let dispatcher = durableDispatcher()
         for sermon in pending {
@@ -282,9 +290,8 @@ final class SermonProcessingCoordinator {
 
         await observer.start(userId: userId) { [weak self] completion in
             print("[SermonProcessingCoordinator] Job \(completion.kind.rawValue) -> \(completion.status.rawValue)")
-            Task { @MainActor [weak self] in
-                await self?.triggerSync()
-            }
+            guard let self else { return }
+            Task { await self.triggerSync() }
         }
     }
 
