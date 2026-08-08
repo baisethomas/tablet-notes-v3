@@ -160,6 +160,27 @@ struct ProcessingJobTests {
         #expect(job.status == .running)
     }
 
+    @Test func omitsFilePathWhenTheServerShouldResolveIt() async throws {
+        let client = makeClient()
+        defer { StubURLProtocol.responder = nil }
+
+        StubURLProtocol.responder = { request in
+            (
+                HTTPURLResponse(url: request.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!,
+                self.envelope(status: "queued")
+            )
+        }
+
+        // The normal call shape after TAB-72 wiring: only the caller that just
+        // uploaded knows a path, and it isn't the one asking on a retry.
+        _ = try await client.requestTranscription(sermonLocalId: UUID())
+
+        let body = try #require(StubURLProtocol.lastBody)
+        let parsed = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(parsed["filePath"] == nil)
+        #expect(parsed["sermonLocalId"] as? String != nil)
+    }
+
     @Test func mapsAuthFailureToNotAuthenticated() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         let client = ProcessingJobClient(

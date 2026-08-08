@@ -61,7 +61,11 @@ protocol ProcessingJobRequesting: Sendable {
     /// Registers server-side work for a sermon. Idempotent: calling twice for
     /// the same sermon returns the same job rather than billing a second
     /// provider transcription.
-    func requestTranscription(sermonLocalId: UUID, filePath: String) async throws -> RemoteProcessingJob
+    ///
+    /// `filePath` is optional and normally omitted: the server resolves the
+    /// audio location from the sermon row it wrote itself. Only the caller that
+    /// just performed the upload has a reason to pass one.
+    func requestTranscription(sermonLocalId: UUID, filePath: String?) async throws -> RemoteProcessingJob
 }
 
 /// Thin client for `POST /api/jobs`.
@@ -92,7 +96,7 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         }
     }
 
-    func requestTranscription(sermonLocalId: UUID, filePath: String) async throws -> RemoteProcessingJob {
+    func requestTranscription(sermonLocalId: UUID, filePath: String? = nil) async throws -> RemoteProcessingJob {
         // House rule: check connectivity before starting network-dependent work
         // (a known-offline call would otherwise burn a token refresh and three
         // backoff attempts). Not proof of success — only a cheap early exit.
@@ -113,11 +117,14 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "sermonLocalId": sermonLocalId.uuidString,
-            "filePath": filePath,
             "kind": RemoteProcessingJob.Kind.transcription.rawValue
-        ])
+        ]
+        if let filePath {
+            body["filePath"] = filePath
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await NetworkRetry.withExponentialBackoff(maxAttempts: 3) {
             try await URLSession.shared.data(for: request)

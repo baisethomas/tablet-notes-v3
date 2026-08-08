@@ -33,7 +33,7 @@ exports.handler = withDefaults(
   async (event, context) => {
     const logger = event.logger;
     const user = event.user;
-    const { sermonLocalId, filePath, kind = JOB_KINDS.TRANSCRIPTION } = event.validatedData;
+    const { sermonLocalId, filePath: requestedFilePath, kind = JOB_KINDS.TRANSCRIPTION } = event.validatedData;
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -49,12 +49,14 @@ exports.handler = withDefaults(
       return createErrorResponse(new Error('Transcription service not available'), 503);
     }
 
-    // The client only ever names its own storage path; enforce it the same way
-    // transcribe.js does.
-    if (!checkResourceOwnership(user, filePath)) {
+    // A client-supplied path is only ever its own; enforce it the same way
+    // transcribe.js does. A request with no path is the preferred shape — the
+    // server then uses the sermon row's audio_file_path below, which it wrote
+    // itself and so does not need to re-authorize.
+    if (requestedFilePath && !checkResourceOwnership(user, requestedFilePath)) {
       logger.security('unauthorized_file_access', {
         userId: user.id,
-        filePath,
+        filePath: requestedFilePath,
         ip: event.headers['x-forwarded-for']
       });
       return createErrorResponse(new Error('Access denied: You can only transcribe your own files'), 403);
@@ -66,7 +68,7 @@ exports.handler = withDefaults(
     // must already exist (create-sermon runs first in the client's save flow).
     const { data: sermon, error: sermonError } = await supabase
       .from('sermons')
-      .select('id, user_id')
+      .select('id, user_id, audio_file_path')
       .eq('user_id', user.id)
       .eq('local_id', sermonLocalId)
       .maybeSingle();
@@ -77,6 +79,18 @@ exports.handler = withDefaults(
     }
     if (!sermon) {
       return createErrorResponse(new Error('Sermon not found for this user'), 404);
+    }
+
+    // Prefer the server's own record of where the audio lives. The client only
+    // knows this path in the one moment it uploads; a retry, a second device, or
+    // a restore does not — so requiring it from the client would make the whole
+    // pipeline un-retryable off the happy path.
+    const filePath = requestedFilePath || sermon.audio_file_path;
+    if (!filePath) {
+      return createErrorResponse(
+        new Error('Sermon has no uploaded audio yet; upload the recording before requesting processing.'),
+        409
+      );
     }
 
     const key = idempotencyKey(sermon.id, kind);

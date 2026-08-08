@@ -133,13 +133,15 @@ const schemas = {
       .required()
       .messages({ 'string.guid': 'sermonLocalId must be a UUID.' }),
 
-    // Storage path; ownership is additionally enforced server-side against the
-    // authenticated user's id prefix (checkResourceOwnership).
+    // Optional storage path. When omitted the server uses the sermon row's own
+    // audio_file_path, which it wrote itself and therefore trusts — that is the
+    // preferred call shape. When supplied, ownership is enforced against the
+    // authenticated user's id prefix (checkResourceOwnership) before use.
     filePath: Joi.string()
       .trim()
       .min(1)
       .max(500)
-      .required(),
+      .optional(),
 
     kind: Joi.string()
       .valid('transcription', 'summary')

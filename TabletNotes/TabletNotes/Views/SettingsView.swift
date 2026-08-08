@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showingDataExportSheet = false
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
+    @State private var durableProcessingEnabled = FeatureFlags.shared.durableProcessingPipeline
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -336,7 +337,26 @@ struct SettingsView: View {
                             }
                             
                             SettingsDivider()
-                            
+
+                            // TAB-72: the durable server-side pipeline ships dark.
+                            // This toggle is the rollback control — flipping it off
+                            // restores the previous behavior immediately, with no
+                            // app update and no backend deploy.
+                            SettingsToggle(
+                                icon: "cloud.bolt",
+                                title: "Cloud Processing (Beta)",
+                                subtitle: "Let the server finish transcripts and summaries even if the app is closed",
+                                isOn: Binding(
+                                    get: { durableProcessingEnabled },
+                                    set: { newValue in
+                                        durableProcessingEnabled = newValue
+                                        FeatureFlags.shared.setEnabled(newValue, for: .durableProcessingPipeline)
+                                    }
+                                )
+                            )
+
+                            SettingsDivider()
+
                             SettingsButton(
                                 icon: "arrow.clockwise",
                                 title: "Reset All Settings",

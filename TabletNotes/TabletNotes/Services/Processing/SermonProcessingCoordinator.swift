@@ -25,6 +25,17 @@ final class SermonProcessingCoordinator {
     var backgroundRefresher: (@MainActor () -> Void)?
     var syncRunner: (@MainActor () async -> Void)?
 
+    // MARK: - Durable processing pipeline (TAB-72), flag-gated
+
+    /// Injected so tests can exercise both sides of the branch without touching
+    /// UserDefaults, and so the flag has exactly one read point in production.
+    var isDurableProcessingEnabled: @MainActor () -> Bool = {
+        FeatureFlags.shared.durableProcessingPipeline
+    }
+
+    var processingDispatcher: (any ProcessingJobDispatching)?
+    var processingObserver: ProcessingObserver?
+
     private init() {}
 
     func configure(
@@ -79,7 +90,11 @@ final class SermonProcessingCoordinator {
     }
 
     func handleAuthStateChange(userId: UUID?) async {
-        guard userId != nil else { return }
+        guard let userId else {
+            await processingObserver?.stop()
+            return
+        }
+        await startProcessingObserverIfNeeded(userId: userId)
         bootstrapBackgroundProcessingIfNeeded()
         refreshBackgroundProcessing()
         await triggerSync()
@@ -120,6 +135,14 @@ final class SermonProcessingCoordinator {
             return
         }
 
+        if isDurableProcessingEnabled() {
+            // The legacy recovery/queue services are NOT started: running both
+            // pipelines would submit the same audio to AssemblyAI twice, which
+            // is a billing bug as well as a correctness one.
+            runDefaultBackgroundRefresh()
+            return
+        }
+
         TranscriptionRetryService.shared.migrateLegacyPendingTranscriptionsIfNeeded()
         SummaryRetryService.shared.migrateLegacyPendingSummariesIfNeeded()
         TranscriptionRetryService.shared.recoverIncompleteTranscriptions()
@@ -128,6 +151,14 @@ final class SermonProcessingCoordinator {
     }
 
     private func runDefaultBackgroundRefresh() {
+        if isDurableProcessingEnabled() {
+            // No stuck-job scanning, no queue pumping: the server's reaper owns
+            // both. All the client does on foreground is (re)ask for jobs that
+            // never got requested — an idempotent, cheap sweep.
+            Task { await self.dispatchPendingDurableJobs() }
+            return
+        }
+
         TranscriptionRetryService.shared.checkForStuckProcessingTranscriptions()
         SummaryRetryService.shared.checkForStuckProcessingSummaries()
         TranscriptionRetryService.shared.processQueue()
@@ -137,7 +168,19 @@ final class SermonProcessingCoordinator {
     private func startRecoveredInterruptedProcessingIfNeeded() {
         guard let sermonService else { return }
 
-        for sermonID in sermonService.consumeRecoveredInterruptedSermonIDs() {
+        let recovered = sermonService.consumeRecoveredInterruptedSermonIDs()
+        guard !recovered.isEmpty else { return }
+
+        if isDurableProcessingEnabled() {
+            Task {
+                for sermonID in recovered {
+                    await self.startDurableProcessing(for: sermonID)
+                }
+            }
+            return
+        }
+
+        for sermonID in recovered {
             retryTranscription(for: sermonID)
         }
     }
@@ -181,11 +224,75 @@ final class SermonProcessingCoordinator {
         ) { result in
             if case .success(let savedId) = result {
                 DispatchQueue.main.async {
-                    _ = self.retryTranscription(for: savedId)
+                    if self.isDurableProcessingEnabled() {
+                        Task { await self.startDurableProcessing(for: savedId) }
+                    } else {
+                        _ = self.retryTranscription(for: savedId)
+                    }
                 }
             }
             completion?(result)
         }
+    }
+
+    // MARK: - Durable pipeline
+
+    /// Hands a freshly saved recording to the server.
+    ///
+    /// The sync push has to run first, and not as an optimization: it is what
+    /// uploads the audio to storage and creates the sermon row that
+    /// `POST /api/jobs` resolves. If it fails, the dispatch below fails too and
+    /// the sermon simply stays pending — `dispatchPendingDurableJobs()` picks it
+    /// up on the next foreground. Nothing is marked complete either way.
+    private func startDurableProcessing(for sermonId: UUID) async {
+        await triggerSync()
+        _ = await durableDispatcher().dispatch(sermonLocalId: sermonId)
+    }
+
+    /// Re-asks for any sermon that is uploaded but has no finished transcript.
+    /// Safe to run as often as we like: `POST /api/jobs` returns the existing
+    /// job rather than creating a second one.
+    func dispatchPendingDurableJobs() async {
+        guard isDurableProcessingEnabled(), let modelContext else { return }
+
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { sermon in
+                sermon.remoteId != nil &&
+                (sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed")
+            }
+        )
+
+        guard let pending = try? modelContext.fetch(descriptor), !pending.isEmpty else { return }
+
+        let dispatcher = durableDispatcher()
+        for sermon in pending {
+            _ = await dispatcher.dispatch(sermonLocalId: sermon.id)
+        }
+    }
+
+    /// Subscribes to this user's server-side jobs. A terminal job means new rows
+    /// exist in Postgres, so the reaction is simply to sync — the pull phase is
+    /// already the one piece of code that knows how to land a remote transcript
+    /// and summary locally, and duplicating it here is how the two would drift.
+    private func startProcessingObserverIfNeeded(userId: UUID) async {
+        guard isDurableProcessingEnabled() else { return }
+
+        let observer = processingObserver ?? ProcessingObserver()
+        processingObserver = observer
+
+        await observer.start(userId: userId) { [weak self] completion in
+            print("[SermonProcessingCoordinator] Job \(completion.kind.rawValue) -> \(completion.status.rawValue)")
+            Task { @MainActor [weak self] in
+                await self?.triggerSync()
+            }
+        }
+    }
+
+    private func durableDispatcher() -> any ProcessingJobDispatching {
+        if let processingDispatcher { return processingDispatcher }
+        let created = ProcessingJobDispatcher.shared
+        processingDispatcher = created
+        return created
     }
 
     func enqueueTranscription(for sermonId: UUID) {
@@ -214,5 +321,8 @@ final class SermonProcessingCoordinator {
         backgroundBootstrapper = nil
         backgroundRefresher = nil
         syncRunner = nil
+        processingDispatcher = nil
+        processingObserver = nil
+        isDurableProcessingEnabled = { FeatureFlags.shared.durableProcessingPipeline }
     }
 }
