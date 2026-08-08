@@ -27,6 +27,9 @@ final class ProcessingObserver {
 
     private(set) var isObserving = false
     private(set) var lastError: String?
+    /// Who the current subscription belongs to, so a repeat call can tell
+    /// "already correct" apart from "bound to the wrong user".
+    private(set) var observedUserId: UUID?
 
     private var channel: RealtimeChannelV2?
     private var streamTask: Task<Void, Never>?
@@ -44,7 +47,14 @@ final class ProcessingObserver {
     /// Starts observing this user's jobs. Safe to call repeatedly — a second
     /// call for the same user is a no-op, and for a different user it rebinds.
     func start(userId: UUID, onCompletion: @escaping (Completion) -> Void) async {
-        guard !isObserving else { return }
+        if isObserving {
+            // Already bound to this user: nothing to do. Bound to a different
+            // one: tear down first, or the old subscription keeps delivering
+            // another account's rows. The early-return-always version of this
+            // guard silently did the wrong thing on a user switch.
+            guard observedUserId != userId else { return }
+            await stop()
+        }
         self.onCompletion = onCompletion
 
         // Realtime needs the current access token or RLS will reject the
@@ -73,6 +83,7 @@ final class ProcessingObserver {
 
         await channel.subscribe()
         isObserving = true
+        observedUserId = userId
         print("[ProcessingObserver] Subscribed to processing_jobs for user \(userId)")
     }
 
@@ -84,6 +95,7 @@ final class ProcessingObserver {
         }
         channel = nil
         isObserving = false
+        observedUserId = nil
     }
 
     private func handle(_ change: AnyAction) async {

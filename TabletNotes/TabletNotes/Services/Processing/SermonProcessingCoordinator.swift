@@ -249,6 +249,28 @@ final class SermonProcessingCoordinator {
         _ = await durableDispatcher().dispatch(sermonLocalId: sermonId)
     }
 
+    /// Applies a mid-session change to the durable-processing flag.
+    ///
+    /// Without this, flipping the toggle only wrote a UserDefaults key: the
+    /// observer was started solely on an auth-state change, so a user who
+    /// enabled the flag after launch could dispatch durable jobs that no
+    /// Realtime subscription was listening for, and turning it back off left
+    /// the subscription running.
+    func handleProcessingModeChange(userId: UUID?) async {
+        if isDurableProcessingEnabled() {
+            if let userId {
+                await startProcessingObserverIfNeeded(userId: userId)
+            }
+            await dispatchPendingDurableJobs()
+        } else {
+            await processingObserver?.stop()
+            // Hand control back to the legacy queues, which have been idle
+            // while the flag was on. Goes through the same seam as every other
+            // refresh rather than calling the services directly.
+            refreshBackgroundProcessing()
+        }
+    }
+
     /// Re-asks for any sermon that is uploaded but has no finished transcript.
     /// Safe to run as often as we like: `POST /api/jobs` returns the existing
     /// job rather than creating a second one.
@@ -269,7 +291,15 @@ final class SermonProcessingCoordinator {
 
         // Only sermons whose audio actually reached the server can be processed;
         // the rest are waiting on a sync push that hasn't happened yet.
-        let pending = candidates.filter { $0.remoteId != nil }
+        let uploaded = candidates.filter { $0.remoteId != nil }
+        guard !uploaded.isEmpty else { return }
+
+        // Skip anything the legacy queue is still working on. This matters when
+        // the flag is flipped mid-session: the legacy service reschedules its
+        // own queue, so a sermon already in flight there would otherwise be
+        // submitted to AssemblyAI a second time through the durable path.
+        let legacyOwned = sermonIdsWithActiveLegacyJob(in: modelContext)
+        let pending = uploaded.filter { !legacyOwned.contains($0.id) }
         guard !pending.isEmpty else { return }
 
         let dispatcher = durableDispatcher()
@@ -293,6 +323,25 @@ final class SermonProcessingCoordinator {
             guard let self else { return }
             Task { await self.triggerSync() }
         }
+    }
+
+    /// Sermons the on-device retry queue still considers its own. A job that is
+    /// queued or running there has either already been submitted to the
+    /// provider or is about to be.
+    private func sermonIdsWithActiveLegacyJob(in context: ModelContext) -> Set<UUID> {
+        let queued = ProcessingJobStatus.queued.rawValue
+        let running = ProcessingJobStatus.running.rawValue
+        let kind = ProcessingJobKind.transcription.rawValue
+
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            predicate: #Predicate<ProcessingJob> { job in
+                job.kindRawValue == kind &&
+                (job.statusRawValue == queued || job.statusRawValue == running)
+            }
+        )
+
+        guard let jobs = try? context.fetch(descriptor) else { return [] }
+        return Set(jobs.map(\.sermonId))
     }
 
     private func durableDispatcher() -> any ProcessingJobDispatching {

@@ -129,6 +129,43 @@ struct DurableProcessingWiringTests {
         #expect(spy.dispatched.isEmpty)
     }
 
+    @Test func turningTheFlagOffMidSessionStopsTheObserverAndResumesTheLegacyQueues() async {
+        let coordinator = SermonProcessingCoordinator.shared
+        coordinator.resetForTesting()
+        defer { coordinator.resetForTesting() }
+
+        let spy = SpyDispatcher()
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { false }
+
+        var legacyResumed = false
+        coordinator.backgroundRefresher = { legacyResumed = true }
+
+        await coordinator.handleProcessingModeChange(userId: UUID())
+
+        // Persisting the flag is not applying it: switching off has to hand
+        // control back to the queues that were idle while it was on.
+        #expect(legacyResumed)
+        #expect(spy.dispatched.isEmpty)
+    }
+
+    @Test func turningTheFlagOnMidSessionSweepsWithoutWaitingForASignIn() async {
+        let coordinator = SermonProcessingCoordinator.shared
+        coordinator.resetForTesting()
+        defer { coordinator.resetForTesting() }
+
+        let spy = SpyDispatcher()
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { true }
+
+        // No modelContext is configured, so no sermons can be dispatched; what
+        // this pins is that the mode change runs the durable path at all rather
+        // than deferring to the next auth-state change.
+        await coordinator.handleProcessingModeChange(userId: nil)
+
+        #expect(spy.dispatched.isEmpty)
+    }
+
     @Test func theFlagIsReadPerCallSoARollbackTakesEffectImmediately() async {
         let coordinator = SermonProcessingCoordinator.shared
         coordinator.resetForTesting()

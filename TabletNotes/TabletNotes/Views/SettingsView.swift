@@ -351,6 +351,14 @@ struct SettingsView: View {
                                     set: { newValue in
                                         durableProcessingEnabled = newValue
                                         FeatureFlags.shared.setEnabled(newValue, for: .durableProcessingPipeline)
+                                        // Persisting the flag is not applying it:
+                                        // the observer and the queues have to be
+                                        // switched over now, not at the next sign-in.
+                                        let userId = authManager.currentUser?.id
+                                        Task {
+                                            await SermonProcessingCoordinator.shared
+                                                .handleProcessingModeChange(userId: userId)
+                                        }
                                     }
                                 )
                             )
