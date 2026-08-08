@@ -318,3 +318,51 @@ test('matchProviderTranscript tolerates junk input rather than throwing mid-swee
   assert.equal(matchProviderTranscript([{ id: 'x', audio_url: 'anything' }], {}), null);
   assert.equal(matchProviderTranscript([{ id: 'x', audio_url: 'anything' }], null), null);
 });
+
+// --- proving absence, not assuming it (PR #37 review round 5) ---
+// "Not in the page I looked at" is a weaker claim than "not at the provider",
+// and only the latter justifies paying for a resubmit.
+
+const { scanReachedCutoff, HANDOFF_ABANDON_MS } = require('../processingJobs');
+
+const SUBMITTED_AT = '2026-08-08T04:00:00Z';
+
+test('a page reaching past the submit time proves absence', () => {
+  // Transcripts list newest-first, so anything older than our submit means
+  // every remaining page is older still.
+  const page = [
+    { id: 'a', created: '2026-08-08T05:00:00Z' },
+    { id: 'b', created: '2026-08-08T03:00:00Z' }
+  ];
+  assert.equal(scanReachedCutoff(page, SUBMITTED_AT), true);
+});
+
+test('a page that is entirely newer than the submit time proves nothing', () => {
+  // The critical case: stopping here and re-queuing would bill a second
+  // transcription for audio the provider already has.
+  const page = [
+    { id: 'a', created: '2026-08-08T06:00:00Z' },
+    { id: 'b', created: '2026-08-08T05:00:00Z' }
+  ];
+  assert.equal(scanReachedCutoff(page, SUBMITTED_AT), false);
+});
+
+test('an empty page ends the scan', () => {
+  assert.equal(scanReachedCutoff([], SUBMITTED_AT), true);
+  assert.equal(scanReachedCutoff(null, SUBMITTED_AT), true);
+});
+
+test('a page with no usable timestamps does not claim to have reached the cutoff', () => {
+  assert.equal(scanReachedCutoff([{ id: 'a' }, { id: 'b', created: 'nonsense' }], SUBMITTED_AT), false);
+});
+
+test('an unusable cutoff stops the scan rather than paging forever', () => {
+  assert.equal(scanReachedCutoff([{ id: 'a', created: '2026-08-08T06:00:00Z' }], 'not-a-date'), true);
+  assert.equal(scanReachedCutoff([{ id: 'a', created: '2026-08-08T06:00:00Z' }], undefined), true);
+});
+
+test('the abandon bound is far longer than the grace window', () => {
+  // Grace governs "wait for the callback"; abandon governs "we can never know".
+  // Collapsing them would turn a recoverable wait into a premature dead job.
+  assert.ok(HANDOFF_ABANDON_MS > HANDOFF_GRACE_MS * 4);
+});

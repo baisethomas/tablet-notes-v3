@@ -12,7 +12,9 @@ const {
   webhookUrlFor,
   classifySubmitFailure,
   handoffGraceExpired,
-  matchProviderTranscript
+  matchProviderTranscript,
+  scanReachedCutoff,
+  HANDOFF_ABANDON_MS
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
@@ -128,32 +130,61 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
   }
 }
 
+const LOOKUP_PAGE_SIZE = 100;
+const LOOKUP_MAX_PAGES = 20;
+
 /**
  * Ask AssemblyAI whether this job's audio was already submitted, for the case
  * where we lost the provider id (or never got one back).
  *
- * Returns the provider transcript, or null if there is genuinely nothing there.
- * A failure to ask returns null too — but the caller only re-queues after the
- * grace window, and a job that can never resolve must not sit forever.
+ * Returns `{ transcript, conclusive }`. The second half is the important half
+ * (PR #37 review round 5): "not in the page I looked at" is not the same claim
+ * as "not at the provider", and only the latter justifies spending money on a
+ * resubmit. Callers must not re-queue on an inconclusive answer.
+ *
+ * Transcripts list newest-first, so the scan pages backwards with `before_id`
+ * until it passes the moment this job was submitted — at which point absence is
+ * proven — or until it runs out of pages, which is not proof.
  */
 async function findExistingProviderJob({ assembly, job, logger }) {
-  if (!job.audio_file_path) return null;
+  if (!job.audio_file_path) return { transcript: null, conclusive: true };
+
+  const cutoff = job.submitted_at || job.created_at;
+  let beforeId;
+  let scanned = 0;
 
   try {
-    const page = await assembly.transcripts.list({ limit: 100 });
-    const transcripts = page?.transcripts || page?.data || [];
-    const match = matchProviderTranscript(transcripts, job);
+    for (let page = 0; page < LOOKUP_MAX_PAGES; page += 1) {
+      const params = { limit: LOOKUP_PAGE_SIZE };
+      if (beforeId) params.before_id = beforeId;
 
-    if (!match) {
-      logger.info('No provider transcript matches this job audio', {
-        jobId: job.id,
-        scanned: transcripts.length
-      });
+      const response = await assembly.transcripts.list(params);
+      const transcripts = response?.transcripts || [];
+      scanned += transcripts.length;
+
+      const match = matchProviderTranscript(transcripts, job);
+      if (match) return { transcript: match, conclusive: true };
+
+      if (scanReachedCutoff(transcripts, cutoff)) {
+        logger.info('Scanned back past this job’s submit time; audio is not at the provider', {
+          jobId: job.id,
+          scanned
+        });
+        return { transcript: null, conclusive: true };
+      }
+
+      beforeId = transcripts[transcripts.length - 1]?.id;
+      if (!beforeId) return { transcript: null, conclusive: true };
     }
-    return match;
+
+    logger.warn('Provider transcript scan hit its page limit without reaching the cutoff', {
+      jobId: job.id,
+      scanned
+    });
+    return { transcript: null, conclusive: false };
   } catch (error) {
     logger.warn('Could not list provider transcripts', { jobId: job.id, error: error.message });
-    return null;
+    return { transcript: null, conclusive: false };
   }
 }
 
@@ -178,7 +209,12 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
     // but slow would be submitted a second time. The storage path is the join
     // key both sides share — signed-URL tokens differ per mint, the object path
     // does not.
-    const adopted = await findExistingProviderJob({ assembly, job, logger });
+    const { transcript: adopted, conclusive } = await findExistingProviderJob({
+      assembly,
+      job,
+      logger
+    });
+
     if (adopted) {
       logger.warn('Adopted an existing provider job instead of resubmitting', {
         jobId: job.id,
@@ -193,7 +229,34 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
       return;
     }
 
-    logger.warn('Provider handoff grace expired and no provider job found; re-queuing', {
+    if (!conclusive) {
+      // We could not prove absence, so we must not spend money on a resubmit.
+      // Retry the lookup next sweep — but not forever: past the abandon bound,
+      // give up visibly rather than stalling silently (PR #37 review round 5).
+      if (handoffGraceExpired(job, { graceMs: HANDOFF_ABANDON_MS })) {
+        logger.error('Abandoning a job whose provider handoff could never be resolved', {
+          jobId: job.id
+        });
+        await supabase
+          .from('processing_jobs')
+          .update({
+            status: JOB_STATUS.DEAD,
+            last_error:
+              'Could not determine whether this recording reached the transcription provider. Not retried automatically to avoid duplicate processing.',
+            next_attempt_at: null,
+            completed_at: new Date().toISOString()
+          })
+          .eq('id', job.id);
+        return;
+      }
+
+      logger.warn('Provider lookup inconclusive; leaving the job submitted for a later sweep', {
+        jobId: job.id
+      });
+      return;
+    }
+
+    logger.warn('Provider handoff grace expired and the audio is provably absent; re-queuing', {
       jobId: job.id
     });
     await supabase

@@ -177,6 +177,45 @@ function classifySubmitFailure(error) {
 const HANDOFF_GRACE_MS = 3 * 60 * 60 * 1000;
 
 /**
+ * The outer bound on an unresolvable handoff (PR #37 review round 5).
+ *
+ * If we cannot determine whether the provider has this audio — the list call
+ * keeps failing, or the scan can't reach far enough back — there is no safe
+ * automatic action left: resubmitting may double-bill, and waiting forever is
+ * the silent stall this whole table exists to prevent. Past this bound the job
+ * is marked `dead`, which the client surfaces, so the outcome is a visible
+ * failure a person can retry rather than either of those.
+ */
+const HANDOFF_ABANDON_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Has a backwards scan through the provider's transcripts gone far enough to
+ * prove absence?
+ *
+ * Transcripts list newest-first, so once a page contains anything older than
+ * the moment we submitted, every remaining page is older still and the audio
+ * genuinely is not there. Anything short of that is "not found yet", NOT proof
+ * — treating a bounded page as proof is what would re-queue an accepted
+ * submission and bill it twice.
+ */
+function scanReachedCutoff(transcripts, cutoff) {
+  if (!Array.isArray(transcripts) || transcripts.length === 0) return true;
+
+  const cutoffMs = new Date(cutoff).getTime();
+  if (Number.isNaN(cutoffMs)) return true;
+
+  let oldest = Infinity;
+  for (const transcript of transcripts) {
+    const created = new Date(transcript?.created || NaN).getTime();
+    if (!Number.isNaN(created)) oldest = Math.min(oldest, created);
+  }
+
+  // No usable timestamps: we cannot claim to have reached the cutoff.
+  if (oldest === Infinity) return false;
+  return oldest < cutoffMs;
+}
+
+/**
  * A job stuck in 'submitted' with no provider id: has its grace window expired?
  * Until it has, the reaper must leave it alone rather than resubmit.
  */
@@ -274,6 +313,8 @@ module.exports = {
   ACTIVE_STATUSES,
   DEFAULT_MAX_ATTEMPTS,
   HANDOFF_GRACE_MS,
+  HANDOFF_ABANDON_MS,
+  scanReachedCutoff,
   idempotencyKey,
   backoffMs,
   nextAttemptAt,
