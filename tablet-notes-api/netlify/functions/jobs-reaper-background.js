@@ -300,12 +300,57 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
   }
 }
 
+/**
+ * Mark a summary job complete. Returns the Supabase error, or null.
+ *
+ * Shared by both completion paths (generated-now and already-present) so the
+ * "is it actually marked?" check cannot exist in one and be missing from the
+ * other — the divergence this PR's review keeps finding.
+ */
+async function markSummaryJobDone({ supabase, jobId }) {
+  const { error } = await supabase
+    .from('processing_jobs')
+    .update({
+      status: JOB_STATUS.DONE,
+      completed_at: new Date().toISOString(),
+      last_error: null,
+      next_attempt_at: null
+    })
+    .eq('id', jobId);
+
+  return error || null;
+}
+
 async function runSummary({ supabase, job, logger }) {
   // Same claim discipline as transcription: OpenAI calls cost money, and two
   // overlapping sweeps must not both generate a summary for one job.
   const claimed = await claimJob({ supabase, jobId: job.id, toStatus: JOB_STATUS.RUNNING });
   if (!claimed) {
     logger.info('Reaper skipping summary job claimed by another worker', { jobId: job.id });
+    return;
+  }
+
+  // If the summary already exists, the only thing left to do is mark the job.
+  // This is what makes a retry after a failed completion-update free rather than
+  // a second paid OpenAI call for output already sitting in the database.
+  const { data: priorSummary } = await supabase
+    .from('summaries')
+    .select('text')
+    .eq('sermon_id', job.sermon_id)
+    .maybeSingle();
+
+  if (priorSummary?.text?.trim()) {
+    const completionError = await markSummaryJobDone({ supabase, jobId: job.id });
+    if (completionError) {
+      logger.warn('Summary already exists but the job could not be marked done', {
+        jobId: job.id,
+        error: completionError.message
+      });
+      const failure = planFailure(job, `completion update failed: ${completionError.message}`);
+      await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+      return;
+    }
+    logger.info('Summary already present; marked job done without regenerating', { jobId: job.id });
     return;
   }
 
@@ -396,15 +441,13 @@ async function runSummary({ supabase, job, logger }) {
         .eq('id', job.sermon_id);
     }
 
-    await supabase
-      .from('processing_jobs')
-      .update({
-        status: JOB_STATUS.DONE,
-        completed_at: new Date().toISOString(),
-        last_error: null,
-        next_attempt_at: null
-      })
-      .eq('id', job.id);
+    const completionError = await markSummaryJobDone({ supabase, jobId: job.id });
+    if (completionError) {
+      // The summary exists but the job still says 'running', which no sweep
+      // reclaims. Throw so planFailure re-queues it; the retry is cheap because
+      // runSummary short-circuits when the summary is already there.
+      throw new Error(`summary completion update failed: ${completionError.message}`);
+    }
 
     logger.info('Reaper completed summary job', { jobId: job.id, hasTitle: !!title });
   } catch (error) {
