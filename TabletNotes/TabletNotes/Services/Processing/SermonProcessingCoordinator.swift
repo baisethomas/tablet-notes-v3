@@ -294,17 +294,39 @@ final class SermonProcessingCoordinator {
         let uploaded = candidates.filter { $0.remoteId != nil }
         guard !uploaded.isEmpty else { return }
 
-        // Skip anything the legacy queue is still working on. This matters when
-        // the flag is flipped mid-session: the legacy service reschedules its
-        // own queue, so a sermon already in flight there would otherwise be
-        // submitted to AssemblyAI a second time through the durable path.
-        let legacyOwned = sermonIdsWithActiveLegacyJob(in: modelContext)
-        let pending = uploaded.filter { !legacyOwned.contains($0.id) }
+        // Exactly one pipeline may own a sermon, and the legacy queue's two
+        // states mean different things here:
+        //
+        //   running — already handed to AssemblyAI. Dispatching would pay for a
+        //             second transcription, so leave it; it will finish and set
+        //             its own status.
+        //   queued  — nobody has spent anything yet. The durable path can take
+        //             it, but only by taking OWNERSHIP: with the flag on, the
+        //             legacy queue is no longer pumped, so merely skipping these
+        //             would strand the sermon pending forever.
+        let legacy = legacyTranscriptionJobs(in: modelContext)
+        let pending = uploaded.filter { !legacy.running.contains($0.id) }
         guard !pending.isEmpty else { return }
 
         let dispatcher = durableDispatcher()
         for sermon in pending {
-            _ = await dispatcher.dispatch(sermonLocalId: sermon.id)
+            let adoptedJob = legacy.queued[sermon.id]
+
+            // Drop the legacy job first so the two owners never overlap — if the
+            // legacy queue pumped between dispatch and delete, the same audio
+            // would go to the provider twice.
+            if let adoptedJob {
+                modelContext.delete(adoptedJob)
+                try? modelContext.save()
+            }
+
+            let dispatched = await dispatcher.dispatch(sermonLocalId: sermon.id)
+
+            // Handing ownership over failed, so hand it back rather than leaving
+            // the sermon with no owner at all.
+            if !dispatched, adoptedJob != nil {
+                _ = TranscriptionRetryService.shared.enqueueTranscription(for: sermon.id)
+            }
         }
     }
 
@@ -325,23 +347,35 @@ final class SermonProcessingCoordinator {
         }
     }
 
-    /// Sermons the on-device retry queue still considers its own. A job that is
-    /// queued or running there has either already been submitted to the
-    /// provider or is about to be.
-    private func sermonIdsWithActiveLegacyJob(in context: ModelContext) -> Set<UUID> {
-        let queued = ProcessingJobStatus.queued.rawValue
-        let running = ProcessingJobStatus.running.rawValue
+    /// What the on-device retry queue currently owns, split by whether money has
+    /// already been spent on it. The two are handled differently — see the call
+    /// site — so they are deliberately not collapsed into one set.
+    private func legacyTranscriptionJobs(
+        in context: ModelContext
+    ) -> (running: Set<UUID>, queued: [UUID: ProcessingJob]) {
+        let queuedStatus = ProcessingJobStatus.queued.rawValue
+        let runningStatus = ProcessingJobStatus.running.rawValue
         let kind = ProcessingJobKind.transcription.rawValue
 
         let descriptor = FetchDescriptor<ProcessingJob>(
             predicate: #Predicate<ProcessingJob> { job in
                 job.kindRawValue == kind &&
-                (job.statusRawValue == queued || job.statusRawValue == running)
+                (job.statusRawValue == queuedStatus || job.statusRawValue == runningStatus)
             }
         )
 
-        guard let jobs = try? context.fetch(descriptor) else { return [] }
-        return Set(jobs.map(\.sermonId))
+        guard let jobs = try? context.fetch(descriptor) else { return ([], [:]) }
+
+        var running: Set<UUID> = []
+        var queued: [UUID: ProcessingJob] = [:]
+        for job in jobs {
+            if job.statusRawValue == runningStatus {
+                running.insert(job.sermonId)
+            } else {
+                queued[job.sermonId] = job
+            }
+        }
+        return (running, queued)
     }
 
     private func durableDispatcher() -> any ProcessingJobDispatching {
