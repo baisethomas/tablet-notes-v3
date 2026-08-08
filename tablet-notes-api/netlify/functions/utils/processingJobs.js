@@ -189,6 +189,43 @@ function handoffGraceExpired(job, { now = Date.now(), graceMs = HANDOFF_GRACE_MS
 }
 
 /**
+ * Find this job's transcription among the provider's recent transcripts, by the
+ * one thing both sides agree on: the storage path of the audio (PR #37 review
+ * round 4).
+ *
+ * This is what turns "the grace window expired, so resubmit and hope" into an
+ * actual answer. A signed URL is re-minted per submit, so the tokens differ —
+ * but the object path inside it does not, which makes it a usable join key.
+ *
+ * When several transcripts match (a duplicate submitted before this reconcile
+ * logic existed), the newest is adopted rather than returning nothing: adopting
+ * one of two existing jobs is strictly better than creating a third.
+ */
+function matchProviderTranscript(transcripts, job) {
+  const path = job?.audio_file_path;
+  if (!path || !Array.isArray(transcripts)) return null;
+
+  const matches = transcripts.filter((transcript) => {
+    const url = transcript?.audio_url;
+    if (typeof url !== 'string') return false;
+    let decoded = url;
+    try {
+      decoded = decodeURIComponent(url);
+    } catch (_) {
+      // Malformed encoding: fall back to the raw string rather than throwing.
+    }
+    return decoded.includes(path);
+  });
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+
+  return matches
+    .slice()
+    .sort((a, b) => new Date(b?.created || 0).getTime() - new Date(a?.created || 0).getTime())[0];
+}
+
+/**
  * Normalizes an AssemblyAI webhook body to a decision.
  * AssemblyAI posts { transcript_id, status } where status is
  * 'completed' | 'error' (and historically 'transcript.completed' style events).
@@ -246,6 +283,7 @@ module.exports = {
   jobIdFromWebhookQuery,
   classifySubmitFailure,
   handoffGraceExpired,
+  matchProviderTranscript,
   shouldChainSummary,
   interpretWebhook,
   secretMatches

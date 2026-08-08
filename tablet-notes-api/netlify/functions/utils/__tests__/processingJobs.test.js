@@ -260,3 +260,61 @@ test('handoffGraceExpired fails toward re-queuing when it has no timestamp', () 
   assert.equal(handoffGraceExpired({ submitted_at: 'not-a-date' }), true);
   assert.equal(handoffGraceExpired(null), true);
 });
+
+// --- adopting an existing provider job (PR #37 review round 4) ---
+// Re-queuing on an expired grace window alone is still a guess: a slow-but-
+// running transcription would be submitted twice. The storage path is the join
+// key both sides share, so we can ask instead of guessing.
+
+const { matchProviderTranscript } = require('../processingJobs');
+
+const AUDIO_PATH = 'user-abc/sermon-2026-08-08.m4a';
+const JOB_WITH_AUDIO = { audio_file_path: AUDIO_PATH };
+
+test('matches a provider transcript by the storage path inside its signed URL', () => {
+  const transcripts = [
+    { id: 'tr-other', audio_url: 'https://x.supabase.co/storage/v1/object/sign/sermon-audio/user-zzz/other.m4a?token=aaa' },
+    { id: 'tr-mine', audio_url: `https://x.supabase.co/storage/v1/object/sign/sermon-audio/${AUDIO_PATH}?token=bbb` }
+  ];
+  assert.equal(matchProviderTranscript(transcripts, JOB_WITH_AUDIO).id, 'tr-mine');
+});
+
+test('matches even though the signed-URL token differs from the one we submitted', () => {
+  // The whole point: tokens are re-minted per submit, the object path is not.
+  const transcripts = [
+    { id: 'tr-mine', audio_url: `https://x.supabase.co/storage/v1/object/sign/sermon-audio/${AUDIO_PATH}?token=totally-different` }
+  ];
+  assert.equal(matchProviderTranscript(transcripts, JOB_WITH_AUDIO).id, 'tr-mine');
+});
+
+test('matches a percent-encoded path', () => {
+  const encoded = 'https://x.supabase.co/storage/v1/object/sign/sermon-audio/user-abc/my%20sermon.m4a?token=c';
+  const job = { audio_file_path: 'user-abc/my sermon.m4a' };
+  assert.equal(matchProviderTranscript([{ id: 'tr-enc', audio_url: encoded }], job).id, 'tr-enc');
+});
+
+test('returns null when the audio is genuinely not at the provider', () => {
+  // Only then is resubmitting the right move.
+  const transcripts = [
+    { id: 'tr-other', audio_url: 'https://x.supabase.co/storage/v1/object/sign/sermon-audio/user-zzz/other.m4a?token=a' }
+  ];
+  assert.equal(matchProviderTranscript(transcripts, JOB_WITH_AUDIO), null);
+  assert.equal(matchProviderTranscript([], JOB_WITH_AUDIO), null);
+});
+
+test('adopts the newest when duplicates already exist rather than creating a third', () => {
+  const transcripts = [
+    { id: 'tr-old', created: '2026-08-08T01:00:00Z', audio_url: `https://x/sermon-audio/${AUDIO_PATH}?token=a` },
+    { id: 'tr-new', created: '2026-08-08T05:00:00Z', audio_url: `https://x/sermon-audio/${AUDIO_PATH}?token=b` }
+  ];
+  assert.equal(matchProviderTranscript(transcripts, JOB_WITH_AUDIO).id, 'tr-new');
+});
+
+test('matchProviderTranscript tolerates junk input rather than throwing mid-sweep', () => {
+  assert.equal(matchProviderTranscript(null, JOB_WITH_AUDIO), null);
+  assert.equal(matchProviderTranscript([{ id: 'x' }], JOB_WITH_AUDIO), null);
+  assert.equal(matchProviderTranscript([{ id: 'x', audio_url: 42 }], JOB_WITH_AUDIO), null);
+  assert.equal(matchProviderTranscript([{ id: 'x', audio_url: '%%%' }], JOB_WITH_AUDIO), null);
+  assert.equal(matchProviderTranscript([{ id: 'x', audio_url: 'anything' }], {}), null);
+  assert.equal(matchProviderTranscript([{ id: 'x', audio_url: 'anything' }], null), null);
+});

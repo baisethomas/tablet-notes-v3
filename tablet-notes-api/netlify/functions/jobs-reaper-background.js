@@ -11,7 +11,8 @@ const {
   planFailure,
   webhookUrlFor,
   classifySubmitFailure,
-  handoffGraceExpired
+  handoffGraceExpired,
+  matchProviderTranscript
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
@@ -127,6 +128,35 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
   }
 }
 
+/**
+ * Ask AssemblyAI whether this job's audio was already submitted, for the case
+ * where we lost the provider id (or never got one back).
+ *
+ * Returns the provider transcript, or null if there is genuinely nothing there.
+ * A failure to ask returns null too — but the caller only re-queues after the
+ * grace window, and a job that can never resolve must not sit forever.
+ */
+async function findExistingProviderJob({ assembly, job, logger }) {
+  if (!job.audio_file_path) return null;
+
+  try {
+    const page = await assembly.transcripts.list({ limit: 100 });
+    const transcripts = page?.transcripts || page?.data || [];
+    const match = matchProviderTranscript(transcripts, job);
+
+    if (!match) {
+      logger.info('No provider transcript matches this job audio', {
+        jobId: job.id,
+        scanned: transcripts.length
+      });
+    }
+    return match;
+  } catch (error) {
+    logger.warn('Could not list provider transcripts', { jobId: job.id, error: error.message });
+    return null;
+  }
+}
+
 async function reconcileStale({ supabase, assembly, job, logger }) {
   if (!job.provider_job_id) {
     // Submitted with no provider id: either the submit never landed, or it
@@ -142,7 +172,30 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
       return;
     }
 
-    logger.warn('Provider handoff grace expired with no callback; re-queuing', { jobId: job.id });
+    // Before spending money on a resubmit, ASK the provider whether this audio
+    // is already there (PR #37 review round 4). Re-queuing on an expired grace
+    // window alone is still a guess: a transcription that is genuinely running
+    // but slow would be submitted a second time. The storage path is the join
+    // key both sides share — signed-URL tokens differ per mint, the object path
+    // does not.
+    const adopted = await findExistingProviderJob({ assembly, job, logger });
+    if (adopted) {
+      logger.warn('Adopted an existing provider job instead of resubmitting', {
+        jobId: job.id,
+        providerJobId: adopted.id
+      });
+      await supabase
+        .from('processing_jobs')
+        .update({ provider_job_id: adopted.id })
+        .eq('id', job.id);
+      // Reconcile it now that we know who it is, rather than waiting a sweep.
+      await reconcileStale({ supabase, assembly, job: { ...job, provider_job_id: adopted.id }, logger });
+      return;
+    }
+
+    logger.warn('Provider handoff grace expired and no provider job found; re-queuing', {
+      jobId: job.id
+    });
     await supabase
       .from('processing_jobs')
       .update({ status: JOB_STATUS.QUEUED, submitted_at: null, next_attempt_at: null })
