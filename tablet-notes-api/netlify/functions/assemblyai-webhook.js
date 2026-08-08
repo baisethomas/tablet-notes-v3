@@ -11,7 +11,8 @@ const {
   JOB_STATUS,
   interpretWebhook,
   planFailure,
-  secretMatches
+  secretMatches,
+  jobIdFromWebhookQuery
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 
@@ -94,20 +95,45 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
   }
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const { data: job, error: jobError } = await supabase
-    .from('processing_jobs')
-    .select('*')
-    .eq('provider_job_id', interpreted.transcriptId)
-    .maybeSingle();
+  // Prefer OUR job id from the callback URL over the provider's id.
+  //
+  // Looking up only by provider_job_id assumes we managed to persist that id
+  // after submitting — but that write can fail, and a submit can time out after
+  // AssemblyAI already accepted the audio. In both cases the provider id lives
+  // nowhere but AssemblyAI, and a paid, completed transcription would be thrown
+  // away here as "unknown provider job" (PR #37 review round 3).
+  const ownJobId = jobIdFromWebhookQuery(event.queryStringParameters);
+
+  const lookup = ownJobId
+    ? supabase.from('processing_jobs').select('*').eq('id', ownJobId)
+    : supabase.from('processing_jobs').select('*').eq('provider_job_id', interpreted.transcriptId);
+
+  const { data: job, error: jobError } = await lookup.maybeSingle();
 
   if (jobError) {
-    logger.error('Failed to look up job for webhook', { transcriptId: interpreted.transcriptId }, jobError);
+    logger.error('Failed to look up job for webhook', {
+      transcriptId: interpreted.transcriptId,
+      ownJobId
+    }, jobError);
     return createErrorResponse(new Error('Job lookup failed'), 500);
   }
   if (!job) {
-    // Unknown provider id: nothing to do, and retrying won't help.
-    logger.warn('No processing job for transcript', { transcriptId: interpreted.transcriptId });
-    return createSuccessResponse({ ignored: true, reason: 'unknown provider job' }, 200);
+    // Neither id resolves: nothing to do, and retrying won't help.
+    logger.warn('No processing job for callback', {
+      transcriptId: interpreted.transcriptId,
+      ownJobId
+    });
+    return createSuccessResponse({ ignored: true, reason: 'unknown job' }, 200);
+  }
+
+  // Heal the missing/mismatched provider id so the reaper can reconcile this
+  // job later without depending on the callback arriving a second time.
+  if (job.provider_job_id !== interpreted.transcriptId) {
+    await supabase
+      .from('processing_jobs')
+      .update({ provider_job_id: interpreted.transcriptId })
+      .eq('id', job.id);
+    job.provider_job_id = interpreted.transcriptId;
   }
 
   // Terminal already: AssemblyAI retries callbacks, so this must be idempotent.

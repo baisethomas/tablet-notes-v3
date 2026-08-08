@@ -11,9 +11,11 @@ const {
 const {
   JOB_KINDS,
   JOB_STATUS,
-  idempotencyKey
+  idempotencyKey,
+  webhookUrlFor,
+  classifySubmitFailure
 } = require('./utils/processingJobs');
-const { claimJob, releaseClaim } = require('./utils/jobClaim');
+const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
 
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
@@ -180,7 +182,12 @@ exports.handler = withDefaults(
     }
 
     const assembly = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
-    const webhookUrl = `${process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app'}/api/assemblyai-webhook`;
+    // Carries OUR job id, so completion never depends on us having successfully
+    // written the provider's id back.
+    const webhookUrl = webhookUrlFor(
+      process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app',
+      job.id
+    );
 
     try {
       const transcript = await withTimeout(
@@ -199,8 +206,10 @@ exports.handler = withDefaults(
         20000
       )();
 
-      // Already claimed as 'submitted' above; record the provider id.
-      const { data: submitted } = await supabase
+      // Already claimed as 'submitted' above; record the provider id. A failure
+      // here is logged but NOT fatal and must not re-queue the job: the audio is
+      // already at the provider, and the callback resolves by our job id.
+      const { data: submitted, error: recordError } = await supabase
         .from('processing_jobs')
         .update({
           provider_job_id: transcript.id,
@@ -209,6 +218,13 @@ exports.handler = withDefaults(
         .eq('id', job.id)
         .select()
         .single();
+
+      if (recordError) {
+        logger.error('Failed to record provider job id; job stays submitted', {
+          jobId: job.id,
+          providerJobId: transcript.id
+        }, recordError);
+      }
 
       logger.info('Processing job submitted', {
         jobId: job.id,
@@ -221,12 +237,23 @@ exports.handler = withDefaults(
         origin: event.headers.origin
       });
     } catch (error) {
-      // Release the claim and record the error; the reaper resubmits.
-      await releaseClaim({ supabase, jobId: job.id, error });
+      // Only re-queue when the request provably never reached AssemblyAI. A
+      // timeout is NOT proof of that: the submit may have been accepted and
+      // answered slowly, in which case re-queuing bills a second transcription
+      // and orphans the first. Uncertain handoffs stay 'submitted' and are
+      // governed by the reaper's grace window instead.
+      const classification = classifySubmitFailure(error);
+      if (classification === 'not-sent') {
+        await releaseClaim({ supabase, jobId: job.id, error });
+      } else {
+        await markUncertainHandoff({ supabase, jobId: job.id, error });
+      }
 
-      logger.error('Provider submission failed; job left queued for the reaper', {
+      logger.error('Provider submission failed', {
         jobId: job.id,
-        userId: user.id
+        userId: user.id,
+        classification,
+        requeued: classification === 'not-sent'
       }, error);
 
       let statusCode = 502;

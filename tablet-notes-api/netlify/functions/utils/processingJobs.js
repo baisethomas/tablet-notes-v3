@@ -107,6 +107,88 @@ function shouldChainSummary(job, text) {
 }
 
 /**
+ * The webhook URL we hand the provider, carrying OUR job id.
+ *
+ * This is what makes the handoff durable (PR #37 review round 3). Resolving a
+ * callback purely by `provider_job_id` assumes we successfully wrote that id —
+ * but the write can fail, and the submit can time out after AssemblyAI already
+ * accepted the audio. In both cases the provider id exists only inside
+ * AssemblyAI, the callback arrives for an id we have never seen, and a paid,
+ * completed transcription is discarded as "unknown provider job".
+ *
+ * Our own job id is known BEFORE the submit, so putting it in the callback URL
+ * means completion no longer depends on any write of ours succeeding.
+ */
+function webhookUrlFor(baseUrl, jobId) {
+  const root = String(baseUrl || '').replace(/\/+$/, '');
+  return `${root}/api/assemblyai-webhook?job=${encodeURIComponent(jobId)}`;
+}
+
+/** Reads our job id back off the callback URL. Returns null when absent. */
+function jobIdFromWebhookQuery(query) {
+  const value = query?.job;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  // Job ids are uuids; anything else is not ours and must not reach a query.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+/**
+ * Did a failed submit definitely NOT reach the provider, or is the outcome
+ * unknown?
+ *
+ * This distinction decides whether it is safe to re-queue. A job that was never
+ * sent can be retried freely. A job whose fate is unknown must NOT be re-queued:
+ * resubmitting bills a second transcription while the first one — which may well
+ * be running right now — completes into a row nobody is waiting on.
+ *
+ * Only failures that are provably local count as 'not-sent': an open circuit
+ * breaker (the request was never attempted) and a connection that never
+ * established. A timeout is explicitly NOT in that set — the request may have
+ * been received and answered slowly.
+ */
+function classifySubmitFailure(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+
+  if (message.includes('circuit breaker')) return 'not-sent';
+  if (
+    message.includes('enotfound') ||
+    message.includes('econnrefused') ||
+    message.includes('getaddrinfo')
+  ) {
+    return 'not-sent';
+  }
+
+  return 'uncertain';
+}
+
+/**
+ * How long a job with an uncertain provider handoff is left alone before it is
+ * treated as never-sent and re-queued.
+ *
+ * Generous on purpose. The webhook carries our job id, so a submission that DID
+ * land completes normally within minutes regardless of what we recorded — this
+ * window only governs the genuinely-lost case. Retrying a stuck sermon late is
+ * recoverable; billing twice and orphaning a paid transcription is not.
+ */
+const HANDOFF_GRACE_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * A job stuck in 'submitted' with no provider id: has its grace window expired?
+ * Until it has, the reaper must leave it alone rather than resubmit.
+ */
+function handoffGraceExpired(job, { now = Date.now(), graceMs = HANDOFF_GRACE_MS } = {}) {
+  const reference = job?.submitted_at || job?.updated_at || job?.created_at;
+  if (!reference) return true;
+  const referenceMs = new Date(reference).getTime();
+  if (Number.isNaN(referenceMs)) return true;
+  return now - referenceMs >= graceMs;
+}
+
+/**
  * Normalizes an AssemblyAI webhook body to a decision.
  * AssemblyAI posts { transcript_id, status } where status is
  * 'completed' | 'error' (and historically 'transcript.completed' style events).
@@ -154,11 +236,16 @@ module.exports = {
   JOB_STATUS,
   ACTIVE_STATUSES,
   DEFAULT_MAX_ATTEMPTS,
+  HANDOFF_GRACE_MS,
   idempotencyKey,
   backoffMs,
   nextAttemptAt,
   isStale,
   planFailure,
+  webhookUrlFor,
+  jobIdFromWebhookQuery,
+  classifySubmitFailure,
+  handoffGraceExpired,
   shouldChainSummary,
   interpretWebhook,
   secretMatches

@@ -8,10 +8,13 @@ const {
   JOB_STATUS,
   ACTIVE_STATUSES,
   isStale,
-  planFailure
+  planFailure,
+  webhookUrlFor,
+  classifySubmitFailure,
+  handoffGraceExpired
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
-const { claimJob, releaseClaim } = require('./utils/jobClaim');
+const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
 
 /**
  * Scheduled reaper for processing_jobs (TAB-72).
@@ -66,7 +69,10 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
     return;
   }
 
-  const webhookUrl = `${process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app'}/api/assemblyai-webhook`;
+  const webhookUrl = webhookUrlFor(
+    process.env.PUBLIC_API_BASE_URL || 'https://comfy-daffodil-7ecc55.netlify.app',
+    job.id
+  );
 
   try {
     const transcript = await assembly.transcripts.submit({
@@ -81,7 +87,7 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
     });
 
     // Already claimed as 'submitted'; record the provider id and attempt count.
-    await supabase
+    const { error: recordError } = await supabase
       .from('processing_jobs')
       .update({
         provider_job_id: transcript.id,
@@ -91,10 +97,27 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
       })
       .eq('id', job.id);
 
+    if (recordError) {
+      // Same rule as jobs.js: the audio is already at the provider, so this
+      // failure must not re-queue anything. The callback carries our job id.
+      logger.warn('Reaper could not record provider job id; job stays submitted', {
+        jobId: job.id,
+        providerJobId: transcript.id
+      });
+      return;
+    }
+
     logger.info('Reaper resubmitted transcription', { jobId: job.id, providerJobId: transcript.id });
   } catch (error) {
-    // The submit itself failed, so no provider job exists: release the claim
-    // and let planFailure's backoff/attempt accounting govern the retry.
+    // Only re-queue a submission that provably never left this process. An
+    // uncertain one stays 'submitted' — resubmitting it would bill twice and
+    // orphan whichever provider job we then stopped tracking.
+    if (classifySubmitFailure(error) !== 'not-sent') {
+      await markUncertainHandoff({ supabase, jobId: job.id, error });
+      logger.warn('Reaper submission outcome uncertain; leaving job submitted', { jobId: job.id });
+      return;
+    }
+
     const failure = planFailure(job, error);
     await supabase
       .from('processing_jobs')
@@ -106,10 +129,23 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
 
 async function reconcileStale({ supabase, assembly, job, logger }) {
   if (!job.provider_job_id) {
-    // Submitted-but-no-provider-id shouldn't happen; treat as resubmittable.
+    // Submitted with no provider id: either the submit never landed, or it
+    // landed and we failed to record the id. We cannot tell them apart from
+    // here, so we wait rather than guess — the callback carries our job id and
+    // will complete the row within minutes if the audio really is at the
+    // provider. Only once the grace window has passed with no callback at all
+    // do we accept that nothing was ever submitted and re-queue.
+    if (!handoffGraceExpired(job)) {
+      logger.info('Job has an unresolved provider handoff; waiting out the grace window', {
+        jobId: job.id
+      });
+      return;
+    }
+
+    logger.warn('Provider handoff grace expired with no callback; re-queuing', { jobId: job.id });
     await supabase
       .from('processing_jobs')
-      .update({ status: JOB_STATUS.QUEUED, next_attempt_at: null })
+      .update({ status: JOB_STATUS.QUEUED, submitted_at: null, next_attempt_at: null })
       .eq('id', job.id);
     return;
   }

@@ -50,4 +50,29 @@ async function releaseClaim({ supabase, jobId, error, retryDelayMs = 60_000 }) {
     .eq('id', jobId);
 }
 
-module.exports = { claimJob, releaseClaim };
+/**
+ * Record that a provider submit may or may not have landed (PR #37 review
+ * round 3), WITHOUT returning the job to the queue.
+ *
+ * This is the counterpart to releaseClaim, and choosing between them is the
+ * whole fix: releasing a claim whose provider call might have succeeded is what
+ * causes a second billable submission plus an orphaned first transcription.
+ * Here the row deliberately stays 'submitted' with its submitted_at intact, so
+ * the reaper's grace window governs it. The callback still completes it — it
+ * carries our job id, not just the provider's.
+ *
+ * Shared by both submit paths for the same reason claimJob is: round 2 of review
+ * found a claim added in one place and missing in the other.
+ */
+async function markUncertainHandoff({ supabase, jobId, error }) {
+  await supabase
+    .from('processing_jobs')
+    .update({
+      last_error: `provider handoff uncertain: ${
+        typeof error === 'string' ? error : (error?.message || 'unknown error')
+      }`
+    })
+    .eq('id', jobId);
+}
+
+module.exports = { claimJob, releaseClaim, markUncertainHandoff };

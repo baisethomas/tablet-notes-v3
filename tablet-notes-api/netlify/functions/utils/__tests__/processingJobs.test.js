@@ -175,3 +175,88 @@ test('a summary job never chains another summary', () => {
   assert.equal(shouldChainSummary({}, 'x'.repeat(500)), false);
   assert.equal(shouldChainSummary(null, 'x'.repeat(500)), false);
 });
+
+// --- durable provider handoff (PR #37 review round 3) ---
+// Resolving a callback only by provider_job_id assumes our write of that id
+// succeeded. It can fail, and a submit can time out after AssemblyAI already
+// accepted the audio. These helpers are what keep a paid transcription from
+// being discarded as "unknown" and re-billed.
+
+const {
+  webhookUrlFor,
+  jobIdFromWebhookQuery,
+  classifySubmitFailure,
+  handoffGraceExpired,
+  HANDOFF_GRACE_MS
+} = require('../processingJobs');
+
+const JOB_ID = '9f1c1e2a-4a1e-4f6b-9a3d-2b7c5d8e1f04';
+
+test('the callback URL carries our own job id', () => {
+  assert.equal(
+    webhookUrlFor('https://api.example.com', JOB_ID),
+    `https://api.example.com/api/assemblyai-webhook?job=${JOB_ID}`
+  );
+});
+
+test('the callback URL tolerates a trailing slash on the base', () => {
+  assert.equal(
+    webhookUrlFor('https://api.example.com/', JOB_ID),
+    `https://api.example.com/api/assemblyai-webhook?job=${JOB_ID}`
+  );
+});
+
+test('our job id round-trips out of the callback query', () => {
+  assert.equal(jobIdFromWebhookQuery({ job: JOB_ID }), JOB_ID);
+  assert.equal(jobIdFromWebhookQuery({ job: `  ${JOB_ID}  ` }), JOB_ID);
+});
+
+test('a non-uuid job param is rejected rather than passed to a query', () => {
+  assert.equal(jobIdFromWebhookQuery({ job: "' or 1=1--" }), null);
+  assert.equal(jobIdFromWebhookQuery({ job: '' }), null);
+  assert.equal(jobIdFromWebhookQuery({ job: 12345 }), null);
+  assert.equal(jobIdFromWebhookQuery({}), null);
+  assert.equal(jobIdFromWebhookQuery(null), null);
+});
+
+test('only provably-local failures are safe to re-queue', () => {
+  assert.equal(classifySubmitFailure(new Error('Circuit breaker is OPEN')), 'not-sent');
+  assert.equal(classifySubmitFailure(new Error('getaddrinfo ENOTFOUND api.assemblyai.com')), 'not-sent');
+  assert.equal(classifySubmitFailure(new Error('connect ECONNREFUSED 1.2.3.4:443')), 'not-sent');
+});
+
+test('a timeout is treated as uncertain, never as not-sent', () => {
+  // The critical case: the provider may have accepted the audio and answered
+  // slowly. Re-queuing here bills a second transcription and orphans the first.
+  assert.equal(classifySubmitFailure(new Error('Operation timed out')), 'uncertain');
+  assert.equal(classifySubmitFailure(new Error('socket hang up')), 'uncertain');
+  assert.equal(classifySubmitFailure(new Error('500 Internal Server Error')), 'uncertain');
+  assert.equal(classifySubmitFailure(undefined), 'uncertain');
+});
+
+test('an unresolved handoff is left alone inside the grace window', () => {
+  const now = Date.UTC(2026, 0, 2);
+  const job = { submitted_at: new Date(now - 30 * 60 * 1000).toISOString() };
+  assert.equal(handoffGraceExpired(job, { now }), false);
+});
+
+test('an unresolved handoff is re-queued once the grace window passes', () => {
+  const now = Date.UTC(2026, 0, 2);
+  const job = { submitted_at: new Date(now - HANDOFF_GRACE_MS - 1000).toISOString() };
+  assert.equal(handoffGraceExpired(job, { now }), true);
+});
+
+test('the grace window outlasts the staleness window, so reconcile never races it', () => {
+  // isStale fires at 2h; if the grace window were shorter, a job with an
+  // unresolved handoff would be re-queued by the stale path before the
+  // callback had a fair chance to land.
+  assert.ok(HANDOFF_GRACE_MS > 2 * 60 * 60 * 1000);
+});
+
+test('handoffGraceExpired fails toward re-queuing when it has no timestamp', () => {
+  // With no reference point there is nothing to wait for; a job that can never
+  // resolve must not sit in 'submitted' forever.
+  assert.equal(handoffGraceExpired({}), true);
+  assert.equal(handoffGraceExpired({ submitted_at: 'not-a-date' }), true);
+  assert.equal(handoffGraceExpired(null), true);
+});
