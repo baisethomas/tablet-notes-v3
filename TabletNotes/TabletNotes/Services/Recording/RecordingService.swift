@@ -54,7 +54,7 @@ class RecordingService {
         isPausedPublisher = isPausedSubject.eraseToAnyPublisher()
         recordingStoppedPublisher = recordingStoppedSubject.eraseToAnyPublisher()
 
-        captureEngine.onEvent = { [weak self] event in
+        self.captureEngine.onEvent = { [weak self] event in
             self?.handleEngineEvent(event)
         }
     }

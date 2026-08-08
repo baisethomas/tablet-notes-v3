@@ -32,7 +32,11 @@ final class ProcessingObserver {
     private(set) var observedUserId: UUID?
 
     private var channel: RealtimeChannelV2?
-    private var streamTask: Task<Void, Never>?
+    /// `nonisolated(unsafe)` solely so `deinit` (which is nonisolated) can
+    /// cancel the stream. Every other access is on the main actor, and `deinit`
+    /// runs only once the last reference is gone, so there is no concurrent
+    /// access to be unsafe about.
+    private nonisolated(unsafe) var streamTask: Task<Void, Never>?
     private let client: SupabaseClient
     private var onCompletion: ((Completion) -> Void)?
 
