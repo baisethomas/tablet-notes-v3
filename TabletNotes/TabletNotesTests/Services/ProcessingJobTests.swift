@@ -5,7 +5,11 @@ import Testing
 /// Tests for the TAB-72 client pieces: the server-job model's terminal-state
 /// semantics and the `POST /api/jobs` client's contract (idempotent replay,
 /// auth failure, error mapping) — no network required.
+/// `.serialized` because the stubbed `URLProtocol` communicates through static
+/// state: the client calls suspend, and parallel cases would otherwise swap
+/// each other's `responder`/`lastBody` mid-request.
 @MainActor
+@Suite(.serialized)
 struct ProcessingJobTests {
     // MARK: - Terminal state semantics
 
@@ -101,10 +105,24 @@ struct ProcessingJobTests {
         override func stopLoading() {}
     }
 
+    /// A session that actually routes through the stub. `URLSession.shared`
+    /// does not consult globally registered protocol classes, so the stub has
+    /// to be listed on this configuration.
+    private static func makeStubSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
     private func makeClient() -> ProcessingJobClient {
-        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.lastBody = nil
         return ProcessingJobClient(
             baseURL: URL(string: "https://example.test")!,
+            // NetworkMonitor.shared.isConnected starts false and only flips
+            // once NWPathMonitor reports, so the real default would make these
+            // cases fail on the offline guard depending on timing.
+            isNetworkAvailable: { true },
+            session: Self.makeStubSession(),
             tokenProvider: { "test-token" }
         )
     }
@@ -182,13 +200,16 @@ struct ProcessingJobTests {
     }
 
     @Test func mapsAuthFailureToNotAuthenticated() async {
-        URLProtocol.registerClass(StubURLProtocol.self)
         let client = ProcessingJobClient(
             baseURL: URL(string: "https://example.test")!,
+            // Must be online, or this would pass on `.offline` and prove
+            // nothing about the token-failure mapping under test.
+            isNetworkAvailable: { true },
+            session: Self.makeStubSession(),
             tokenProvider: { throw URLError(.userAuthenticationRequired) }
         )
 
-        await #expect(throws: ProcessingJobClientError.self) {
+        await #expect(throws: ProcessingJobClientError.notAuthenticated) {
             _ = try await client.requestTranscription(sermonLocalId: UUID(), filePath: "user-a/audio.m4a")
         }
     }

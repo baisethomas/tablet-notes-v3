@@ -40,7 +40,7 @@ struct RemoteProcessingJob: Codable, Sendable, Equatable {
     }
 }
 
-enum ProcessingJobClientError: LocalizedError {
+enum ProcessingJobClientError: LocalizedError, Equatable {
     case notAuthenticated
     case offline
     case requestFailed(status: Int, body: String)
@@ -78,14 +78,20 @@ struct ProcessingJobClient: ProcessingJobRequesting {
     private let baseURL: URL
     private let tokenProvider: @Sendable () async throws -> String
     private let isNetworkAvailable: @Sendable () -> Bool
+    /// Injected so tests can drive a stubbed `URLProtocol`. `URLSession.shared`
+    /// ignores `URLProtocol.registerClass`, so a stub is only reachable through
+    /// a session whose configuration lists it.
+    private let session: URLSession
 
     init(
         baseURL: URL = URL(string: "https://comfy-daffodil-7ecc55.netlify.app")!,
         isNetworkAvailable: @escaping @Sendable () -> Bool = { NetworkMonitor.shared.isConnected },
+        session: URLSession = .shared,
         tokenProvider: (@Sendable () async throws -> String)? = nil
     ) {
         self.baseURL = baseURL
         self.isNetworkAvailable = isNetworkAvailable
+        self.session = session
         self.tokenProvider = tokenProvider ?? {
             do {
                 return try await SupabaseService.shared.client.auth.session.accessToken
@@ -127,7 +133,7 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await NetworkRetry.withExponentialBackoff(maxAttempts: 3) {
-            try await URLSession.shared.data(for: request)
+            try await session.data(for: request)
         }
 
         guard let http = response as? HTTPURLResponse else {
