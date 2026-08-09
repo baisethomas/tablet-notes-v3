@@ -116,7 +116,6 @@ fastlane/test_output
 # Other
 .DS_Store
 
-TabletNotes.xcodeproj/xcshareddata/xcschemes/TabletNotes.xcscheme
 
 TabletNotes/Resources/AssemblyAIKey.swift
 
@@ -164,3 +163,9 @@ TabletNotes/TabletNotes/Resources/Config.plist
 # Supabase CLI local state
 supabase/.temp/
 tablet-notes-api/supabase/.temp/
+
+# Shared schemes are project configuration, not per-developer state, and must
+# be versioned — the test plan that disables test parallelism is only applied
+# via the scheme's TestAction (TAB-78). `xcuserdata/` above still keeps
+# per-developer scheme state out of the repo.
+!**/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme
