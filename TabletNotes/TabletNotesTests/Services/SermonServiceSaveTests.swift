@@ -3,10 +3,24 @@ import SwiftData
 import Testing
 @testable import TabletNotes
 
+/// KNOWN RESIDUAL FLAKE: these cases still share the DataMigration recovery
+/// flags (`has_recoverable_audio_files`, `DataMigration.recoveryOwnerUserId`)
+/// in `.standard`, and so does every other suite whose SermonService takes a
+/// restore path. `signOutClearsLocalDataAndDoesNotReassignOrphansToNextUser`
+/// sets them globally while it runs, which intermittently pushes
+/// `interruptedRecordingRecoveryCreatesDraftEvenWhenExistingSermonsArePresent`
+/// down the catalog path. `.serialized` was tried here and does NOT fix it —
+/// the contention is cross-suite. Isolating those flags means injecting into
+/// DataMigration, i.e. the TAB-53 reset/restore flow, which needs owner
+/// sign-off. Tracked in TAB-76.
 @MainActor
 struct SermonServiceSaveTests {
+    /// A fresh suite instance per test means a fresh recovery store per test;
+    /// these suites used to contend on one global manifest key.
+    private let isolated = IsolatedRecoveryStore()
+
     private func makeModelContext() throws -> ModelContext {
-        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
+        isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -48,7 +62,7 @@ struct SermonServiceSaveTests {
         let currentUser = MockAuthService.createMockUser()
         mockAuthService.setAuthState(.authenticated(currentUser))
         let authManager = AuthenticationManager(authService: mockAuthService)
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
 
         let sermonID = UUID()
         let sermonDate = Date()
@@ -150,8 +164,8 @@ struct SermonServiceSaveTests {
     }
 
     @Test func interruptedRecordingRecoveryCreatesDraftEvenWhenExistingSermonsArePresent() async throws {
-        InterruptedRecordingRecoveryStore.clear()
-        defer { InterruptedRecordingRecoveryStore.clear() }
+        isolated.store.clear()
+        defer { isolated.store.clear() }
 
         let modelContext = try makeModelContext()
         let mockAuthService = MockAuthService()
@@ -184,7 +198,7 @@ struct SermonServiceSaveTests {
         let noteService = NoteService(sessionId: "interrupted-session")
         noteService.addNote(text: "Recovered note", timestamp: 12)
 
-        InterruptedRecordingRecoveryStore.save(
+        isolated.store.save(
             InterruptedRecordingManifest(
                 sessionId: "interrupted-session",
                 serviceType: "Bible Study",
@@ -194,7 +208,7 @@ struct SermonServiceSaveTests {
             )
         )
 
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
 
         let allSermons = sermonService.sermons
         #expect(allSermons.count == 2)
@@ -202,7 +216,7 @@ struct SermonServiceSaveTests {
         guard let recoveredSermon = allSermons.first(where: { $0.audioFileName == audioURL.lastPathComponent }) else {
             Issue.record("Expected interrupted recording to be recovered into a sermon")
             try? FileManager.default.removeItem(at: audioURL)
-            InterruptedRecordingRecoveryStore.clear()
+            isolated.store.clear()
             return
         }
 
@@ -212,11 +226,11 @@ struct SermonServiceSaveTests {
         #expect(recoveredSermon.notes.count == 1)
         #expect(recoveredSermon.notes.first?.text == "Recovered note")
         #expect(recoveredSermon.hasPendingSyncWork == true)
-        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(isolated.store.load() == nil)
         #expect(NoteService(sessionId: "interrupted-session").currentNotes.isEmpty)
 
         try? FileManager.default.removeItem(at: audioURL)
-        InterruptedRecordingRecoveryStore.clear()
+        isolated.store.clear()
     }
 
     @Test func saveSermonReusesRecoveredDraftWhenAudioFileAlreadyExists() async throws {
@@ -225,7 +239,7 @@ struct SermonServiceSaveTests {
         let currentUser = MockAuthService.createMockUser()
         mockAuthService.setAuthState(.authenticated(currentUser))
         let authManager = AuthenticationManager(authService: mockAuthService)
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
 
         let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AudioRecordings", isDirectory: true)
@@ -280,7 +294,7 @@ struct SermonServiceSaveTests {
     }
 
     @Test func deleteAllLocalUserDataRemovesSermonRowsAudioOrphansAndNoteSessions() async throws {
-        InterruptedRecordingRecoveryStore.clear()
+        isolated.store.clear()
 
         let modelContext = try makeModelContext()
         let mockAuthService = MockAuthService()
@@ -307,12 +321,12 @@ struct SermonServiceSaveTests {
         modelContext.insert(sermon)
         try modelContext.save()
 
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         #expect(sermonService.sermons.count == 1)
 
         let noteService = NoteService(sessionId: "delete-account-session")
         noteService.addNote(text: "Pending note", timestamp: 1)
-        InterruptedRecordingRecoveryStore.save(
+        isolated.store.save(
             InterruptedRecordingManifest(
                 sessionId: "delete-account-session",
                 serviceType: "Sunday Service",
@@ -328,7 +342,7 @@ struct SermonServiceSaveTests {
         #expect(remainingSermons.isEmpty)
         #expect(FileManager.default.fileExists(atPath: sermonAudioURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: orphanAudioURL.path) == false)
-        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(isolated.store.load() == nil)
         #expect(NoteService(sessionId: "delete-account-session").currentNotes.isEmpty)
         #expect(sermonService.sermons.isEmpty)
     }
@@ -358,7 +372,7 @@ struct SermonServiceSaveTests {
         modelContext.insert(orphanSermon)
         try modelContext.save()
 
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         #expect(sermonService.sermons.count == 1)
         #expect(sermonService.sermons.first?.title == "User A Sermon")
 
@@ -402,7 +416,7 @@ struct SermonServiceSaveTests {
         modelContext.insert(sermon)
         try modelContext.save()
 
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         #expect(sermonService.sermons.count == 1)
 
         mockAuthService.setShouldFailNextCall(true, error: .networkError)
@@ -423,8 +437,8 @@ struct SermonServiceSaveTests {
     }
 
     @Test func interruptedRecordingManifestFromAnotherUserIsNotRecovered() async throws {
-        InterruptedRecordingRecoveryStore.clear()
-        defer { InterruptedRecordingRecoveryStore.clear() }
+        isolated.store.clear()
+        defer { isolated.store.clear() }
 
         let modelContext = try makeModelContext()
         let mockAuthService = MockAuthService()
@@ -438,7 +452,7 @@ struct SermonServiceSaveTests {
         _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x03, count: 4096))
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
-        InterruptedRecordingRecoveryStore.save(
+        isolated.store.save(
             InterruptedRecordingManifest(
                 sessionId: "foreign-session",
                 serviceType: "Sermon",
@@ -450,10 +464,10 @@ struct SermonServiceSaveTests {
 
         mockAuthService.setAuthState(.authenticated(userB))
         let authManager = AuthenticationManager(authService: mockAuthService)
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
 
         #expect(sermonService.sermons.isEmpty)
-        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(isolated.store.load() == nil)
 
         let sermons = try modelContext.fetch(FetchDescriptor<Sermon>())
         #expect(sermons.isEmpty)
@@ -465,17 +479,17 @@ struct SermonServiceSaveTests {
         let userA = MockAuthService.createMockUser(email: "user-a@test.com", name: "User A")
         let userB = MockAuthService.createMockUser(email: "user-b@test.com", name: "User B")
 
-        UserDefaults.standard.set(userB.id.uuidString, forKey: "SermonService.localDataOwnerUserId")
+        isolated.defaults.set(userB.id.uuidString, forKey: "SermonService.localDataOwnerUserId")
         UserDefaults.standard.set(userA.id.uuidString, forKey: "DataMigration.recoveryOwnerUserId")
         UserDefaults.standard.set(true, forKey: "has_recoverable_audio_files")
         defer {
             DataMigration.clearRecoveryFlags()
-            UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
+            isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId")
         }
 
         mockAuthService.setAuthState(.authenticated(userB))
         let authManager = AuthenticationManager(authService: mockAuthService)
-        let sermonService = SermonService(modelContext: modelContext, authManager: authManager)
+        let sermonService = SermonService(modelContext: modelContext, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
 
         #expect(sermonService.sermons.isEmpty)
         #expect(DataMigration.hasRecoverableAudioFiles() == false)

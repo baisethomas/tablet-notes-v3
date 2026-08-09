@@ -5,10 +5,14 @@ import Testing
 
 @Suite(.serialized)
 struct SermonProcessingCoordinatorTests {
+    /// A fresh suite instance per test means a fresh recovery store per test;
+    /// these suites used to contend on one global manifest key.
+    private let isolated = IsolatedRecoveryStore()
+
 
     @MainActor
     private func makeModelContext() throws -> ModelContext {
-        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
+        isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -28,7 +32,7 @@ struct SermonProcessingCoordinatorTests {
     @MainActor
     @Test func lifecycleHandlersBootstrapOnceAndRouteRefreshThroughCoordinator() async throws {
         let context = try makeModelContext()
-        let sermonService = SermonService(modelContext: context)
+        let sermonService = SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         let coordinator = SermonProcessingCoordinator.shared
 
         defer {
@@ -64,7 +68,7 @@ struct SermonProcessingCoordinatorTests {
     @MainActor
     @Test func syncPendingChangesSkipsRefreshButStillBootstrapsAndSyncs() async throws {
         let context = try makeModelContext()
-        let sermonService = SermonService(modelContext: context)
+        let sermonService = SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         let coordinator = SermonProcessingCoordinator.shared
 
         defer {
@@ -97,7 +101,7 @@ struct SermonProcessingCoordinatorTests {
 
     @MainActor
     @Test func handleAppLaunchImmediatelyProcessesRecoveredInterruptedRecordings() async throws {
-        InterruptedRecordingRecoveryStore.clear()
+        isolated.store.clear()
 
         let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AudioRecordings", isDirectory: true)
@@ -113,7 +117,7 @@ struct SermonProcessingCoordinatorTests {
         mockAuthService.setAuthState(.authenticated(currentUser))
         let authManager = AuthenticationManager(authService: mockAuthService)
 
-        InterruptedRecordingRecoveryStore.save(
+        isolated.store.save(
             InterruptedRecordingManifest(
                 sessionId: "launch-recovery-session",
                 serviceType: "Sermon",
@@ -124,7 +128,7 @@ struct SermonProcessingCoordinatorTests {
         )
 
         let context = try makeModelContext()
-        let sermonService = SermonService(modelContext: context, authManager: authManager)
+        let sermonService = SermonService(modelContext: context, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         let coordinator = SermonProcessingCoordinator.shared
         let retryService = TranscriptionRetryService.shared
 
@@ -133,7 +137,7 @@ struct SermonProcessingCoordinatorTests {
             retryService.summaryEnqueuer = nil
             retryService.overrideNetworkAvailability(false)
             coordinator.resetForTesting()
-            InterruptedRecordingRecoveryStore.clear()
+            isolated.store.clear()
             try? FileManager.default.removeItem(at: audioURL)
         }
 
@@ -185,7 +189,7 @@ struct SermonProcessingCoordinatorTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
-        let sermonService = SermonService(modelContext: context, authManager: authManager)
+        let sermonService = SermonService(modelContext: context, authManager: authManager, recoveryStore: isolated.store, userDefaults: isolated.defaults)
         let coordinator = SermonProcessingCoordinator.shared
         let retryService = TranscriptionRetryService.shared
 

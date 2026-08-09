@@ -9,9 +9,12 @@ import Testing
 /// interrupted-recording manifest, no cloud-less sermon).
 @MainActor
 struct SermonServiceAuthWipeTests {
+    /// A fresh suite instance per test means a fresh recovery store per test;
+    /// these suites used to contend on one global manifest key.
+    private let isolated = IsolatedRecoveryStore()
+
     private func makeModelContext() throws -> ModelContext {
-        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
-        UserDefaults.standard.removeObject(forKey: "active_recording_manifest")
+        isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -38,7 +41,9 @@ struct SermonServiceAuthWipeTests {
         let service = SermonService(
             modelContext: modelContext,
             authManager: authManager,
-            syncService: nil
+            syncService: nil,
+            recoveryStore: isolated.store,
+            userDefaults: isolated.defaults
         )
         return (service, authManager, mockAuthService)
     }
@@ -124,7 +129,7 @@ struct SermonServiceAuthWipeTests {
         let modelContext = try makeModelContext()
         let (_, authManager, _) = makeAuthedService(modelContext: modelContext)
         try insertSermon(modelContext: modelContext, remoteId: "remote-1")
-        InterruptedRecordingRecoveryStore.save(
+        isolated.store.save(
             InterruptedRecordingManifest(
                 sessionId: UUID().uuidString,
                 serviceType: "Sunday Service",
@@ -133,7 +138,7 @@ struct SermonServiceAuthWipeTests {
                 userId: nil
             )
         )
-        defer { InterruptedRecordingRecoveryStore.clear() }
+        defer { isolated.store.clear() }
         await settle()
 
         // An in-flight/unrecovered recording is the only copy of that audio;
