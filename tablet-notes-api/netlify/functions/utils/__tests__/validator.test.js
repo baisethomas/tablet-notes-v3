@@ -65,3 +65,30 @@ test('summarization schema rejects serviceType with disallowed characters', () =
     assert.equal(result.valid, false, `expected "${bad}" to be rejected`);
   }
 });
+
+// --- processing jobs (TAB-72) ---
+
+const validProcessingJob = { sermonLocalId: '11111111-1111-4111-8111-111111111111' };
+
+test('processingJob schema accepts a request with no filePath', () => {
+  // The normal shape: the server resolves audio_file_path from the sermon row
+  // it wrote itself, so a retry or a second device needs no client-held path.
+  const result = Validator.validate(validProcessingJob, 'processingJob');
+  assert.equal(result.valid, true);
+  assert.equal(result.data.filePath, undefined);
+  assert.equal(result.data.kind, 'transcription');
+});
+
+test('processingJob schema still accepts an explicit filePath', () => {
+  const result = Validator.validate(
+    { ...validProcessingJob, filePath: 'user-a/audio.m4a' },
+    'processingJob'
+  );
+  assert.equal(result.valid, true);
+  assert.equal(result.data.filePath, 'user-a/audio.m4a');
+});
+
+test('processingJob schema still requires a real sermonLocalId', () => {
+  assert.equal(Validator.validate({}, 'processingJob').valid, false);
+  assert.equal(Validator.validate({ sermonLocalId: 'not-a-uuid' }, 'processingJob').valid, false);
+});

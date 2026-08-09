@@ -25,6 +25,14 @@ final class ProcessingJob {
     var nextAttemptAt: Date?
     var lastAttemptAt: Date?
     var lastError: String?
+    /// Server-side `processing_jobs.id` once the job is registered with the
+    /// backend (TAB-72). Optional + defaulted, so this is a lightweight-safe
+    /// additive migration.
+    ///
+    /// Replaces the field-semantics hack where the AssemblyAI transcript id was
+    /// smuggled inside `lastError` as `"assemblyJobId:<id>"` — an error column
+    /// carrying non-error data that no query could reason about.
+    var remoteJobId: String?
 
     init(
         id: UUID = UUID(),
@@ -36,7 +44,8 @@ final class ProcessingJob {
         updatedAt: Date = Date(),
         nextAttemptAt: Date? = nil,
         lastAttemptAt: Date? = nil,
-        lastError: String? = nil
+        lastError: String? = nil,
+        remoteJobId: String? = nil
     ) {
         self.id = id
         self.sermonId = sermonId
@@ -48,6 +57,7 @@ final class ProcessingJob {
         self.nextAttemptAt = nextAttemptAt
         self.lastAttemptAt = lastAttemptAt
         self.lastError = lastError
+        self.remoteJobId = remoteJobId
     }
 
     var kind: ProcessingJobKind {

@@ -12,6 +12,7 @@ const {
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
 const { getSubscriptionState } = require('./utils/subscriptionTier');
+const { secretMatches } = require('./utils/processingJobs');
 
 // Circuit breaker for OpenAI API
 const openAIBreaker = new CircuitBreaker(5, 30000); // 5 failures, 30 second timeout
@@ -34,25 +35,65 @@ exports.handler = withLogging('summarize', async (event, context) => {
     return createErrorResponse(new Error('Method Not Allowed'), 405);
   }
   
-  // Apply rate limiting
-  const rateLimitMiddleware = createRateLimitMiddleware('summarization');
-  const rateLimitResponse = await rateLimitMiddleware(event, context);
-  if (rateLimitResponse) {
-    logger.rateLimit(event.user?.id || 'anonymous', 'summarization', false, {
-      statusCode: rateLimitResponse.statusCode
-    });
-    return rateLimitResponse;
+  // Internal service path (TAB-72): the jobs reaper generates summaries for
+  // durable summary jobs, on behalf of a user who is not present to sign the
+  // request. It authenticates with the same shared secret the AssemblyAI
+  // webhook uses and names the user it is acting for.
+  //
+  // This exists so there is exactly ONE copy of the summarization prompt and
+  // OpenAI call. The alternative — a second internal endpoint, or duplicating
+  // ~230 lines of prompt into the reaper — is precisely the kind of divergence
+  // that produced the two drifting completion paths this PR is already fixing.
+  //
+  // It is NOT a general auth bypass: the secret is server-held (never shipped
+  // to clients), and the acting user id comes from the job row the reaper read
+  // out of Postgres, not from anything a client supplied.
+  const internalSecret = process.env.ASSEMBLYAI_WEBHOOK_SECRET;
+  const providedInternalSecret = event.headers['x-tabletnotes-internal-secret'];
+  let isInternalCall = false;
+
+  if (providedInternalSecret) {
+    if (!internalSecret || !secretMatches(providedInternalSecret, internalSecret)) {
+      logger.security('internal_summarize_auth_failed', { ip: event.headers['x-forwarded-for'] });
+      return createErrorResponse(new Error('Unauthorized'), 401);
+    }
+    let internalBody;
+    try {
+      internalBody = JSON.parse(event.body || '{}');
+    } catch (_) {
+      return createErrorResponse(new Error('Invalid JSON in request body'), 400);
+    }
+    if (!Validator.isValidUserId(internalBody.userId)) {
+      return createErrorResponse(new Error('Internal call requires a valid userId'), 400);
+    }
+    event.user = { id: internalBody.userId };
+    isInternalCall = true;
+    logger.info('Authenticated internal summarize call', { userId: internalBody.userId });
   }
-  
-  // Apply authentication
-  const authMiddleware = createAuthMiddleware();
-  const authResponse = await authMiddleware(event);
-  if (authResponse) {
-    logger.security('authentication_failed', { 
-      reason: 'missing_or_invalid_token',
-      ip: event.headers['x-forwarded-for'] 
-    });
-    return authResponse;
+
+  if (!isInternalCall) {
+    // Apply rate limiting (skipped for internal calls: the reaper is already
+    // rate-limited by its own 5-minute schedule and per-sweep batch cap, and a
+    // user-keyed limit would make the queue starve itself).
+    const rateLimitMiddleware = createRateLimitMiddleware('summarization');
+    const rateLimitResponse = await rateLimitMiddleware(event, context);
+    if (rateLimitResponse) {
+      logger.rateLimit(event.user?.id || 'anonymous', 'summarization', false, {
+        statusCode: rateLimitResponse.statusCode
+      });
+      return rateLimitResponse;
+    }
+
+    // Apply authentication
+    const authMiddleware = createAuthMiddleware();
+    const authResponse = await authMiddleware(event);
+    if (authResponse) {
+      logger.security('authentication_failed', {
+        reason: 'missing_or_invalid_token',
+        ip: event.headers['x-forwarded-for']
+      });
+      return authResponse;
+    }
   }
 
   try {
