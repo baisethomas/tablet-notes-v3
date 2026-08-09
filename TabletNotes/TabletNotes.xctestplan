@@ -1,0 +1,33 @@
+{
+  "configurations" : [
+    {
+      "id" : "35A1D1F0-0000-4000-A000-000000000001",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testExecutionOrdering" : "alphabetical"
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:TabletNotes.xcodeproj",
+        "identifier" : "BB281F142DF2CC34007326CB",
+        "name" : "TabletNotesTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:TabletNotes.xcodeproj",
+        "identifier" : "BB281F1E2DF2CC34007326CB",
+        "name" : "TabletNotesUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
