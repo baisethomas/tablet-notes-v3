@@ -15,21 +15,40 @@ struct InterruptedRecordingManifest: Codable, Equatable {
     let userId: UUID?
 }
 
-enum InterruptedRecordingRecoveryStore {
+/// Persists the "a recording was in progress" manifest.
+///
+/// The backing `UserDefaults` is injected rather than hardcoded to `.standard`.
+/// In the app there is exactly one store (`.shared`, over `.standard`) and the
+/// behavior is unchanged; the seam exists because this is process-global state
+/// that four test suites read and clear. With Swift Testing's parallelism they
+/// were overwriting each other's manifests — a suite calling `clear()` in its
+/// setup would wipe a manifest another suite had just written, which is what
+/// made `SermonService`'s sign-out guard see (or miss) an interrupted
+/// recording at random. Injecting a per-test suite removes the sharing instead
+/// of trying to order the sharers.
+struct InterruptedRecordingRecoveryStore {
     private static let activeRecordingKey = "active_recording_manifest"
-    private static let userDefaults = UserDefaults.standard
+    private let userDefaults: UserDefaults
 
-    static func save(_ manifest: InterruptedRecordingManifest) {
-        guard let data = try? JSONEncoder().encode(manifest) else { return }
-        userDefaults.set(data, forKey: activeRecordingKey)
+    /// The app-wide store. Production code resolves this by default, so the
+    /// key and its semantics are exactly as before.
+    static let shared = InterruptedRecordingRecoveryStore()
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
     }
 
-    static func load() -> InterruptedRecordingManifest? {
-        guard let data = userDefaults.data(forKey: activeRecordingKey) else { return nil }
+    func save(_ manifest: InterruptedRecordingManifest) {
+        guard let data = try? JSONEncoder().encode(manifest) else { return }
+        userDefaults.set(data, forKey: Self.activeRecordingKey)
+    }
+
+    func load() -> InterruptedRecordingManifest? {
+        guard let data = userDefaults.data(forKey: Self.activeRecordingKey) else { return nil }
         return try? JSONDecoder().decode(InterruptedRecordingManifest.self, from: data)
     }
 
-    static func clear() {
-        userDefaults.removeObject(forKey: activeRecordingKey)
+    func clear() {
+        userDefaults.removeObject(forKey: Self.activeRecordingKey)
     }
 }

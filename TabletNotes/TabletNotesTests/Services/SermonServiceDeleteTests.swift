@@ -5,6 +5,10 @@ import Testing
 
 @MainActor
 struct SermonServiceDeleteTests {
+    /// A fresh suite instance per test means a fresh recovery store per test;
+    /// these suites used to contend on one global manifest key.
+    private let isolated = IsolatedRecoveryStore()
+
     final class MockSyncService: SyncServiceProtocol {
         private(set) var deletedRemoteIds: [String] = []
         private(set) var syncAllDataCallCount = 0
@@ -32,7 +36,7 @@ struct SermonServiceDeleteTests {
     }
 
     private func makeModelContext() throws -> ModelContext {
-        UserDefaults.standard.removeObject(forKey: "SermonService.localDataOwnerUserId")
+        isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId")
         let schema = Schema([
             Sermon.self,
             Note.self,
@@ -60,7 +64,9 @@ struct SermonServiceDeleteTests {
         return SermonService(
             modelContext: modelContext,
             authManager: authManager,
-            syncService: syncService
+            syncService: syncService,
+            recoveryStore: isolated.store,
+            userDefaults: isolated.defaults
         )
     }
 

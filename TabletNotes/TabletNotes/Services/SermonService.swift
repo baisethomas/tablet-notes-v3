@@ -75,11 +75,13 @@ class SermonService {
         }
     }
 
-    init(modelContext: ModelContext, authManager: AuthenticationManager? = nil, syncService: (any SyncServiceProtocol)? = nil, subscriptionService: (any SubscriptionServiceProtocol)? = nil) {
+    init(modelContext: ModelContext, authManager: AuthenticationManager? = nil, syncService: (any SyncServiceProtocol)? = nil, subscriptionService: (any SubscriptionServiceProtocol)? = nil, recoveryStore: InterruptedRecordingRecoveryStore = .shared, userDefaults: UserDefaults = .standard) {
         self.modelContext = modelContext
         self.authManager = authManager ?? AuthenticationManager.shared
         self.syncService = syncService
         self.subscriptionService = subscriptionService
+        self.recoveryStore = recoveryStore
+        self.userDefaults = userDefaults
         if case .authenticated = self.authManager.authState {
             wasAuthenticated = true
         }
@@ -127,6 +129,14 @@ class SermonService {
     /// Tracks authenticated → unauthenticated transitions so sign-out wipes local data once.
     private var wasAuthenticated = false
     private static let localDataOwnerUserIdKey = "SermonService.localDataOwnerUserId"
+    /// Injected so tests get an isolated manifest rather than sharing one
+    /// process-global key. Defaults to the app-wide store.
+    private let recoveryStore: InterruptedRecordingRecoveryStore
+    /// Backing store for `localDataOwnerUserIdKey`. Injected for the same
+    /// test-isolation reason as `recoveryStore`; `.standard` in the app.
+    /// NOTE: deliberately NOT used by `clearRecordingNoteSessions`, which must
+    /// clear the keys NoteService actually wrote to `.standard`.
+    private let userDefaults: UserDefaults
     private let interruptedRecordingMinimumSizeBytes: Int64 = 1024
 
     private struct TranscriptSegmentSnapshot {
@@ -976,7 +986,7 @@ class SermonService {
     /// cloud, or an interrupted-recording manifest (in-flight or unrecovered
     /// recording). Errs on the side of "unsynced" when the store can't be read.
     private func hasUnsyncedLocalWork() -> Bool {
-        if InterruptedRecordingRecoveryStore.load() != nil {
+        if recoveryStore.load() != nil {
             return true
         }
 
@@ -997,7 +1007,7 @@ class SermonService {
     func deleteAllLocalUserData() {
         deleteAllSermons()
         removeAllRemainingLocalAudioFiles()
-        InterruptedRecordingRecoveryStore.clear()
+        recoveryStore.clear()
         clearRecordingNoteSessions()
         DataMigration.clearRecoveryFlags()
         clearLocalDataOwnershipMarker()
@@ -1008,7 +1018,7 @@ class SermonService {
     private func ensureLocalDataBelongsToCurrentUser() {
         guard let userId = activeUser?.id else { return }
 
-        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        let storedOwnerId = userDefaults.string(forKey: Self.localDataOwnerUserIdKey)
         if storedOwnerId != userId.uuidString {
             let shouldWipe = storedOwnerId != nil
                 || hasSermonsOwnedByDifferentUser(than: userId)
@@ -1018,7 +1028,7 @@ class SermonService {
                 print("[SermonService] Local data belongs to another user — wiping before continuing")
                 deleteAllLocalUserData()
             }
-            UserDefaults.standard.set(userId.uuidString, forKey: Self.localDataOwnerUserIdKey)
+            userDefaults.set(userId.uuidString, forKey: Self.localDataOwnerUserIdKey)
         }
     }
 
@@ -1031,7 +1041,7 @@ class SermonService {
     }
 
     private func hasRecoveryManifestOwnedByDifferentUser(than userId: UUID) -> Bool {
-        guard let manifest = InterruptedRecordingRecoveryStore.load(),
+        guard let manifest = recoveryStore.load(),
               let manifestUserId = manifest.userId else {
             return false
         }
@@ -1039,7 +1049,7 @@ class SermonService {
     }
 
     private func clearLocalDataOwnershipMarker() {
-        UserDefaults.standard.removeObject(forKey: Self.localDataOwnerUserIdKey)
+        userDefaults.removeObject(forKey: Self.localDataOwnerUserIdKey)
     }
 
     private static var audioRecordingsDirectory: URL {
@@ -1245,7 +1255,7 @@ class SermonService {
         guard !hasAttemptedInterruptedRecordingRecovery else { return }
         hasAttemptedInterruptedRecordingRecovery = true
 
-        guard let manifest = InterruptedRecordingRecoveryStore.load() else { return }
+        guard let manifest = recoveryStore.load() else { return }
 
         guard let activeUserId = activeUser?.id else {
             print("[SermonService] Skipping interrupted recording recovery — no signed-in user")
@@ -1254,13 +1264,13 @@ class SermonService {
 
         guard let manifestUserId = manifest.userId else {
             print("[SermonService] Discarding legacy interrupted recording manifest without owner")
-            InterruptedRecordingRecoveryStore.clear()
+            recoveryStore.clear()
             return
         }
 
         guard manifestUserId == activeUserId else {
             print("[SermonService] Skipping interrupted recording recovery — manifest belongs to another user")
-            InterruptedRecordingRecoveryStore.clear()
+            recoveryStore.clear()
             return
         }
 
@@ -1269,7 +1279,7 @@ class SermonService {
             .appendingPathComponent(manifest.audioFileName)
 
         if sermons.contains(where: { $0.audioFileName == manifest.audioFileName }) || findSermon(withAudioFileName: manifest.audioFileName) != nil {
-            InterruptedRecordingRecoveryStore.clear()
+            recoveryStore.clear()
             NoteService(sessionId: manifest.sessionId).clearSession()
             return
         }
@@ -1278,7 +1288,7 @@ class SermonService {
               let fileSize = getFileSize(audioURL),
               fileSize >= interruptedRecordingMinimumSizeBytes else {
             print("[SermonService] Interrupted recording manifest found but audio file was unavailable or too small")
-            InterruptedRecordingRecoveryStore.clear()
+            recoveryStore.clear()
             return
         }
 
@@ -1312,7 +1322,7 @@ class SermonService {
         do {
             try modelContext.save()
             recoveredInterruptedSermonIDs.append(sermon.id)
-            InterruptedRecordingRecoveryStore.clear()
+            recoveryStore.clear()
             noteService.clearSession()
             print("[SermonService] Recovered interrupted recording \(manifest.audioFileName)")
         } catch {
@@ -1349,7 +1359,7 @@ class SermonService {
     private func recoverFromMigration() -> Bool {
         guard let activeUserId = activeUser?.id else { return false }
 
-        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        let storedOwnerId = userDefaults.string(forKey: Self.localDataOwnerUserIdKey)
         guard storedOwnerId == activeUserId.uuidString else {
             print("[SermonService] Skipping migration recovery — local data owner mismatch")
             DataMigration.clearRecoveryFlags()
@@ -1385,7 +1395,7 @@ class SermonService {
     private func checkForOrphanedAudioFiles() {
         guard let activeUserId = activeUser?.id else { return }
 
-        let storedOwnerId = UserDefaults.standard.string(forKey: Self.localDataOwnerUserIdKey)
+        let storedOwnerId = userDefaults.string(forKey: Self.localDataOwnerUserIdKey)
         guard storedOwnerId == activeUserId.uuidString else {
             print("[SermonService] Skipping orphan audio recovery — local data owner mismatch")
             return
@@ -1401,7 +1411,7 @@ class SermonService {
             let knownAudioFileNames = Set(allSermons.map { $0.audioFileName })
 
             // Never treat the in-flight recording as orphaned.
-            let activeRecordingFileName = InterruptedRecordingRecoveryStore.load()?.audioFileName
+            let activeRecordingFileName = recoveryStore.load()?.audioFileName
 
             let audioDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("AudioRecordings")

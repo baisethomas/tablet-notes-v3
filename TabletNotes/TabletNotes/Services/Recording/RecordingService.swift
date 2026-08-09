@@ -40,14 +40,17 @@ class RecordingService {
 
     private var durationTask: Task<Void, Never>?
     private let authManager: AuthenticationManager
+    private let recoveryStore: InterruptedRecordingRecoveryStore
     private var activeRecoverySessionId: String?
 
     init(
         captureEngine: (any AudioCapturing)? = nil,
-        authManager: AuthenticationManager? = nil
+        authManager: AuthenticationManager? = nil,
+        recoveryStore: InterruptedRecordingRecoveryStore = .shared
     ) {
         self.captureEngine = captureEngine ?? AudioCaptureEngine.shared
         self.authManager = authManager ?? AuthenticationManager.shared
+        self.recoveryStore = recoveryStore
         isRecordingPublisher = isRecordingSubject.eraseToAnyPublisher()
         audioFileURLPublisher = audioFileURLSubject.eraseToAnyPublisher()
         audioFileNamePublisher = audioFileNameSubject.eraseToAnyPublisher()
@@ -163,7 +166,7 @@ class RecordingService {
         remainingTime = nil
         cachedMaxDuration = nil
         activeRecoverySessionId = nil
-        InterruptedRecordingRecoveryStore.clear()
+        recoveryStore.clear()
 
         if let currentURL {
             print("[RecordingService] stopRecording() finalized \(currentURL.lastPathComponent)")
@@ -204,7 +207,7 @@ class RecordingService {
             return
         }
 
-        InterruptedRecordingRecoveryStore.save(
+        recoveryStore.save(
             InterruptedRecordingManifest(
                 sessionId: activeRecoverySessionId,
                 serviceType: serviceType,

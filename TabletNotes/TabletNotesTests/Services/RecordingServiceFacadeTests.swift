@@ -9,13 +9,21 @@ import Testing
 /// recording), and state bookkeeping — all without AVFoundation hardware.
 @MainActor
 struct RecordingServiceFacadeTests {
+    /// Swift Testing builds a fresh suite instance per test, so each case gets
+    /// its own recovery store and never shares the manifest key — see
+    /// IsolatedRecoveryStore for why that used to bite.
+    private let isolated = IsolatedRecoveryStore()
+
     private func makeService() -> (RecordingService, MockAudioCaptureEngine) {
-        InterruptedRecordingRecoveryStore.clear()
         let engine = MockAudioCaptureEngine()
         let mockAuthService = MockAuthService()
         mockAuthService.setAuthState(.authenticated(MockAuthService.createMockUser()))
         let authManager = AuthenticationManager(authService: mockAuthService)
-        let service = RecordingService(captureEngine: engine, authManager: authManager)
+        let service = RecordingService(
+            captureEngine: engine,
+            authManager: authManager,
+            recoveryStore: isolated.store
+        )
         return (service, engine)
     }
 
@@ -34,7 +42,6 @@ struct RecordingServiceFacadeTests {
 
     @Test func startRecordingWritesRecoveryManifest() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         service.prepareRecoverySession(sessionId: "session-123")
         try await service.startRecording(serviceType: "Sunday Service")
@@ -42,7 +49,7 @@ struct RecordingServiceFacadeTests {
         #expect(engine.startCallCount == 1)
         #expect(service.isRecording)
 
-        let manifest = InterruptedRecordingRecoveryStore.load()
+        let manifest = isolated.store.load()
         #expect(manifest != nil)
         #expect(manifest?.sessionId == "session-123")
         #expect(manifest?.serviceType == "Sunday Service")
@@ -52,11 +59,10 @@ struct RecordingServiceFacadeTests {
 
     @Test func startWithoutRecoverySessionWritesNoManifest() async throws {
         let (service, _) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         // prepareRecoverySession deliberately not called.
         try await service.startRecording(serviceType: "Sunday Service")
-        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(isolated.store.load() == nil)
     }
 
     @Test func stopRecordingClearsManifestAndState() async throws {
@@ -64,18 +70,17 @@ struct RecordingServiceFacadeTests {
 
         service.prepareRecoverySession(sessionId: "session-123")
         try await service.startRecording(serviceType: "Sunday Service")
-        #expect(InterruptedRecordingRecoveryStore.load() != nil)
+        #expect(isolated.store.load() != nil)
 
         let url = service.stopRecording()
         #expect(url == engine.lastStartedURL)
         #expect(engine.stopCallCount == 1)
         #expect(!service.isRecording)
-        #expect(InterruptedRecordingRecoveryStore.load() == nil)
+        #expect(isolated.store.load() == nil)
     }
 
     @Test func engineFailureAutoStopsAndEmitsStopEvent() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         service.prepareRecoverySession(sessionId: "session-123")
         try await service.startRecording(serviceType: "Sunday Service")
@@ -111,7 +116,6 @@ struct RecordingServiceFacadeTests {
 
     @Test func staleCaptureFailureForAnotherRecordingIsIgnored() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         service.prepareRecoverySession(sessionId: "session-123")
         try await service.startRecording(serviceType: "Sunday Service")
@@ -125,12 +129,11 @@ struct RecordingServiceFacadeTests {
         // Give the main-actor hop time to run, then confirm nothing changed.
         try await Task.sleep(nanoseconds: 200_000_000)
         #expect(service.isRecording)
-        #expect(InterruptedRecordingRecoveryStore.load() != nil)
+        #expect(isolated.store.load() != nil)
     }
 
     @Test func interruptionEventsTogglePausedState() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         try await service.startRecording(serviceType: "Sunday Service")
         let url = engine.lastStartedURL
@@ -145,7 +148,6 @@ struct RecordingServiceFacadeTests {
 
     @Test func staleInterruptionForAnotherRecordingIsIgnored() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         try await service.startRecording(serviceType: "Sunday Service")
 
@@ -161,7 +163,6 @@ struct RecordingServiceFacadeTests {
 
     @Test func resumeFailureThrowsResumeFailed() async throws {
         let (service, engine) = makeService()
-        defer { InterruptedRecordingRecoveryStore.clear() }
 
         try await service.startRecording(serviceType: "Sunday Service")
         try service.pauseRecording()
