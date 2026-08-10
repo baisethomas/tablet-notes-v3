@@ -546,4 +546,103 @@ struct SummaryRetryServiceRegressionTests {
         #expect(refreshedJob?.status == .complete)
         #expect(refreshedJob?.attemptCount == 0)
     }
+
+    /// Regression for TAB-79: a sermon transcribed before TranscriptSnapshotStore
+    /// existed has its text only in the `Transcript` relationship. Every automatic
+    /// recovery path reads the snapshot and nothing else, so without a backfill the
+    /// summary can never be recovered — the runner is never even reached.
+    @MainActor
+    @Test func backfillWritesSnapshotsForTranscriptsThatPredateTheSnapshotStore() async throws {
+        let context = try makeModelContext()
+
+        let transcript = Transcript(text: String(repeating: "Legacy transcript text ", count: 16))
+        let sermon = Sermon(
+            title: "Legacy Sermon",
+            audioFileName: "legacy-summary.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        context.insert(transcript)
+        context.insert(sermon)
+        try context.save()
+
+        // Deliberately NOT seeding TranscriptSnapshotStore — that is the legacy shape.
+        TranscriptSnapshotStore.remove(for: sermon.id)
+        #expect(TranscriptSnapshotStore.snapshot(for: sermon.id) == nil)
+
+        let retryService = SummaryRetryService()
+        defer {
+            retryService.summaryRunner = nil
+            retryService.basicSummaryGenerator = nil
+            retryService.overrideNetworkAvailability(false)
+            TranscriptSnapshotStore.remove(for: sermon.id)
+        }
+
+        // setModelContext performs the backfill.
+        retryService.setModelContext(context)
+
+        let snapshot = TranscriptSnapshotStore.snapshot(for: sermon.id)
+        #expect(snapshot != nil)
+        #expect(snapshot?.text == transcript.text)
+        #expect(snapshot?.transcriptId == transcript.id)
+
+        // And the summary is now actually recoverable end to end.
+        var runnerCallCount = 0
+        retryService.summaryRunner = { transcript, serviceType in
+            runnerCallCount += 1
+            return SummaryGenerationResult(
+                title: "Legacy Recovered Title",
+                summary: "Legacy recovered summary for \(serviceType) from \(transcript.prefix(12))"
+            )
+        }
+        retryService.overrideNetworkAvailability(true)
+        retryService.recoverIncompleteSummaries()
+        retryService.processQueue()
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let refreshed = try context.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(runnerCallCount == 1)
+        #expect(refreshed?.summaryStatus == "complete")
+        #expect(refreshed?.summary?.title == "Legacy Recovered Title")
+    }
+
+    /// A sermon with no transcript text must NOT get a snapshot — the backfill
+    /// must not invent work for sermons there is nothing to summarize from.
+    @MainActor
+    @Test func backfillSkipsSermonsWithNoTranscriptText() async throws {
+        let context = try makeModelContext()
+
+        let empty = Transcript(text: "   ")
+        let sermon = Sermon(
+            title: "Empty Transcript Sermon",
+            audioFileName: "empty-summary.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            transcript: empty,
+            notes: [],
+            summary: nil,
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        context.insert(empty)
+        context.insert(sermon)
+        try context.save()
+        TranscriptSnapshotStore.remove(for: sermon.id)
+
+        let retryService = SummaryRetryService()
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+        retryService.setModelContext(context)
+
+        #expect(TranscriptSnapshotStore.snapshot(for: sermon.id) == nil)
+    }
 }
