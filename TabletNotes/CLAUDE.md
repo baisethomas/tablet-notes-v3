@@ -68,7 +68,7 @@ cd tablet-notes-api && npm test          # node --test over utils/__tests__/
 node --check netlify/functions/<changed-file>.js   # functions have no test harness; at least syntax-check
 ```
 
-**Deploy backend** (Netlify does NOT auto-deploy — see §7):
+**Deploy backend** (merges to `main` auto-deploy; run this for env-var changes or to force a deploy — see §7):
 ```bash
 cd tablet-notes-api && netlify deploy --prod
 ```
@@ -139,8 +139,11 @@ If a test fails, check whether it fails on `main` before assuming your change ca
 
 ## 7. Deploys: merged ≠ live
 
-- Netlify prod (`comfy-daffodil-7ecc55`) does **not** auto-deploy from GitHub. Every backend change is inert until someone runs `netlify deploy --prod` from `tablet-notes-api/`.
-- Therefore: every PR touching `tablet-notes-api/` says so in the body, and after merge the deploy is tracked as an explicit follow-up ("deploy debt"). When asked "is X fixed?", the honest answer distinguishes *merged* from *deployed* from *verified in prod*.
+- Netlify prod (`comfy-daffodil-7ecc55`) **does auto-deploy from GitHub on merge to `main`** (verified 2026-08-11). This file previously said the opposite; it was wrong, and the belief that backend code was inert until a manual deploy shaped several sessions.
+- A deploy listed as `state=error` is often **not** a failure. A merge whose diff touches nothing under `tablet-notes-api/` (e.g. an iOS-only PR) reports `Canceled build due to no content change`. Read the error before treating it as broken.
+- **`netlify deploy --prod` from `tablet-notes-api/` is still required** for anything the git push doesn't carry — most importantly **env var changes**, which existing functions do not pick up until they are redeployed.
+- **Code auto-deploying does not mean the feature is live.** Its migrations, env vars and flags do not ride along. TAB-72 shipped its functions on merge and still did nothing for two days: `processing_jobs` did not exist and two env vars were unset. When asked "is X fixed?", distinguish *merged* from *deployed* from *its prerequisites applied* from *verified in prod*.
+- Every PR touching `tablet-notes-api/` still states its deploy/migration/env prerequisites in the body, and unmet ones are tracked as explicit follow-ups ("deploy debt").
 - After deploying: smoke-check endpoints with unauthenticated curls (expect 400/401/405 — a 500 means the deploy is broken) and verify the specific fix against prod data.
 - Env vars are per-site in Netlify (`netlify env:list --context production`). Some fixes are gated on env vars only the owner can provision (e.g. Upstash Redis, Apple root cert) — code that fails closed until then is correct behavior, not a bug.
 

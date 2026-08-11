@@ -5,7 +5,14 @@ description: Safely deploy the TabletNotes Netlify backend (tablet-notes-api/) t
 
 # Deploy & verify the Netlify backend
 
-**Core fact: Netlify prod (`comfy-daffodil-7ecc55`) does NOT auto-deploy from GitHub.** Every merged backend change is inert until `netlify deploy --prod` runs from `tablet-notes-api/` (the linked directory). Fixes have sat merged-but-dead for weeks here; "is it fixed?" always means checking merged vs deployed vs verified.
+**Core fact: Netlify prod (`comfy-daffodil-7ecc55`) auto-deploys from GitHub on merge to `main`** (verified 2026-08-11 — this skill previously claimed the opposite). Two consequences:
+
+- A merged backend change usually **is** already live. Check before assuming a deploy is needed.
+- A deploy showing `state=error` is often benign: a merge that touches nothing under `tablet-notes-api/` reports `Canceled build due to no content change`. Read the error before calling it broken.
+
+`netlify deploy --prod` from `tablet-notes-api/` is still required for anything the git push does not carry — above all **env var changes**, which existing functions do not pick up until redeployed.
+
+**Auto-deployed code is not a working feature.** Migrations, env vars and flags do not ride along, and their absence is usually silent because the code fails closed. TAB-72's functions went live on merge and did nothing for two days: `processing_jobs` did not exist and two env vars were unset. "Is it fixed?" means checking merged vs deployed vs **prerequisites applied** vs verified.
 
 **Deploying prod requires explicit owner go-ahead for this specific deploy.** If you don't have it, run Phases 0–1 (audit + preflight), report readiness, and stop.
 
@@ -90,7 +97,9 @@ Some verifications need a real device/account (owner action) — if so, write th
 
 ## Anti-patterns (each has burned this project)
 
-- Declaring a backend fix done at merge. **Merged ≠ live.**
+- Declaring a backend fix done at merge. The code may well be live — but **live code ≠ working feature** if its migration or env vars are missing.
+- Reading `state=error` on a deploy as a failure without opening it; "no content change" cancellations are normal for iOS-only merges.
+- Assuming an env var takes effect without a redeploy.
 - Deploying with untested working-tree edits, or from a feature branch.
 - Skipping the smoke curls because "the tests passed" — unit tests cover `utils/`, not the function wiring, env access, or Netlify runtime.
 - Treating a fail-closed 503 as a deploy failure — check whether it's an intended env-var gate first.
