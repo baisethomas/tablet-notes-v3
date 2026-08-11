@@ -354,19 +354,28 @@ struct SermonServiceSaveTests {
         mockAuthService.setAuthState(.authenticated(userA))
         let authManager = AuthenticationManager(authService: mockAuthService)
 
+        // Both sermons are fully synced. This test predates TAB-65, which
+        // narrowed the sign-out wipe so it never destroys data whose only copy
+        // is local. Without a remoteId these are local-only and are now
+        // correctly PRESERVED — so the original fixtures no longer describe the
+        // "everything is safely in the cloud" case this test is about.
         let userASermon = Sermon(
             title: "User A Sermon",
             audioFileName: "user-a.m4a",
             date: Date(),
             serviceType: "Sunday Service",
-            userId: userA.id
+            syncStatus: "synced",
+            userId: userA.id,
+            remoteId: "remote-user-a"
         )
         let orphanSermon = Sermon(
             title: "Orphan Sermon",
             audioFileName: "orphan.m4a",
             date: Date(),
             serviceType: "Sunday Service",
-            userId: nil
+            syncStatus: "synced",
+            userId: nil,
+            remoteId: "remote-orphan"
         )
         modelContext.insert(userASermon)
         modelContext.insert(orphanSermon)
