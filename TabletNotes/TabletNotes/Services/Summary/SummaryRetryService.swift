@@ -99,6 +99,68 @@ class SummaryRetryService: ObservableObject {
 
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
+        backfillMissingTranscriptSnapshots()
+    }
+
+    /// Writes a transcript snapshot for any sermon that already has transcript
+    /// text but no snapshot (TAB-79).
+    ///
+    /// `TranscriptSnapshotStore` was introduced by the same change that made the
+    /// automatic recovery paths read the snapshot and *only* the snapshot
+    /// (`allowRelationshipFallback: false`). A sermon transcribed before that —
+    /// or one whose snapshot never got written for any other reason — therefore
+    /// has its transcript text sitting in the `Transcript` relationship where no
+    /// automatic path will ever look, and its summary can never be recovered.
+    ///
+    /// This normalizes the data rather than loosening the guard: recovery keeps
+    /// its "snapshot required" invariant. Reading the relationship here is
+    /// deliberate and safe — it happens outside any recovery decision.
+    ///
+    /// Scoped to sermons automatic recovery would actually act on
+    /// (`shouldAutomaticallyRecoverSummary`, which includes the 7-day
+    /// `automaticRecoveryWindow`). An unfiltered pass would JSON-encode every
+    /// completed transcript in the library into `UserDefaults` on a `@MainActor`
+    /// call during startup — potentially megabytes of text — to benefit only the
+    /// handful of sermons still inside the window. Sermons outside it are
+    /// unaffected either way: they are reachable through manual retry, which
+    /// allows the relationship fallback.
+    @discardableResult
+    func backfillMissingTranscriptSnapshots() -> Int {
+        guard let context = modelContext else { return 0 }
+
+        do {
+            let sermons = try context.fetch(FetchDescriptor<Sermon>())
+            var backfilled = 0
+
+            for sermon in sermons where sermon.transcriptionStatus == "complete" {
+                guard shouldAutomaticallyRecoverSummary(
+                        for: sermon,
+                        job: job(for: sermon.id)
+                      ),
+                      TranscriptSnapshotStore.snapshot(for: sermon.id) == nil,
+                      let transcript = sermon.transcript,
+                      normalizedTranscriptText(transcript.text) != nil else {
+                    continue
+                }
+
+                TranscriptSnapshotStore.save(
+                    transcriptId: transcript.id,
+                    text: transcript.text,
+                    for: sermon.id
+                )
+                backfilled += 1
+            }
+
+            if backfilled > 0 {
+                print("[SummaryRetryService] Backfilled \(backfilled) missing transcript snapshot(s)")
+            }
+            return backfilled
+        } catch {
+            // Non-fatal: recovery simply keeps skipping these sermons, exactly
+            // as it did before. Nothing is written, so nothing can be corrupted.
+            print("[SummaryRetryService] Failed to backfill transcript snapshots: \(error.localizedDescription)")
+            return 0
+        }
     }
 
     func overrideNetworkAvailability(_ isAvailable: Bool) {

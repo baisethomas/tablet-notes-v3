@@ -896,6 +896,9 @@ class SermonService {
         }
 
         deleteLocalAudioFile(for: sermonToDelete)
+        // The cached transcript lives in UserDefaults, outside SwiftData, so it
+        // survives the row delete unless removed explicitly (TAB-79 review).
+        TranscriptSnapshotStore.remove(for: sermonId)
         if let index = sermons.firstIndex(where: { $0.id == sermonId }) {
             sermons.remove(at: index)
             modelContext.delete(sermonToDelete)
@@ -931,6 +934,8 @@ class SermonService {
 
         for sermon in allSermons {
             deleteLocalAudioFile(for: sermon)
+            // Cached transcripts are UserDefaults-backed and outlive the row.
+            TranscriptSnapshotStore.remove(for: sermon.id)
             modelContext.delete(sermon)
         }
 
