@@ -2,6 +2,10 @@ const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
 const { withLogging } = require('./utils/logger');
+const {
+  buildSummaryUpsertRow,
+  missingRequiredSummaryColumns
+} = require('./utils/summaryRow');
 const { withTimeout } = require('./utils/security');
 const {
   JOB_KINDS,
@@ -412,21 +416,33 @@ async function runSummary({ supabase, job, logger }) {
     // reacting to 'done' must never find a missing summary.
     const { data: existingSummary } = await supabase
       .from('summaries')
-      .select('local_id')
+      .select('local_id, title, type')
       .eq('sermon_id', job.sermon_id)
       .maybeSingle();
 
-    const { error: summaryError } = await supabase.from('summaries').upsert(
-      {
-        local_id: existingSummary?.local_id || randomUUID(),
-        sermon_id: job.sermon_id,
-        user_id: job.user_id,
-        text: summaryText,
-        status: 'complete',
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'sermon_id' }
-    );
+    const summaryRow = buildSummaryUpsertRow({
+      localId: randomUUID(),
+      sermonId: job.sermon_id,
+      userId: job.user_id,
+      title,
+      text: summaryText,
+      serviceType: sermon?.service_type,
+      existingSummary
+    });
+
+    // Fail with the column name rather than a raw constraint error. The
+    // original payload omitted `type` and `title`, so every summary job died
+    // on a not-null violation (TAB-81).
+    const missingColumns = missingRequiredSummaryColumns(summaryRow);
+    if (missingColumns.length > 0) {
+      throw new Error(
+        `summary persist aborted: missing required column(s) ${missingColumns.join(', ')}`
+      );
+    }
+
+    const { error: summaryError } = await supabase
+      .from('summaries')
+      .upsert(summaryRow, { onConflict: 'sermon_id' });
 
     if (summaryError) {
       throw new Error(`summary persist failed: ${summaryError.message}`);
