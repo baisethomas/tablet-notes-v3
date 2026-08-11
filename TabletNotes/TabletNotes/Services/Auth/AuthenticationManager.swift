@@ -19,6 +19,11 @@ final class AuthenticationManager {
     /// `.unauthenticated`, and destructive reactions (local data wipe) must
     /// key off THIS flag, never off the transition itself (TAB-65).
     private(set) var isUserInitiatedSignOutInProgress = false
+    /// True once the `unauthenticated` transition belonging to the current
+    /// sign-out request has actually been observed. Until then, an
+    /// `authenticated` event cannot be a *new* sign-in — it can only be a stale
+    /// one that was already in flight — so it must not clear the intent (TAB-77).
+    private var hasObservedSignOutTransition = false
 
     // MARK: - Combine Publishers (for backward compatibility during migration)
     @ObservationIgnored @Published var authStatePublished: AuthState = .loading
@@ -93,6 +98,7 @@ final class AuthenticationManager {
         // Mark intent BEFORE the service call: the resulting unauthenticated
         // transition is observed asynchronously and must see the flag set.
         isUserInitiatedSignOutInProgress = true
+        hasObservedSignOutTransition = false
         do {
             try await authService.signOut()
         } catch {
@@ -123,6 +129,7 @@ final class AuthenticationManager {
         // Account deletion is an explicit user decision to remove their data;
         // the subsequent unauthenticated transition is user-initiated.
         isUserInitiatedSignOutInProgress = true
+        hasObservedSignOutTransition = false
         do {
             try await authService.deleteAccount()
         } catch {
@@ -157,9 +164,25 @@ final class AuthenticationManager {
                 guard let self = self else { return }
                 self.authState = state
                 self.authStatePublished = state // Sync for backward compat
-                if case .authenticated = state {
-                    // A completed sign-in clears any prior sign-out intent.
-                    self.isUserInitiatedSignOutInProgress = false
+                switch state {
+                case .authenticated:
+                    // Only a sign-in that happens AFTER the sign-out's own
+                    // unauthenticated transition is a genuinely new session.
+                    // `authService.authStatePublisher` is delivered via
+                    // `.receive(on: .main)`, so an `authenticated` queued before
+                    // `signOut()` can arrive after it; clearing on that stale
+                    // event made the real sign-out look like a session expiry
+                    // and silently skipped the local-data wipe (TAB-77).
+                    if self.hasObservedSignOutTransition {
+                        self.isUserInitiatedSignOutInProgress = false
+                        self.hasObservedSignOutTransition = false
+                    }
+                case .unauthenticated:
+                    if self.isUserInitiatedSignOutInProgress {
+                        self.hasObservedSignOutTransition = true
+                    }
+                case .loading, .error:
+                    break
                 }
                 self.updateCrashlyticsUserContext(user: self.currentUser, authState: state)
             }

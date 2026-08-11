@@ -86,7 +86,12 @@ struct SermonServiceAuthWipeTests {
 
     @Test func sessionExpiryDoesNotWipeLocalData() async throws {
         let modelContext = try makeModelContext()
-        let (_, _, mockAuthService) = makeAuthedService(modelContext: modelContext)
+        let (service, _, mockAuthService) = makeAuthedService(modelContext: modelContext)
+        // SermonService observes auth state with `[weak self]`. Discarding it here
+        // lets ARC free it before sign-out, the observer becomes a no-op, and the
+        // wipe silently never runs — which made the "preserve" cases pass
+        // vacuously and the wipe case fail (TAB-77).
+        defer { withExtendedLifetime(service) {} }
         try insertSermon(modelContext: modelContext, remoteId: "remote-1")
         await settle()
 
@@ -101,7 +106,12 @@ struct SermonServiceAuthWipeTests {
 
     @Test func userSignOutWithUnsyncedSermonPreservesData() async throws {
         let modelContext = try makeModelContext()
-        let (_, authManager, _) = makeAuthedService(modelContext: modelContext)
+        let (service, authManager, _) = makeAuthedService(modelContext: modelContext)
+        // SermonService observes auth state with `[weak self]`. Discarding it here
+        // lets ARC free it before sign-out, the observer becomes a no-op, and the
+        // wipe silently never runs — which made the "preserve" cases pass
+        // vacuously and the wipe case fail (TAB-77).
+        defer { withExtendedLifetime(service) {} }
         try insertSermon(modelContext: modelContext, remoteId: nil)
         await settle()
 
@@ -115,7 +125,12 @@ struct SermonServiceAuthWipeTests {
 
     @Test func userSignOutWithPendingSyncWorkPreservesData() async throws {
         let modelContext = try makeModelContext()
-        let (_, authManager, _) = makeAuthedService(modelContext: modelContext)
+        let (service, authManager, _) = makeAuthedService(modelContext: modelContext)
+        // SermonService observes auth state with `[weak self]`. Discarding it here
+        // lets ARC free it before sign-out, the observer becomes a no-op, and the
+        // wipe silently never runs — which made the "preserve" cases pass
+        // vacuously and the wipe case fail (TAB-77).
+        defer { withExtendedLifetime(service) {} }
         try insertSermon(modelContext: modelContext, remoteId: "remote-1", pendingSync: true)
         await settle()
 
@@ -127,7 +142,12 @@ struct SermonServiceAuthWipeTests {
 
     @Test func userSignOutWithInterruptedRecordingPreservesData() async throws {
         let modelContext = try makeModelContext()
-        let (_, authManager, _) = makeAuthedService(modelContext: modelContext)
+        let (service, authManager, _) = makeAuthedService(modelContext: modelContext)
+        // SermonService observes auth state with `[weak self]`. Discarding it here
+        // lets ARC free it before sign-out, the observer becomes a no-op, and the
+        // wipe silently never runs — which made the "preserve" cases pass
+        // vacuously and the wipe case fail (TAB-77).
+        defer { withExtendedLifetime(service) {} }
         try insertSermon(modelContext: modelContext, remoteId: "remote-1")
         isolated.store.save(
             InterruptedRecordingManifest(
@@ -151,7 +171,12 @@ struct SermonServiceAuthWipeTests {
 
     @Test func userSignOutWithEverythingSyncedWipesData() async throws {
         let modelContext = try makeModelContext()
-        let (_, authManager, _) = makeAuthedService(modelContext: modelContext)
+        let (service, authManager, _) = makeAuthedService(modelContext: modelContext)
+        // SermonService observes auth state with `[weak self]`. Discarding it here
+        // lets ARC free it before sign-out, the observer becomes a no-op, and the
+        // wipe silently never runs — which made the "preserve" cases pass
+        // vacuously and the wipe case fail (TAB-77).
+        defer { withExtendedLifetime(service) {} }
         try insertSermon(modelContext: modelContext, remoteId: "remote-1")
         await settle()
 
