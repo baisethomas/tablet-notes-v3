@@ -95,11 +95,14 @@ Body template (all sections, every time):
 <numbered steps the owner can follow>
 
 ## Deploy / migration notes
-<"Requires `netlify deploy --prod` from tablet-notes-api/ — inert until deployed" |
+<Backend code auto-deploys on merge. State only what does NOT ride along:
+ "Requires Supabase migration <file>" |
+ "Requires env var <NAME> + `netlify deploy --prod` for functions to pick it up" |
+ "Flag-gated, default off" |
  "@Model changed: <lightweight-safe? why>" | "None">
 ```
 
-Then: link the PR on the Linear issue, leave a one-line comment there summarizing state (e.g. "PR #NN open; backend fix inert until deploy").
+Then: link the PR on the Linear issue, leave a one-line comment there summarizing state (e.g. "PR #NN open; needs migration <file> before it does anything").
 
 **Do not merge. Ever.** The owner merges.
 
@@ -115,6 +118,6 @@ Owner review rounds are the norm (TAB-53 took five). For each round:
 
 ## Phase 6 — After merge
 
-- Backend files changed → the fix is **inert until `netlify deploy --prod`**. State this explicitly and track it as deploy debt (see `deploy-api` skill). Update the Linear issue: merged @ sha, deploy pending.
+- Backend files changed → the code **auto-deploys on merge** (CLAUDE.md §7), so it is usually already live. What does NOT ride along is migrations, env vars and flags — and their absence is silent, because the code fails closed. Verify the prerequisites actually landed rather than assuming either way, and track any unmet one as deploy debt (see `deploy-api` skill). Update the Linear issue: merged @ sha, plus what is still gated.
 - Client-only → note which build/TestFlight it lands in.
 - Move Linear status only to a state that's true (merged ≠ Done if deploy or device verification is pending).

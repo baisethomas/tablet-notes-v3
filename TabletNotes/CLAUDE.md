@@ -196,7 +196,7 @@ Each of these happened (or was caught in review) in this repo. The rule column i
 - [ ] New/changed endpoint has: Bearer auth, Joi validation, rate limit, correct sanitization
 - [ ] Failure paths return non-2xx; nothing clears client dirty state on partial success
 - [ ] Shared logic lives in `utils/` with a `__tests__/` suite (functions themselves are untestable — extract to test)
-- [ ] PR body states "requires `netlify deploy --prod`" and what to verify post-deploy
+- [ ] PR body states the real prerequisites and what to verify post-deploy. Code merged to `main` auto-deploys (§7), so the item to call out is anything that does NOT ride along: a Supabase migration, a new env var (needs `netlify deploy --prod` to take effect), or a feature flag that stays off
 
 **A PR is ready for owner review when:**
 - [ ] Exactly one Linear issue; title `[TAB-NN] …`; rebased on current `main`; no unrelated diffs
