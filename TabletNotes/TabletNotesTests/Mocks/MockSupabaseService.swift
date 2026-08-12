@@ -79,18 +79,27 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         remoteSermons = sermons
     }
 
-    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
+    /// The sermon ids callers requested an upload URL for, in order. Lets a test
+    /// assert the stable-path opt-in actually reaches the server (TAB-73).
+    private(set) var requestedSermonLocalIds: [UUID?] = []
+
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int, sermonLocalId: UUID? = nil) async throws -> (uploadUrl: URL, path: String, upsert: Bool) {
         _ = contentType
         _ = fileSize
+        requestedSermonLocalIds.append(sermonLocalId)
         try throwIfNeeded(for: [.authenticationRequired, .networkError, .signedURLFailed])
 
-        let path = "\(Constants.defaultPathPrefix)/\(fileName)"
+        // Mirror the server: a sermon id yields a stable path, otherwise the
+        // legacy filename-derived one.
+        let path = sermonLocalId.map { "\(Constants.defaultPathPrefix)/\($0.uuidString.lowercased()).m4a" }
+            ?? "\(Constants.defaultPathPrefix)/\(fileName)"
         let uploadURL = URL(string: "\(Constants.baseURL)/upload/\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)")!
         uploadPathsByURL[uploadURL] = path
-        return (uploadURL, path)
+        // Mirrors the server: only a sermon-derived path may be overwritten.
+        return (uploadURL, path, sermonLocalId != nil)
     }
 
-    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
+    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String, upsert: Bool) {
         let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         let contentType = fileURL.pathExtension.lowercased() == "m4a" ? "audio/m4a" : "application/octet-stream"
         return try await getSignedUploadURL(for: fileURL.lastPathComponent, contentType: contentType, fileSize: fileSize)
@@ -106,7 +115,12 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         storedFiles[path] = data
     }
 
-    func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL) async throws {
+    /// Records what the caller asked for so a test can assert the upsert
+    /// contract (TAB-73): the PUT must carry x-upsert only on a stable path.
+    private(set) var uploadUpsertFlags: [Bool] = []
+
+    func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL, upsert: Bool = false) async throws {
+        uploadUpsertFlags.append(upsert)
         let data = try Data(contentsOf: localUrl)
         try await uploadFile(data: data, to: signedUploadUrl)
     }

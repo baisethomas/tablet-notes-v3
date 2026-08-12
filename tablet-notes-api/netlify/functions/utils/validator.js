@@ -54,7 +54,14 @@ const schemas = {
       .required()
       .messages({
         'number.max': `File size must be less than ${Math.round(LIMITS.AUDIO_FILE_SIZE / 1024 / 1024)}MB`
-      })
+      }),
+
+    // Optional: clients that send it get a stable, resumable object path
+    // (TAB-73). Optional so already-shipped builds keep working.
+    sermonLocalId: Joi.string()
+      .trim()
+      .guid({ version: ['uuidv4', 'uuidv1', 'uuidv5'] })
+      .optional()
   }),
 
   // Transcription request validation

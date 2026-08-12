@@ -1,5 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
-const { randomUUID } = require('crypto');
+const { buildAudioObjectPath } = require('./utils/storagePath');
 const { createRateLimitMiddleware } = require('./utils/rateLimiter');
 const { Validator, LIMITS, ALLOWED_AUDIO_TYPES } = require('./utils/validator');
 const { 
@@ -86,10 +86,14 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
     // Use service role key to bypass RLS for creating signed upload URLs
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-    // Generate a unique path for the file using user ID for organization
-    const fileExt = fileName.split('.').pop().toLowerCase();
-    const uniqueFileName = `${randomUUID()}.${fileExt}`;
-    const filePath = `${user.id}/${uniqueFileName}`; // Organize by user ID
+    // A path derived from the sermon id is stable across retries, so an
+    // interrupted upload replaces its own partial object instead of orphaning
+    // it (TAB-73). Clients that predate `sermonLocalId` keep the random path.
+    const { path: filePath, stable: isStablePath } = buildAudioObjectPath({
+      userId: user.id,
+      sermonLocalId: event.validatedData.sermonLocalId,
+      fileName
+    });
     
     logger.info('Generating signed upload URL', { 
       userId: user.id,
@@ -105,7 +109,10 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
         supabase.storage
           .from('sermon-audio')
           .createSignedUploadUrl(filePath, {
-            upsert: false // Prevent overwriting
+            // Overwriting is only safe on a stable, sermon-derived path, where
+            // the existing object can only be this sermon's earlier attempt.
+            // A random path must never upsert.
+            upsert: isStablePath
           })
       ),
       30000 // 30 second timeout
@@ -131,6 +138,10 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
     const responseData = {
       uploadUrl: data.signedUrl,
       path: data.path,
+      // The PUT to a signed URL must ALSO carry `x-upsert` — requesting upsert
+      // when minting the token is not enough. Telling the client here keeps the
+      // rule in one place: overwrite only a stable, sermon-derived path (TAB-73).
+      upsert: isStablePath,
       token: data.token,
       userId: user.id,
       metadata: {
