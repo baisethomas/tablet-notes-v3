@@ -71,7 +71,19 @@ function ownedOrNull(objectPath, ownerId) {
 function isOwnedObjectPath(objectPath, ownerId) {
   if (typeof objectPath !== 'string') return false;
   const path = objectPath.trim();
-  if (!path || path.includes('..')) return false;
+  if (!path) return false;
+
+  // Percent-encoding is refused outright rather than decoded-and-checked.
+  // `${owner}/%2e%2e/${victim}/x.m4a` defeats a literal '..' test, and whether
+  // it becomes traversal depends on how many times the storage layer decodes —
+  // which is not a thing to reason about per call site. Every path we generate
+  // is `{uuid}/{uuid}.{ext}`, so '%' has no legitimate use here. Verified: 0 of
+  // 425 production paths and 0 of 425 URLs contain '%'.
+  if (path.includes('%')) return false;
+  if (path.includes('..')) return false;
+  // Backslashes cannot appear in our generated paths either, and some layers
+  // normalise them to separators.
+  if (path.includes('\\')) return false;
 
   // Legacy bare filenames sit at the bucket root, carry no user prefix, and so
   // cannot name another user's namespaced object.

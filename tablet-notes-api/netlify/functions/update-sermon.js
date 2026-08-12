@@ -84,7 +84,14 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
     if (body.audioFileUrl !== undefined) {
       // Same ownership boundary as create-sermon (TAB-84): this value reaches
       // service-role storage calls downstream.
-      const claimedUrlPath = objectPathFromUrl(body.audioFileUrl);
+      const claimedUrlPath = body.audioFileUrl ? objectPathFromUrl(body.audioFileUrl) : null;
+      if (body.audioFileUrl && !claimedUrlPath) {
+        logger.security('unrecognized_audio_url', {
+          userId: user.id,
+          claimedUrl: String(body.audioFileUrl).slice(0, 120)
+        });
+        return createErrorResponse(new Error('Invalid audio URL'), 400);
+      }
       if (claimedUrlPath && !isOwnedObjectPath(claimedUrlPath, user.id)) {
         logger.security('unauthorized_audio_url', {
           userId: user.id,

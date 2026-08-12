@@ -68,7 +68,19 @@ exports.handler = withLogging('create-sermon', async (event, context) => {
       return createErrorResponse(new Error('Access denied: audio path does not belong to you'), 403);
     }
 
-    const claimedUrlPath = objectPathFromUrl(body.audioFileUrl);
+    // A URL that is not a recognizable sermon-audio object is refused rather
+    // than stored unchecked: objectPathFromUrl returning null previously meant
+    // "skip validation", so any attacker-controlled URL passed straight into a
+    // column that is handed back to every client.
+    const claimedUrlPath = body.audioFileUrl ? objectPathFromUrl(body.audioFileUrl) : null;
+    if (body.audioFileUrl && !claimedUrlPath) {
+      logger.security('unrecognized_audio_url', {
+        userId: user.id,
+        claimedUrl: String(body.audioFileUrl).slice(0, 120),
+        ip: event.headers['x-forwarded-for']
+      });
+      return createErrorResponse(new Error('Invalid audio URL'), 400);
+    }
     if (claimedUrlPath && !isOwnedObjectPath(claimedUrlPath, user.id)) {
       logger.security('unauthorized_audio_url', {
         userId: user.id,

@@ -153,3 +153,34 @@ test('objectPathFromUrl extracts only a real storage suffix', () => {
   assert.strictEqual(objectPathFromUrl(null), null);
   assert.strictEqual(objectPathFromUrl(42), null);
 });
+
+// --- encoded traversal (PR #46 review, P1) ---
+// A literal '..' test is defeated by percent-encoding, and whether it becomes
+// traversal depends on how many times the storage layer decodes. Refused
+// outright instead: our generated paths never contain '%'.
+
+test('rejects percent-encoded traversal', () => {
+  for (const evil of [
+    `${USER}/%2e%2e/${OTHER}/victim.m4a`,
+    `${USER}/%2E%2E/${OTHER}/victim.m4a`,
+    `${USER}/%252e%252e/${OTHER}/victim.m4a`,
+    `${USER}/..%2f${OTHER}/victim.m4a`,
+    `${USER}/%2f..%2f${OTHER}/victim.m4a`
+  ]) {
+    assert.ok(!isOwnedObjectPath(evil, USER), `must refuse: ${evil}`);
+  }
+});
+
+test('rejects any percent sign, since our paths never contain one', () => {
+  assert.ok(!isOwnedObjectPath(`${USER}/file%20name.m4a`, USER));
+});
+
+test('rejects backslash separators', () => {
+  assert.ok(!isOwnedObjectPath(`${USER}\\..\\${OTHER}\\victim.m4a`, USER));
+});
+
+test('the legitimate shape still passes after all the hardening', () => {
+  // Guard against over-tightening: this is exactly what generate-upload-url
+  // produces and what every one of the 425 production rows looks like.
+  assert.ok(isOwnedObjectPath(`${USER}/3ffcc32e-4bac-46fe-b30f-77b623c1b7bd.m4a`, USER));
+});
