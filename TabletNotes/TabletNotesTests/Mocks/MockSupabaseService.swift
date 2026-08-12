@@ -79,12 +79,20 @@ final class MockSupabaseService: SupabaseServiceProtocol {
         remoteSermons = sermons
     }
 
-    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int) async throws -> (uploadUrl: URL, path: String) {
+    /// The sermon ids callers requested an upload URL for, in order. Lets a test
+    /// assert the stable-path opt-in actually reaches the server (TAB-73).
+    private(set) var requestedSermonLocalIds: [UUID?] = []
+
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int, sermonLocalId: UUID? = nil) async throws -> (uploadUrl: URL, path: String) {
         _ = contentType
         _ = fileSize
+        requestedSermonLocalIds.append(sermonLocalId)
         try throwIfNeeded(for: [.authenticationRequired, .networkError, .signedURLFailed])
 
-        let path = "\(Constants.defaultPathPrefix)/\(fileName)"
+        // Mirror the server: a sermon id yields a stable path, otherwise the
+        // legacy filename-derived one.
+        let path = sermonLocalId.map { "\(Constants.defaultPathPrefix)/\($0.uuidString.lowercased()).m4a" }
+            ?? "\(Constants.defaultPathPrefix)/\(fileName)"
         let uploadURL = URL(string: "\(Constants.baseURL)/upload/\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)")!
         uploadPathsByURL[uploadURL] = path
         return (uploadURL, path)

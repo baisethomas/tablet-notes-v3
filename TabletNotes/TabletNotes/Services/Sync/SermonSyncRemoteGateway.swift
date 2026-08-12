@@ -28,10 +28,14 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         let audioFileName = data.audioFileURL.lastPathComponent
         let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
 
+        // Passing the sermon's local id gives this upload a stable object path,
+        // so a retry replaces its own partial rather than orphaning a ~100MB
+        // object nothing reaps (TAB-73).
         let upload = try await supabaseService.getSignedUploadURL(
             for: audioFileName,
             contentType: "audio/m4a",
-            fileSize: fileSize
+            fileSize: fileSize,
+            sermonLocalId: data.id
         )
 
         try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl)
