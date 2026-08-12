@@ -76,7 +76,7 @@ exports.handler = withLogging('delete-sermon', async (event, context) => {
     // string-splitting audio_file_url, so deletion no longer depends on a
     // column that is otherwise unused and unusable (TAB-82). Falls back to the
     // URL for any row without a path.
-    const filePath = resolveAudioObjectPath(existingSermon);
+    const filePath = resolveAudioObjectPath(existingSermon, { ownerId: user.id });
     if (filePath) {
       try {
         {

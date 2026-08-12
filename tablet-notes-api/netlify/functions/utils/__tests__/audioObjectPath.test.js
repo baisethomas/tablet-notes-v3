@@ -10,7 +10,7 @@ const URL_FOR_PATH = `https://ref.supabase.co/storage/v1/object/public/sermon-au
 
 test('prefers audio_file_path', () => {
   assert.strictEqual(
-    resolveAudioObjectPath({ audio_file_path: PATH, audio_file_url: URL_FOR_PATH }),
+    resolveAudioObjectPath({ audio_file_path: PATH, audio_file_url: URL_FOR_PATH }, { ownerId: USER }),
     PATH
   );
 });
@@ -20,16 +20,16 @@ test('matches what URL-splitting produced — the switch is behaviour-preserving
   // to the URL's /sermon-audio/ suffix. This pins that equivalence.
   const sermon = { audio_file_path: PATH, audio_file_url: URL_FOR_PATH };
   const legacy = sermon.audio_file_url.split('/sermon-audio/')[1];
-  assert.strictEqual(resolveAudioObjectPath(sermon), legacy);
+  assert.strictEqual(resolveAudioObjectPath(sermon, { ownerId: USER }), legacy);
 });
 
 test('falls back to the URL when no path is stored', () => {
   assert.strictEqual(
-    resolveAudioObjectPath({ audio_file_path: null, audio_file_url: URL_FOR_PATH }),
+    resolveAudioObjectPath({ audio_file_path: null, audio_file_url: URL_FOR_PATH }, { ownerId: USER }),
     PATH
   );
   assert.strictEqual(
-    resolveAudioObjectPath({ audio_file_path: '   ', audio_file_url: URL_FOR_PATH }),
+    resolveAudioObjectPath({ audio_file_path: '   ', audio_file_url: URL_FOR_PATH }, { ownerId: USER }),
     PATH
   );
 });
@@ -54,4 +54,52 @@ test('a URL ending exactly at the marker yields null, not an empty path', () => 
     resolveAudioObjectPath({ audio_file_url: 'https://ref/storage/v1/object/public/sermon-audio/' }),
     null
   );
+});
+
+// --- ownership boundary (PR #45 review, P1 security) ---
+// `create-sermon` persists client-supplied audio_file_path / audio_file_url
+// with no validation, and delete-sermon removes with the SERVICE ROLE key,
+// which bypasses RLS. Owning the row must not imply owning the object.
+
+const OTHER = '11111111-2222-3333-4444-555555555555';
+
+test('refuses to delete an object under ANOTHER user\'s prefix', () => {
+  const victimPath = `${OTHER}/secret-recording.m4a`;
+  assert.strictEqual(
+    resolveAudioObjectPath({ audio_file_path: victimPath }, { ownerId: USER }),
+    null,
+    'a crafted path must not resolve — this would permanently delete their audio'
+  );
+});
+
+test('refuses a victim path smuggled through the URL fallback too', () => {
+  const victimUrl = `https://ref.supabase.co/storage/v1/object/public/sermon-audio/${OTHER}/secret.m4a`;
+  assert.strictEqual(
+    resolveAudioObjectPath({ audio_file_url: victimUrl }, { ownerId: USER }),
+    null
+  );
+});
+
+test('refuses traversal attempts', () => {
+  assert.strictEqual(
+    resolveAudioObjectPath({ audio_file_path: `${USER}/../${OTHER}/secret.m4a` }, { ownerId: USER }),
+    null
+  );
+});
+
+test('refuses a prefix that merely starts with the owner id', () => {
+  // `${USER}-evil/...` must not satisfy a startsWith check on the raw id.
+  assert.strictEqual(
+    resolveAudioObjectPath({ audio_file_path: `${USER}-evil/x.m4a` }, { ownerId: USER }),
+    null
+  );
+});
+
+test('a namespaced path with no known owner resolves to null, not to the path', () => {
+  assert.strictEqual(resolveAudioObjectPath({ audio_file_path: PATH }), null);
+});
+
+test('legacy bare filenames still resolve — they cannot name another user\'s object', () => {
+  const bare = 'sermon_616BC871-EA80-46F4-9E07-4FF23C21A238.m4a';
+  assert.strictEqual(resolveAudioObjectPath({ audio_file_path: bare }, { ownerId: USER }), bare);
 });
