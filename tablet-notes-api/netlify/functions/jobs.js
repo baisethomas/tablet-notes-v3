@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const { AssemblyAI } = require('assemblyai');
 const { withDefaults } = require('./utils/withDefaults');
+const { isOwnedObjectPath } = require('./utils/audioObjectPath');
 const {
   checkResourceOwnership,
   withTimeout,
@@ -88,6 +89,25 @@ exports.handler = withDefaults(
     // a restore does not — so requiring it from the client would make the whole
     // pipeline un-retryable off the happy path.
     const filePath = requestedFilePath || sermon.audio_file_path;
+
+    // Re-authorize even the stored path. The comment above used to say the
+    // server "wrote it itself and so does not need to re-authorize" — that was
+    // false: create-sermon persisted whatever the client sent. A sermon crafted
+    // with a victim's path, then processed with no filePath in the request,
+    // side-stepped the check above and had its audio signed with the SERVICE
+    // ROLE key and sent to AssemblyAI (TAB-84). create-sermon now rejects such
+    // paths, but rows written before that fix must not become exploitable, and
+    // the two endpoints ship independently.
+    if (filePath && !isOwnedObjectPath(filePath, user.id)) {
+      logger.security('unauthorized_file_access', {
+        userId: user.id,
+        filePath: String(filePath).slice(0, 120),
+        source: requestedFilePath ? 'request' : 'stored_sermon_row',
+        ip: event.headers['x-forwarded-for']
+      });
+      return createErrorResponse(new Error('Access denied: You can only process your own files'), 403);
+    }
+
     if (!filePath) {
       return createErrorResponse(
         new Error('Sermon has no uploaded audio yet; upload the recording before requesting processing.'),

@@ -103,3 +103,53 @@ test('legacy bare filenames still resolve — they cannot name another user\'s o
   const bare = 'sermon_616BC871-EA80-46F4-9E07-4FF23C21A238.m4a';
   assert.strictEqual(resolveAudioObjectPath({ audio_file_path: bare }, { ownerId: USER }), bare);
 });
+
+// --- the shared ownership predicate (TAB-84) ---
+// Used on BOTH sides now: create/update-sermon refuse to store a foreign path,
+// and delete-sermon/jobs refuse to act on one already stored.
+
+const { isOwnedObjectPath, objectPathFromUrl } = require('../audioObjectPath');
+
+test('accepts a path under the owner prefix', () => {
+  assert.ok(isOwnedObjectPath(PATH, USER));
+});
+
+test('rejects another user\'s namespaced path — the disclosure vector', () => {
+  // create-sermon with this path + POST /api/jobs with no filePath previously
+  // got the victim's audio signed with the service role and transcribed.
+  assert.ok(!isOwnedObjectPath(`${OTHER}/victim.m4a`, USER));
+});
+
+test('rejects traversal that a bare startsWith would accept', () => {
+  const escaping = `${USER}/../${OTHER}/victim.m4a`;
+  assert.ok(escaping.startsWith(`${USER}/`), 'precondition: it does pass a naive prefix test');
+  assert.ok(!isOwnedObjectPath(escaping, USER), 'but must be refused');
+});
+
+test('rejects a sibling prefix that merely starts with the id', () => {
+  assert.ok(!isOwnedObjectPath(`${USER}-evil/x.m4a`, USER));
+});
+
+test('rejects a namespaced path with no owner supplied', () => {
+  assert.ok(!isOwnedObjectPath(PATH, null));
+  assert.ok(!isOwnedObjectPath(PATH, undefined));
+});
+
+test('allows legacy bare filenames — no prefix to escape from', () => {
+  assert.ok(isOwnedObjectPath('sermon_ABC.m4a', USER));
+  assert.ok(isOwnedObjectPath('sermon_ABC.m4a', null), 'bucket-root objects are not user-scoped');
+});
+
+test('rejects non-strings and blanks rather than coercing', () => {
+  for (const v of [null, undefined, 42, {}, [], '', '   ']) {
+    assert.ok(!isOwnedObjectPath(v, USER), `${JSON.stringify(v)} must be refused`);
+  }
+});
+
+test('objectPathFromUrl extracts only a real storage suffix', () => {
+  assert.strictEqual(objectPathFromUrl(URL_FOR_PATH), PATH);
+  assert.strictEqual(objectPathFromUrl('https://x/other-bucket/f.m4a'), null);
+  assert.strictEqual(objectPathFromUrl('https://x/storage/v1/object/public/sermon-audio/'), null);
+  assert.strictEqual(objectPathFromUrl(null), null);
+  assert.strictEqual(objectPathFromUrl(42), null);
+});

@@ -6,6 +6,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { isOwnedObjectPath, objectPathFromUrl } = require('./utils/audioObjectPath');
 
 exports.handler = withLogging('update-sermon', async (event, context) => {
   const logger = event.logger;
@@ -80,7 +81,19 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
     if (body.serviceType !== undefined) updateData.service_type = body.serviceType;
     if (body.speaker !== undefined) updateData.speaker = body.speaker;
     if (body.audioFileName !== undefined) updateData.audio_file_name = body.audioFileName;
-    if (body.audioFileUrl !== undefined) updateData.audio_file_url = body.audioFileUrl;
+    if (body.audioFileUrl !== undefined) {
+      // Same ownership boundary as create-sermon (TAB-84): this value reaches
+      // service-role storage calls downstream.
+      const claimedUrlPath = objectPathFromUrl(body.audioFileUrl);
+      if (claimedUrlPath && !isOwnedObjectPath(claimedUrlPath, user.id)) {
+        logger.security('unauthorized_audio_url', {
+          userId: user.id,
+          claimedPath: claimedUrlPath.slice(0, 120)
+        });
+        return createErrorResponse(new Error('Access denied: audio URL does not belong to you'), 403);
+      }
+      updateData.audio_file_url = body.audioFileUrl;
+    }
     if (body.audioFileSizeBytes !== undefined) updateData.audio_file_size_bytes = body.audioFileSizeBytes;
     if (body.transcriptionStatus !== undefined) updateData.transcription_status = body.transcriptionStatus;
     if (body.summaryStatus !== undefined) updateData.summary_status = body.summaryStatus;
