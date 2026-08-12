@@ -38,7 +38,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             sermonLocalId: data.id
         )
 
-        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl)
+        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl, upsert: upload.upsert)
 
         let audioFileURL = try supabaseService.client.storage
             .from("sermon-audio")

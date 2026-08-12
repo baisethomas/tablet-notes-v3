@@ -138,6 +138,10 @@ exports.handler = withLogging('generate-upload-url', async (event, context) => {
     const responseData = {
       uploadUrl: data.signedUrl,
       path: data.path,
+      // The PUT to a signed URL must ALSO carry `x-upsert` — requesting upsert
+      // when minting the token is not enough. Telling the client here keeps the
+      // rule in one place: overwrite only a stable, sermon-derived path (TAB-73).
+      upsert: isStablePath,
       token: data.token,
       userId: user.id,
       metadata: {

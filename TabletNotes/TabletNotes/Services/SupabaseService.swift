@@ -52,6 +52,9 @@ class SupabaseService: SupabaseServiceProtocol {
     struct UploadURLData: Codable {
         let uploadUrl: String
         let path: String
+        /// Whether the PUT may overwrite an existing object. Optional so a
+        /// client can run against a server that predates it (TAB-73).
+        let upsert: Bool?
         let token: String
         let userId: String
         let metadata: UploadMetadata?
@@ -71,7 +74,7 @@ class SupabaseService: SupabaseServiceProtocol {
     ///   - contentType: The MIME type of the file (e.g., "audio/m4a").
     ///   - fileSize: The size of the file in bytes.
     /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
-    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int, sermonLocalId: UUID? = nil) async throws -> (uploadUrl: URL, path: String) {
+    func getSignedUploadURL(for fileName: String, contentType: String, fileSize: Int, sermonLocalId: UUID? = nil) async throws -> (uploadUrl: URL, path: String, upsert: Bool) {
         print("[SupabaseService] getSignedUploadURL called for: \(fileName)")
 
         // Get authentication token with automatic refresh
@@ -141,13 +144,15 @@ class SupabaseService: SupabaseServiceProtocol {
         print("[SupabaseService] ✅ Upload URL: \(uploadUrl)")
         print("[SupabaseService] ✅ Path: \(decodedResponse.data.path)")
 
-        return (uploadUrl, decodedResponse.data.path)
+        // Default false when the server omits it: never overwrite unless the
+        // server explicitly said this path is safe to overwrite.
+        return (uploadUrl, decodedResponse.data.path, decodedResponse.data.upsert ?? false)
     }
     
     /// Convenience method that gets file information and requests an upload URL
     /// - Parameter fileURL: The local URL of the file to be uploaded
     /// - Returns: A tuple containing the signed URL for the upload and the file's permanent path in the bucket.
-    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String) {
+    func getSignedUploadURL(for fileURL: URL) async throws -> (uploadUrl: URL, path: String, upsert: Bool) {
         // Get file attributes
         let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
         let fileSize = resourceValues.fileSize ?? 0
@@ -193,11 +198,18 @@ class SupabaseService: SupabaseServiceProtocol {
     /// restarts the transfer, and suspension kills it. Resumability and
     /// background transfer are TAB-73 part B (TUS + background URLSession),
     /// which the Supabase Swift SDK cannot express today.
-    func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL) async throws {
+    func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL, upsert: Bool = false) async throws {
         try await NetworkRetry.withExponentialBackoff(maxAttempts: 3) {
             var request = URLRequest(url: signedUploadUrl)
             request.httpMethod = "PUT"
             request.setValue("audio/m4a", forHTTPHeaderField: "Content-Type")
+            // Requesting upsert when the token was minted is NOT sufficient —
+            // storage also requires it on this PUT (supabase-swift sets it in
+            // both places). Without it a retry onto an existing stable path is
+            // rejected as a duplicate, which the old random paths never hit.
+            if upsert {
+                request.setValue("true", forHTTPHeaderField: "x-upsert")
+            }
             request.timeoutInterval = 60
 
             let config = URLSessionConfiguration.default
