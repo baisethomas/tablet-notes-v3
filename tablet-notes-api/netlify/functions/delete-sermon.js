@@ -6,6 +6,7 @@ const {
   createSuccessResponse
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
+const { resolveAudioObjectPath } = require('./utils/audioObjectPath');
 
 exports.handler = withLogging('delete-sermon', async (event, context) => {
   const logger = event.logger;
@@ -52,7 +53,7 @@ exports.handler = withLogging('delete-sermon', async (event, context) => {
     // Verify sermon belongs to user before deleting
     const { data: existingSermon, error: fetchError } = await supabase
       .from('sermons')
-      .select('id, user_id, audio_file_url')
+      .select('id, user_id, audio_file_url, audio_file_path')
       .eq('id', sermonId)
       .single();
 
@@ -70,14 +71,15 @@ exports.handler = withLogging('delete-sermon', async (event, context) => {
       return createErrorResponse(new Error('Unauthorized'), 403);
     }
 
-    // Delete audio file from storage if it exists
-    if (existingSermon.audio_file_url) {
+    // Delete audio file from storage if it exists.
+    // Uses audio_file_path (what the upload actually wrote) rather than
+    // string-splitting audio_file_url, so deletion no longer depends on a
+    // column that is otherwise unused and unusable (TAB-82). Falls back to the
+    // URL for any row without a path.
+    const filePath = resolveAudioObjectPath(existingSermon, { ownerId: user.id });
+    if (filePath) {
       try {
-        // Extract file path from URL
-        const urlParts = existingSermon.audio_file_url.split('/sermon-audio/');
-        if (urlParts.length > 1) {
-          const filePath = urlParts[1];
-
+        {
           const { error: storageError } = await supabase
             .storage
             .from('sermon-audio')
