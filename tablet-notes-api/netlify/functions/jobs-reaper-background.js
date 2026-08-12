@@ -65,6 +65,9 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
 
   const { data: signed, error: signedError } = await supabase
     .storage.from('sermon-audio')
+    // Safe without a re-check here: a processing_jobs row can only be created
+    // by jobs.js, which authorizes the path against the requesting user before
+    // inserting it (TAB-84). The reaper has no user context of its own.
     .createSignedUrl(job.audio_file_path, 7200);
 
   if (signedError || !signed?.signedUrl) {

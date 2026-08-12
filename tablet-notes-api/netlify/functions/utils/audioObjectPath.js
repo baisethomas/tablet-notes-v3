@@ -55,14 +55,49 @@ function resolveAudioObjectPath(sermon, { ownerId } = {}) {
  * allowed — preserving today's behaviour for those rows.
  */
 function ownedOrNull(objectPath, ownerId) {
-  if (objectPath.includes('..')) return null;
-
-  const namespaced = objectPath.includes('/');
-  if (!namespaced) return objectPath;
-
-  // A namespaced path requires a known owner to compare against.
-  if (!ownerId) return null;
-  return objectPath.startsWith(`${ownerId}/`) ? objectPath : null;
+  return isOwnedObjectPath(objectPath, ownerId) ? objectPath : null;
 }
 
-module.exports = { resolveAudioObjectPath, BUCKET_MARKER };
+/**
+ * The single ownership rule for storage object paths, used on both the write
+ * side (create/update-sermon, so a crafted path is never stored) and the read
+ * side (delete-sermon, jobs, so a path stored before the write check still
+ * cannot be acted on).
+ *
+ * Stricter than `checkResourceOwnership`: traversal is refused outright, since
+ * `{owner}/../{victim}/x.m4a` satisfies a bare prefix test while escaping the
+ * prefix entirely.
+ */
+function isOwnedObjectPath(objectPath, ownerId) {
+  if (typeof objectPath !== 'string') return false;
+  const path = objectPath.trim();
+  if (!path) return false;
+
+  // Percent-encoding is refused outright rather than decoded-and-checked.
+  // `${owner}/%2e%2e/${victim}/x.m4a` defeats a literal '..' test, and whether
+  // it becomes traversal depends on how many times the storage layer decodes —
+  // which is not a thing to reason about per call site. Every path we generate
+  // is `{uuid}/{uuid}.{ext}`, so '%' has no legitimate use here. Verified: 0 of
+  // 425 production paths and 0 of 425 URLs contain '%'.
+  if (path.includes('%')) return false;
+  if (path.includes('..')) return false;
+  // Backslashes cannot appear in our generated paths either, and some layers
+  // normalise them to separators.
+  if (path.includes('\\')) return false;
+
+  // Legacy bare filenames sit at the bucket root, carry no user prefix, and so
+  // cannot name another user's namespaced object.
+  if (!path.includes('/')) return true;
+
+  if (!ownerId) return false;
+  return path.startsWith(`${ownerId}/`);
+}
+
+/** Extracts the object path from a stored public/signed URL, or null. */
+function objectPathFromUrl(url) {
+  if (typeof url !== 'string' || !url.includes(BUCKET_MARKER)) return null;
+  const tail = url.split(BUCKET_MARKER)[1];
+  return tail || null;
+}
+
+module.exports = { resolveAudioObjectPath, isOwnedObjectPath, objectPathFromUrl, BUCKET_MARKER };

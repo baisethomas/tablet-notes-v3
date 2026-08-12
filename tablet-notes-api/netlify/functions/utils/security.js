@@ -235,10 +235,16 @@ function createAuthMiddleware() {
  * @returns {boolean} Whether user owns the resource
  */
 function checkResourceOwnership(user, filePath) {
-  if (!user || !user.id || !filePath) {
+  if (!user || !user.id || typeof filePath !== 'string' || !filePath) {
     return false;
   }
-  
+
+  // Traversal must never pass: `{userId}/../{victimId}/x.m4a` satisfies the
+  // prefix test below while escaping the prefix entirely (TAB-84).
+  if (filePath.includes('..')) {
+    return false;
+  }
+
   // File paths should start with user ID: {userId}/filename
   return filePath.startsWith(`${user.id}/`);
 }
