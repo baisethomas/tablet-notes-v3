@@ -216,13 +216,34 @@ final class FragmentedM4AWriter: CaptureFileWriting {
     /// Audio finalization is normally well under a second.
     private static let finishTimeout: DispatchTimeInterval = .seconds(5)
 
+    /// How long `finish()` will keep retrying the backlog before giving up.
+    private static let drainTimeout: TimeInterval = 3
+
     func finish() throws {
         lock.lock()
         guard started, !finished else { lock.unlock(); return }
+        // Blocks further writes, which makes it safe to release the lock
+        // between drain attempts below.
         finished = true
-        // Flush the backlog before closing, or the last seconds of the
-        // recording would be dropped at exactly the moment we claim success.
-        drainPendingLocked()
+        lock.unlock()
+
+        // Retry rather than drain once. `pending` is only ever non-empty
+        // because `isReadyForMoreMediaData` was false — so a single synchronous
+        // drain at exactly that moment makes no progress, and discarding the
+        // queue would throw away the tail of the recording (up to the 200-buffer
+        // cap, ~19s) at the precise moment the user pressed stop. The audio is
+        // sitting in memory; wait briefly for the encoder to take it.
+        let deadline = Date().addingTimeInterval(Self.drainTimeout)
+        while true {
+            lock.lock()
+            drainPendingLocked()
+            let remaining = pending.count
+            lock.unlock()
+            if remaining == 0 || Date() >= deadline { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+
+        lock.lock()
         let unwritten = pending.count + droppedBuffers
         pending.removeAll()
         lock.unlock()

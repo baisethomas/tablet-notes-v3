@@ -387,6 +387,17 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         sink?.finishCaptionStream()
+        // The comment above promises "finalize what is on disk". Under
+        // `AVAudioFile` that happened for free when `sink` was dropped;
+        // `AVAssetWriter` needs telling, or the current fragment and any queued
+        // buffers are abandoned right before the facade auto-saves the partial
+        // recording. The failure is already being reported below, so a
+        // finalize problem here only adds detail to the log.
+        do {
+            try sink?.finishFile()
+        } catch {
+            print("[AudioCaptureEngine] ⚠️ Finalize during capture failure was incomplete: \(error.localizedDescription)")
+        }
         sink = nil
         currentURL = nil
         stateLocked = .idle
