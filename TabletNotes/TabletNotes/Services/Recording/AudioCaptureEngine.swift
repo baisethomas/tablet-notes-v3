@@ -180,14 +180,19 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
             AVNumberOfChannelsKey: Int(inputFormat.channelCount),
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
-        let file: AVAudioFile
+        // Fragmented, so an interrupted recording is still playable (TAB-86).
+        let writer: CaptureFileWriting
         do {
-            file = try AVAudioFile(forWriting: url, settings: fileSettings)
+            writer = try FragmentedM4AWriter(
+                url: url,
+                settings: fileSettings,
+                inputFormat: inputFormat
+            )
         } catch {
             throw AudioCaptureError.startFailed("could not create output file: \(error.localizedDescription)")
         }
 
-        let newSink = CaptureSink(file: file)
+        let newSink = CaptureSink(writer: writer)
 
         try installTapAndStartLocked(sink: newSink)
 
@@ -224,8 +229,12 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        // Dropping the last AVAudioFile reference finalizes the container.
+        // Finalize explicitly rather than relying on the last reference being
+        // dropped — that implicit finalize is exactly what an interrupted
+        // process skips, and it left 14 recordings unreadable (TAB-86). The
+        // file is already playable at this point; this completes it.
         sink?.finishCaptionStream()
+        sink?.finishFile()
         sink = nil
         currentURL = nil
         stateLocked = .idle
@@ -474,7 +483,9 @@ final class AudioCaptureEngine: AudioCapturing, @unchecked Sendable {
 /// context; the continuation and frame counter are additionally lock-guarded
 /// because the engine (any thread) swaps/reads them.
 private final class CaptureSink: @unchecked Sendable {
-    private let file: AVAudioFile
+    /// Writes through `CaptureFileWriting` rather than owning an `AVAudioFile`
+    /// so the container stays readable mid-recording (TAB-86).
+    private let writer: CaptureFileWriting
     private let stateLock = NSLock()
     private var captionContinuation: AsyncStream<AudioChunk>.Continuation?
     private var framesWritten: AVAudioFramePosition = 0
@@ -495,13 +506,18 @@ private final class CaptureSink: @unchecked Sendable {
         interleaved: false
     )
 
-    init(file: AVAudioFile) {
-        self.file = file
+    init(writer: CaptureFileWriting) {
+        self.writer = writer
     }
 
     var recordedDuration: TimeInterval {
         stateLock.lock(); defer { stateLock.unlock() }
-        return Double(framesWritten) / file.processingFormat.sampleRate
+        return Double(framesWritten) / writer.processingFormat.sampleRate
+    }
+
+    /// Completes the container. Safe to call once; the engine owns the timing.
+    func finishFile() {
+        writer.finish()
     }
 
     func replaceCaptionContinuation(_ continuation: AsyncStream<AudioChunk>.Continuation) {
@@ -530,7 +546,7 @@ private final class CaptureSink: @unchecked Sendable {
     }
 
     private func writeToFile(_ buffer: AVAudioPCMBuffer) {
-        let targetFormat = file.processingFormat
+        let targetFormat = writer.processingFormat
         let bufferToWrite: AVAudioPCMBuffer
 
         if buffer.format == targetFormat {
@@ -544,7 +560,7 @@ private final class CaptureSink: @unchecked Sendable {
         }
 
         do {
-            try file.write(from: bufferToWrite)
+            try writer.write(bufferToWrite)
             stateLock.lock()
             framesWritten += AVAudioFramePosition(bufferToWrite.frameLength)
             stateLock.unlock()
