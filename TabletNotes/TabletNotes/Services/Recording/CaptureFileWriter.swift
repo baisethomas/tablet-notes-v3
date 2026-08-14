@@ -273,8 +273,21 @@ final class FragmentedM4AWriter: CaptureFileWriting {
         // writing a ~500KB index for a 45-minute recording — so this is not a
         // new stall, just a visible one.)
         let done = DispatchSemaphore(value: 0)
-        writer.finishWriting { done.signal() }
+        // `self` is captured strongly on purpose. On timeout the engine drops
+        // its reference to the sink immediately, and deallocating this object —
+        // and with it the AVAssetWriter — while `finishWriting` is still
+        // running would tear the very file we are trying to protect. The
+        // temporary cycle is broken as soon as the handler runs.
+        writer.finishWriting { [self] in
+            _ = self
+            done.signal()
+        }
         let timedOut = done.wait(timeout: .now() + Self.finishTimeout) == .timedOut
+        // Deliberately NOT cancelWriting() here, which a reviewer suggested:
+        // AVAssetWriter.h states "-cancelWriting will delete the file". On a
+        // finalization timeout that would destroy the recording outright — the
+        // exact loss this class exists to prevent. Timing out leaves the
+        // fragments on disk, which are playable.
 
         // Everything below reports *incompleteness*. In every one of these
         // cases the fragments already on disk are playable and the caller
