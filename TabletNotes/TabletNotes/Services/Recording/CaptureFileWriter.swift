@@ -92,6 +92,11 @@ final class FragmentedM4AWriter: CaptureFileWriting {
     private var started = false
     private var finished = false
 
+    /// Buffers the encoder was not ready for, held rather than dropped.
+    private var pending: [CMSampleBuffer] = []
+    /// ~19s at the engine's 4096-frame tap size — generous, but bounded.
+    private static let maxPendingBuffers = 200
+
     let processingFormat: AVAudioFormat
 
     /// - Parameter fragmentInterval: seconds of audio per fragment. This is the
@@ -142,10 +147,6 @@ final class FragmentedM4AWriter: CaptureFileWriting {
                 writer.error?.localizedDescription ?? "status \(writer.status.rawValue)"
             )
         }
-        // Dropping a buffer the encoder is not ready for is correct here: the
-        // alternative is blocking the audio tap, which risks the whole capture.
-        guard input.isReadyForMoreMediaData else { return }
-
         let pts = CMTime(
             value: framesWritten,
             timescale: CMTimeScale(processingFormat.sampleRate)
@@ -153,20 +154,51 @@ final class FragmentedM4AWriter: CaptureFileWriting {
         guard let sample = Self.makeSampleBuffer(from: buffer, presentationTime: pts) else {
             throw CaptureWriterError.bufferConversionFailed
         }
-        guard input.append(sample) else {
-            throw CaptureWriterError.notWritable(
-                writer.error?.localizedDescription ?? "append() returned false"
-            )
-        }
         framesWritten += AVAudioFramePosition(buffer.frameLength)
+
+        // The tap must never block, but audio must never be silently dropped
+        // either — this app records things that cannot be re-captured. So a
+        // buffer the encoder is not ready for is held and retried on the next
+        // write rather than discarded.
+        pending.append(sample)
+        drainPendingLocked()
+    }
+
+    /// Appends as much of the backlog as the encoder will currently take.
+    ///
+    /// `expectsMediaDataInRealTime` means the input is ready essentially always
+    /// for audio, so in practice the queue holds at most one buffer. The cap
+    /// exists so a wedged encoder cannot grow it without bound; hitting it is
+    /// logged loudly because it means audio really was lost.
+    private func drainPendingLocked() {
+        while let next = pending.first, input.isReadyForMoreMediaData {
+            guard input.append(next) else {
+                print("[FragmentedM4AWriter] ⚠️ append failed: \(writer.error?.localizedDescription ?? "unknown")")
+                return
+            }
+            pending.removeFirst()
+        }
+        if pending.count > Self.maxPendingBuffers {
+            let overflow = pending.count - Self.maxPendingBuffers
+            pending.removeFirst(overflow)
+            print("[FragmentedM4AWriter] ⚠️ encoder backlog exceeded \(Self.maxPendingBuffers) buffers; dropped \(overflow)")
+        }
     }
 
     func finish() {
         lock.lock()
         guard started, !finished else { lock.unlock(); return }
         finished = true
+        // Flush the backlog before closing, or the last seconds of the
+        // recording would be dropped at exactly the moment we claim success.
+        drainPendingLocked()
+        let unwritten = pending.count
+        pending.removeAll()
         lock.unlock()
 
+        if unwritten > 0 {
+            print("[FragmentedM4AWriter] ⚠️ \(unwritten) buffer(s) never reached the encoder")
+        }
         input.markAsFinished()
 
         // Callers hand the URL straight to save/upload, so the file has to be
