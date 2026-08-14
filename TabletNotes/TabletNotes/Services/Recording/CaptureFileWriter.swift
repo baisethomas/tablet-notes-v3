@@ -212,18 +212,35 @@ final class FragmentedM4AWriter: CaptureFileWriting {
         }
     }
 
+    // Both budgets are worst cases that only elapse when the encoder is
+    // genuinely wedged; the normal path is sub-millisecond. They are kept tight
+    // because `stopRecording()` is called straight from SwiftUI views, so this
+    // runs on the main thread and any wait is a visible freeze.
+    //
+    // 1s + 3s = 4s absolute worst case. That is the deliberate trade: a wedged
+    // encoder costs a short stall rather than either an indefinite hang or a
+    // silently truncated recording.
+
     /// Bounded so a wedged `finishWriting` cannot hang the stop path forever.
     /// Audio finalization is normally well under a second.
-    private static let finishTimeout: DispatchTimeInterval = .seconds(5)
+    private static let finishTimeout: DispatchTimeInterval = .seconds(3)
 
     /// How long `finish()` will keep retrying the backlog before giving up.
-    private static let drainTimeout: TimeInterval = 3
+    /// An encoder that cannot accept a buffer within a second is broken, not
+    /// busy — past that, report incompleteness rather than freeze the UI.
+    private static let drainTimeout: TimeInterval = 1
 
     func finish() throws {
         lock.lock()
         guard started, !finished else { lock.unlock(); return }
         // Blocks further writes, which makes it safe to release the lock
         // between drain attempts below.
+        //
+        // A `write` racing this would be dropped by that same guard — but it
+        // cannot happen: every caller (`stop`, `finalizeForTermination`,
+        // `failCaptureLocked`) removes the engine tap *before* finalizing, so
+        // no further buffers are in flight by the time this runs. The guard in
+        // `write` is also taken under the lock, not before it.
         finished = true
         lock.unlock()
 
