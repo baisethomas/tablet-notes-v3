@@ -27,7 +27,11 @@ protocol CaptureFileWriting: AnyObject {
 
     /// Completes the file. After this the writer must not be written to again.
     /// A writer that is never finished must still leave a **playable** file.
-    func finish()
+    ///
+    /// Throws if the file may be incomplete. It deliberately does *not* mean
+    /// "the recording is gone" — the caller still gets its URL and the audio
+    /// written so far. It means the caller must not report unqualified success.
+    func finish() throws
 }
 
 // MARK: - The pre-TAB-86 behaviour, kept for comparison in tests
@@ -51,7 +55,7 @@ final class UnfragmentedM4AWriter: CaptureFileWriting {
         try file?.write(from: buffer)
     }
 
-    func finish() {
+    func finish() throws {
         // Dropping the reference is what writes the moov — which is precisely
         // why an interrupted process produces an unreadable file.
         file = nil
@@ -64,12 +68,16 @@ enum CaptureWriterError: LocalizedError {
     case couldNotCreateWriter(String)
     case notWritable(String)
     case bufferConversionFailed
+    /// Finalization did not complete cleanly. The file is still playable up to
+    /// the last written fragment — this reports *incompleteness*, not loss.
+    case finishIncomplete(String)
 
     var errorDescription: String? {
         switch self {
         case .couldNotCreateWriter(let detail): return "Could not start the audio writer: \(detail)"
         case .notWritable(let detail): return "The audio writer stopped accepting data: \(detail)"
         case .bufferConversionFailed: return "Could not convert an audio buffer for writing"
+        case .finishIncomplete(let detail): return "The recording may be incomplete: \(detail)"
         }
     }
 }
@@ -77,9 +85,18 @@ enum CaptureWriterError: LocalizedError {
 /// Writes a **fragmented** MP4 via `AVAssetWriter`.
 ///
 /// The difference that matters: `movieFragmentInterval` makes the writer emit
-/// an index up front and then a `moof`/`mdat` fragment pair every interval, so
-/// the file on disk is continuously playable. An interruption costs at most the
-/// current fragment instead of the entire recording.
+/// an index up front and then a `moof`/`mdat` fragment pair every interval. This
+/// is a documented guarantee, not an inference — `AVAssetWriter.h` states that
+/// with movie fragments "a partially written asset whose writing is unexpectedly
+/// interrupted can be successfully opened and played up to multiples of the
+/// specified time interval."
+///
+/// Scope, stated precisely: this bounds the loss to the **current fragment**. It
+/// is not a claim that no sample can ever be lost to a hard kill — samples
+/// buffered since the last fragment boundary go with the process. Reducing the
+/// worst case from "the entire recording" to "≤ one fragment" is the goal.
+/// Verified only by reading a file back mid-write; the force-quit-on-device
+/// check is what actually exercises process death.
 ///
 /// Everything else is deliberately unchanged — same AAC encoder settings, same
 /// `.m4a` path and extension, so playback, upload, and the transcription
@@ -96,17 +113,26 @@ final class FragmentedM4AWriter: CaptureFileWriting {
     private var pending: [CMSampleBuffer] = []
     /// ~19s at the engine's 4096-frame tap size — generous, but bounded.
     private static let maxPendingBuffers = 200
+    /// Audio that never reached the encoder. Surfaced by `finish()`; a non-zero
+    /// value means the recording really is missing samples.
+    private var droppedBuffers = 0
 
     let processingFormat: AVAudioFormat
 
-    /// - Parameter fragmentInterval: seconds of audio per fragment. This is the
-    ///   worst-case loss on an interruption, so it is short. It is a parameter
-    ///   only so tests need not wait.
+    /// - Parameter fragmentInterval: seconds of audio per fragment, and so the
+    ///   worst-case loss on an interruption.
+    ///
+    ///   10s follows Apple's documented guidance ("for best writing performance
+    ///   ... set the movieFragmentInterval to 10 seconds or greater"). A shorter
+    ///   interval would narrow the loss window, but the write-performance cost
+    ///   is not something this change can measure on device, and the difference
+    ///   between losing 5s and 10s is immaterial next to losing all 45 minutes.
+    ///   Parameterised so tests need not wait.
     init(
         url: URL,
         settings: [String: Any],
         inputFormat: AVAudioFormat,
-        fragmentInterval: TimeInterval = 5
+        fragmentInterval: TimeInterval = 10
     ) throws {
         do {
             writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
@@ -181,34 +207,50 @@ final class FragmentedM4AWriter: CaptureFileWriting {
         if pending.count > Self.maxPendingBuffers {
             let overflow = pending.count - Self.maxPendingBuffers
             pending.removeFirst(overflow)
+            droppedBuffers += overflow
             print("[FragmentedM4AWriter] ⚠️ encoder backlog exceeded \(Self.maxPendingBuffers) buffers; dropped \(overflow)")
         }
     }
 
-    func finish() {
+    /// Bounded so a wedged `finishWriting` cannot hang the stop path forever.
+    /// Audio finalization is normally well under a second.
+    private static let finishTimeout: DispatchTimeInterval = .seconds(5)
+
+    func finish() throws {
         lock.lock()
         guard started, !finished else { lock.unlock(); return }
         finished = true
         // Flush the backlog before closing, or the last seconds of the
         // recording would be dropped at exactly the moment we claim success.
         drainPendingLocked()
-        let unwritten = pending.count
+        let unwritten = pending.count + droppedBuffers
         pending.removeAll()
         lock.unlock()
 
-        if unwritten > 0 {
-            print("[FragmentedM4AWriter] ⚠️ \(unwritten) buffer(s) never reached the encoder")
-        }
         input.markAsFinished()
 
-        // Callers hand the URL straight to save/upload, so the file has to be
-        // complete before this returns. The wait is bounded; on timeout the
-        // fragments already on disk still make a playable file, which is the
-        // guarantee this class exists to provide.
+        // Synchronous on purpose: callers hand the URL straight to the
+        // save/upload pipeline, so the file must be closed before this returns.
+        // (The previous AVAudioFile path also finalized synchronously here —
+        // writing a ~500KB index for a 45-minute recording — so this is not a
+        // new stall, just a visible one.)
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        if done.wait(timeout: .now() + 10) == .timedOut {
-            print("[FragmentedM4AWriter] finishWriting timed out; fragments on disk remain playable")
+        let timedOut = done.wait(timeout: .now() + Self.finishTimeout) == .timedOut
+
+        // Everything below reports *incompleteness*. In every one of these
+        // cases the fragments already on disk are playable and the caller
+        // keeps its URL — what must not happen is reporting clean success.
+        if timedOut {
+            throw CaptureWriterError.finishIncomplete("finalization timed out; file is playable up to the last fragment")
+        }
+        if unwritten > 0 {
+            throw CaptureWriterError.finishIncomplete("\(unwritten) buffer(s) never reached the encoder")
+        }
+        if writer.status == .failed {
+            throw CaptureWriterError.finishIncomplete(
+                writer.error?.localizedDescription ?? "writer failed during finalization"
+            )
         }
     }
 

@@ -96,16 +96,35 @@ struct CaptureFileWriterTests {
         for index in 0..<6 {
             try writer.write(Self.toneBuffer(seconds: 1, startPhase: Double(index)))
         }
-        // Give the writer a moment to flush fragments to disk.
-        try await Task.sleep(nanoseconds: 500_000_000)
 
         // The process dies here — finish() is never called.
-        let duration = Self.readableDuration(url)
-        #expect(duration != nil, "an interrupted fragmented file must still open")
+        //
+        // Poll rather than sleeping a fixed interval: fragment flushing is
+        // asynchronous and a fixed wait is a coin flip on a loaded machine.
+        // Polling for the outcome is stable and fails fast on a real break.
+        let duration = await Self.pollForReadableDuration(url, atLeast: 3, timeout: 10)
         #expect(
-            (duration ?? 0) >= 3,
-            "should recover most of the 6s written, got \(duration.map { "\($0)s" } ?? "nothing")"
+            duration != nil,
+            "an interrupted fragmented file must open and expose at least 3s of the 6s written"
         )
+    }
+
+    /// Waits until the file reports at least `atLeast` seconds, or gives up.
+    private static func pollForReadableDuration(
+        _ url: URL,
+        atLeast: TimeInterval,
+        timeout: TimeInterval
+    ) async -> TimeInterval? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var best: TimeInterval?
+        while Date() < deadline {
+            if let duration = readableDuration(url) {
+                best = duration
+                if duration >= atLeast { return duration }
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return best.flatMap { $0 >= atLeast ? $0 : nil }
     }
 
     @Test("Fragmented writer produces a complete file when finished normally")
@@ -122,7 +141,7 @@ struct CaptureFileWriterTests {
         for index in 0..<3 {
             try writer.write(Self.toneBuffer(seconds: 1, startPhase: Double(index)))
         }
-        writer.finish()
+        try writer.finish()
 
         let duration = try #require(Self.readableDuration(url))
         #expect(duration >= 2.5 && duration <= 3.5, "expected ~3s, got \(duration)s")
