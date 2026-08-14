@@ -6,6 +6,7 @@ const {
   planFailure,
   shouldChainSummary
 } = require('./processingJobs');
+const { applySermonStageComplete } = require('./sermonStatus');
 
 /**
  * The single implementation of "a transcription finished successfully".
@@ -63,6 +64,16 @@ async function completeTranscriptionJob({ supabase, job, transcript, logger }) {
     logger?.error?.('Failed to persist transcript', { jobId: job.id }, transcriptError);
     return { ok: false, error: transcriptError.message };
   }
+
+  // Before marking the job done, for the same reason the transcript is written
+  // first: a client reacting to `done` over Realtime must not find the sermon
+  // still claiming to be pending (TAB-89). Non-fatal — see applySermonStageComplete.
+  await applySermonStageComplete({
+    supabase,
+    sermonId: job.sermon_id,
+    stage: 'transcription',
+    logger
+  });
 
   await supabase
     .from('processing_jobs')

@@ -21,6 +21,7 @@ const {
   HANDOFF_ABANDON_MS
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
+const { applySermonStageComplete } = require('./utils/sermonStatus');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
 
 /**
@@ -451,14 +452,19 @@ async function runSummary({ supabase, job, logger }) {
       throw new Error(`summary persist failed: ${summaryError.message}`);
     }
 
-    // The generated title is worth keeping on the sermon, mirroring what the
-    // client's SummaryRetryService does with it today.
-    if (title) {
-      await supabase
-        .from('sermons')
-        .update({ title, updated_at: new Date().toISOString() })
-        .eq('id', job.sermon_id);
-    }
+    // Mark the stage complete on the sermon, folding in the generated title
+    // (worth keeping, mirroring what the client's SummaryRetryService does).
+    //
+    // This update previously carried ONLY the title, which is how summaries
+    // could exist against a sermon that still read summary_status = 'pending'
+    // forever (TAB-89).
+    await applySermonStageComplete({
+      supabase,
+      sermonId: job.sermon_id,
+      stage: 'summary',
+      title,
+      logger
+    });
 
     const completionError = await markSummaryJobDone({ supabase, jobId: job.id });
     if (completionError) {
