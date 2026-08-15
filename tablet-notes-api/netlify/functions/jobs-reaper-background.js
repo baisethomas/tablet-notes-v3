@@ -21,6 +21,7 @@ const {
   HANDOFF_ABANDON_MS
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
+const { applySermonStageComplete } = require('./utils/sermonStatus');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
 
 /**
@@ -314,7 +315,15 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
  * "is it actually marked?" check cannot exist in one and be missing from the
  * other — the divergence this PR's review keeps finding.
  */
-async function markSummaryJobDone({ supabase, jobId }) {
+async function markSummaryJobDone({ supabase, jobId, sermonId, title, logger }) {
+  // Inside this helper, not at the call sites, for the reason the helper
+  // exists: the "summary already present" shortcut marks the job done and
+  // returns early, so a status write placed only on the generate-now path
+  // would be missing exactly on the recovery path — recreating TAB-89 in the
+  // branch that runs after a failure. Before the job is marked, so a client
+  // reacting to `done` never sees the sermon still pending.
+  await applySermonStageComplete({ supabase, sermonId, stage: 'summary', title, logger });
+
   const { error } = await supabase
     .from('processing_jobs')
     .update({
@@ -342,12 +351,18 @@ async function runSummary({ supabase, job, logger }) {
   // a second paid OpenAI call for output already sitting in the database.
   const { data: priorSummary } = await supabase
     .from('summaries')
-    .select('text')
+    .select('text, title')
     .eq('sermon_id', job.sermon_id)
     .maybeSingle();
 
   if (priorSummary?.text?.trim()) {
-    const completionError = await markSummaryJobDone({ supabase, jobId: job.id });
+    const completionError = await markSummaryJobDone({
+      supabase,
+      jobId: job.id,
+      sermonId: job.sermon_id,
+      title: priorSummary.title,
+      logger
+    });
     if (completionError) {
       logger.warn('Summary already exists but the job could not be marked done', {
         jobId: job.id,
@@ -451,16 +466,17 @@ async function runSummary({ supabase, job, logger }) {
       throw new Error(`summary persist failed: ${summaryError.message}`);
     }
 
-    // The generated title is worth keeping on the sermon, mirroring what the
-    // client's SummaryRetryService does with it today.
-    if (title) {
-      await supabase
-        .from('sermons')
-        .update({ title, updated_at: new Date().toISOString() })
-        .eq('id', job.sermon_id);
-    }
-
-    const completionError = await markSummaryJobDone({ supabase, jobId: job.id });
+    // markSummaryJobDone writes the sermon's summary_status and the generated
+    // title (worth keeping, mirroring the client's SummaryRetryService). That
+    // update previously carried ONLY the title, which is how a summary could
+    // exist against a sermon still reading summary_status = 'pending' (TAB-89).
+    const completionError = await markSummaryJobDone({
+      supabase,
+      jobId: job.id,
+      sermonId: job.sermon_id,
+      title,
+      logger
+    });
     if (completionError) {
       // The summary exists but the job still says 'running', which no sweep
       // reclaims. Throw so planFailure re-queues it; the retry is cheap because
