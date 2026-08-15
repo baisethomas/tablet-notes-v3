@@ -165,6 +165,33 @@ test('completeTranscriptionJob marks the sermon complete, not just the job (TAB-
   assert.equal(sermonWrite.id, 'sermon-1');
 });
 
+test('both summary completion paths write the status, including the early return (PR #49 review)', async () => {
+  // The reaper short-circuits when a summary row already exists — the recovery
+  // path after an earlier failure. It marks the job done and returns, so a
+  // status write placed only on the generate-now branch would be missing here
+  // and recreate TAB-89 in the branch that runs *after* something went wrong.
+  const source = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../../jobs-reaper-background.js'),
+    'utf8'
+  );
+
+  const helper = source.slice(source.indexOf('async function markSummaryJobDone'));
+  const body = helper.slice(0, helper.indexOf('\n}\n'));
+  assert.match(
+    body,
+    /applySermonStageComplete/,
+    'the sermon status write must live inside markSummaryJobDone, which both paths call'
+  );
+
+  // And no call site may bypass it by updating the job status directly.
+  const directDoneWrites = source.match(/status:\s*JOB_STATUS\.DONE/g) || [];
+  assert.equal(
+    directDoneWrites.length,
+    1,
+    'exactly one place may mark a summary job done; found ' + directDoneWrites.length
+  );
+});
+
 test('the sermon is marked before the job is, so Realtime never sees a stale pair', async () => {
   const order = [];
   const supabase = {
