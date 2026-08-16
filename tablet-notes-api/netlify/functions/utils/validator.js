@@ -152,7 +152,13 @@ const schemas = {
 
     kind: Joi.string()
       .valid('transcription', 'summary')
-      .default('transcription')
+      .default('transcription'),
+
+    // Deliberate retry of an exhausted (`dead`) job. Defaults false, so an
+    // automatic sweep never resurrects one — that loop is TAB-85. Only a user
+    // asking for a retry should spend provider calls on a job that already
+    // failed every attempt.
+    retry: Joi.boolean().default(false)
   }),
 
   // Bible API request validation

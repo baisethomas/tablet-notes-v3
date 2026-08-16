@@ -19,6 +19,31 @@ const { completeTranscriptionJob } = require('./utils/completeTranscription');
 const WEBHOOK_SECRET_HEADER = 'x-tabletnotes-webhook-secret';
 
 /**
+ * Ask the provider what actually went wrong (TAB-85).
+ *
+ * The error callback carries `status: "error"` and, in practice, no reason —
+ * so the stored `last_error` was the same generic sentence for every failure.
+ * In production that made 19 dead jobs indistinguishable and hid the real
+ * cause (unplayable audio, TAB-86) behind a string that described nothing.
+ *
+ * Best-effort by design: this runs on a path that has already failed, so a
+ * lookup that times out or throws must not change the outcome. The caller
+ * falls back to the generic message.
+ */
+async function fetchProviderError(transcriptId, logger) {
+  if (!transcriptId || !process.env.ASSEMBLYAI_API_KEY) return null;
+  try {
+    const assembly = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
+    const transcript = await withTimeout(() => assembly.transcripts.get(transcriptId), 10000)();
+    const detail = typeof transcript?.error === 'string' ? transcript.error.trim() : '';
+    return detail || null;
+  } catch (error) {
+    logger?.warn?.('Could not fetch provider error detail', { transcriptId, error: error.message });
+    return null;
+  }
+}
+
+/**
  * POST /api/assemblyai-webhook — AssemblyAI completion callback (TAB-72).
  *
  * This is deliberately the ONLY function in the codebase without
@@ -142,12 +167,21 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
   }
 
   if (interpreted.outcome === 'error') {
-    const failure = planFailure(job, interpreted.error);
+    // The callback body carries `status: "error"` but usually no reason, so
+    // `interpretWebhook` falls back to the generic string. Storing that alone
+    // is what made every failure look identical in the ledger: 19 jobs all
+    // reading "AssemblyAI reported an error" hid the fact that the audio was
+    // unplayable (TAB-86) and sent the first diagnosis down the wrong path.
+    // One extra call on a path that has already failed is worth the detail.
+    const detail = await fetchProviderError(interpreted.transcriptId, logger);
+
+    const failure = planFailure(job, detail || interpreted.error);
     await supabase.from('processing_jobs').update(failure).eq('id', job.id);
     logger.warn('Provider reported transcription error', {
       jobId: job.id,
       attempts: failure.attempts,
-      status: failure.status
+      status: failure.status,
+      providerError: failure.last_error
     });
     return createSuccessResponse({ handled: true, status: failure.status }, 200);
   }
