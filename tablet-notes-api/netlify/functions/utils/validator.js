@@ -158,7 +158,10 @@ const schemas = {
     // automatic sweep never resurrects one — that loop is TAB-85. Only a user
     // asking for a retry should spend provider calls on a job that already
     // failed every attempt.
-    retry: Joi.boolean().default(false)
+    // .strict() because Joi otherwise coerces the string "true" to true,
+    // which would quietly defeat the exact-boolean check in
+    // isExhaustedWithoutRetry. A retry is a deliberate act; spell it.
+    retry: Joi.boolean().strict().default(false)
   }),
 
   // Bible API request validation

@@ -17,6 +17,7 @@ const {
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 
 const WEBHOOK_SECRET_HEADER = 'x-tabletnotes-webhook-secret';
+const MAX_ERROR_CHARS = 500;
 
 /**
  * Ask the provider what actually went wrong (TAB-85).
@@ -29,14 +30,20 @@ const WEBHOOK_SECRET_HEADER = 'x-tabletnotes-webhook-secret';
  * Best-effort by design: this runs on a path that has already failed, so a
  * lookup that times out or throws must not change the outcome. The caller
  * falls back to the generic message.
+ *
+ * Bounded twice over. The 3s timeout is deliberately short: AssemblyAI retries
+ * a callback it considers failed, so blocking the response on a slow lookup
+ * would trade error detail for duplicate webhook deliveries. And the message is
+ * truncated — `last_error` exists to be read in a ledger, not to store an
+ * arbitrary-length provider payload.
  */
 async function fetchProviderError(transcriptId, logger) {
   if (!transcriptId || !process.env.ASSEMBLYAI_API_KEY) return null;
   try {
     const assembly = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
-    const transcript = await withTimeout(() => assembly.transcripts.get(transcriptId), 10000)();
+    const transcript = await withTimeout(() => assembly.transcripts.get(transcriptId), 3000)();
     const detail = typeof transcript?.error === 'string' ? transcript.error.trim() : '';
-    return detail || null;
+    return detail ? detail.slice(0, MAX_ERROR_CHARS) : null;
   } catch (error) {
     logger?.warn?.('Could not fetch provider error detail', { transcriptId, error: error.message });
     return null;

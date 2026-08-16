@@ -68,12 +68,25 @@ test('retry can be asked for explicitly', () => {
   assert.equal(value.retry, true);
 });
 
-test('retry is a boolean, not a truthy string', () => {
-  const { error } = schemas.processingJob.validate({
-    sermonLocalId: '3ffcc32e-4bac-46fe-b30f-77b623c1b7bd',
-    retry: 'yes-please'
-  });
-  assert.ok(error, 'a non-boolean retry must be rejected rather than coerced');
+test('retry is a real boolean — no string coercion', () => {
+  // Joi coerces "true" -> true by default, which would have quietly defeated
+  // the exact-boolean check in isExhaustedWithoutRetry. .strict() closes it
+  // (PR #50 review).
+  for (const bad of ['yes-please', 'true', 'false', '1', 1, 0]) {
+    const { error } = schemas.processingJob.validate({
+      sermonLocalId: '3ffcc32e-4bac-46fe-b30f-77b623c1b7bd',
+      retry: bad
+    });
+    assert.ok(error, `${JSON.stringify(bad)} must be rejected, not coerced`);
+  }
+});
+
+test('the provider error lookup is short-bounded and truncated', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../../assemblyai-webhook.js'), 'utf8');
+  assert.match(src, /transcripts\.get\(transcriptId\), 3000\)/,
+    'a slow lookup must not stall the webhook into a provider retry');
+  assert.match(src, /slice\(0, MAX_ERROR_CHARS\)/,
+    'last_error must not store an unbounded provider payload');
 });
 
 // --- wiring -----------------------------------------------------------------
