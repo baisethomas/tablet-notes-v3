@@ -72,9 +72,59 @@ async function applySermonStageComplete({ supabase, sermonId, stage, title, logg
   return { error: error || null, patch };
 }
 
+/**
+ * Whether an incoming stage status is a **stale regression** that must be
+ * ignored (TAB-90).
+ *
+ * The server marks a stage `complete` when a durable job finishes. A client can
+ * then undo that: `SermonSyncRemoteGateway` includes both stage statuses in the
+ * push whenever the metadata scope is dirty (an offline title edit is enough),
+ * sync pushes before it pulls, and this endpoint accepted them unconditionally.
+ * The device's stale `pending` won, and because the job is already terminal no
+ * further Realtime event ever corrected it.
+ *
+ * The rule cannot simply be "never regress from complete" — a user-initiated
+ * re-transcription legitimately sets `pending`. What separates the two is
+ * *when* the client last touched the row: a deliberate change was made after
+ * the server's write, a stale push was made before it. So compare timestamps
+ * and only refuse the regression when the client's view predates the server's.
+ *
+ * Depends on device clocks, which is the honest weakness. It fails safe: an
+ * unparseable or missing timestamp is treated as stale, so the server's
+ * completion stands and the client can re-assert it on its next edit.
+ */
+function isStaleStageRegression({
+  serverStatus,
+  incomingStatus,
+  serverUpdatedAt,
+  clientUpdatedAt
+}) {
+  // Nothing being set, or not a regression away from a completed stage.
+  if (incomingStatus === undefined || incomingStatus === null) return false;
+  if (serverStatus !== STATUS_COMPLETE) return false;
+  if (incomingStatus === STATUS_COMPLETE) return false;
+
+  return !isStrictlyNewer(clientUpdatedAt, serverUpdatedAt);
+}
+
+function isStrictlyNewer(candidate, reference) {
+  // Strings only. `Date.parse(12345)` coerces the number to "12345" and reads
+  // it as the year 12345 — a far-future date that would beat any server
+  // timestamp and wave the regression straight through. Caught by the
+  // fails-safe test, which is the only reason this is here.
+  if (typeof candidate !== 'string' || typeof reference !== 'string') return false;
+
+  const a = Date.parse(candidate);
+  const b = Date.parse(reference);
+  // Unknown either way → not newer, so the regression is refused.
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  return a > b;
+}
+
 module.exports = {
   buildSermonStatusPatch,
   applySermonStageComplete,
+  isStaleStageRegression,
   SERMON_STAGE_COLUMNS,
   STATUS_COMPLETE
 };

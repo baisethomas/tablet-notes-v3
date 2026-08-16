@@ -7,6 +7,7 @@ const {
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
 const { isOwnedObjectPath, objectPathFromUrl } = require('./utils/audioObjectPath');
+const { isStaleStageRegression } = require('./utils/sermonStatus');
 
 exports.handler = withLogging('update-sermon', async (event, context) => {
   const logger = event.logger;
@@ -55,7 +56,8 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
     // Verify sermon belongs to user
     const { data: existingSermon, error: fetchError } = await supabase
       .from('sermons')
-      .select('id, user_id')
+      // updated_at + stage statuses come along for the TAB-90 staleness guard.
+      .select('id, user_id, updated_at, transcription_status, summary_status')
       .eq('id', body.remoteId)
       .single();
 
@@ -102,8 +104,37 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
       updateData.audio_file_url = body.audioFileUrl;
     }
     if (body.audioFileSizeBytes !== undefined) updateData.audio_file_size_bytes = body.audioFileSizeBytes;
-    if (body.transcriptionStatus !== undefined) updateData.transcription_status = body.transcriptionStatus;
-    if (body.summaryStatus !== undefined) updateData.summary_status = body.summaryStatus;
+    // A client with dirty metadata pushes BOTH stage statuses, even though it
+    // was only editing a title. If its view predates the server's completion,
+    // applying them would undo a finished transcription or summary (TAB-90).
+    // The title and every other field still apply — only the stale status is
+    // dropped.
+    const droppedStages = [];
+    for (const [field, column, serverStatus] of [
+      ['transcriptionStatus', 'transcription_status', existingSermon.transcription_status],
+      ['summaryStatus', 'summary_status', existingSermon.summary_status]
+    ]) {
+      if (body[field] === undefined) continue;
+      const stale = isStaleStageRegression({
+        serverStatus,
+        incomingStatus: body[field],
+        serverUpdatedAt: existingSermon.updated_at,
+        clientUpdatedAt: body.updatedAt
+      });
+      if (stale) {
+        droppedStages.push(column);
+        continue;
+      }
+      updateData[column] = body[field];
+    }
+    if (droppedStages.length > 0) {
+      logger.info('Ignored stale stage status from client', {
+        remoteId: body.remoteId,
+        columns: droppedStages,
+        clientUpdatedAt: body.updatedAt,
+        serverUpdatedAt: existingSermon.updated_at
+      });
+    }
     if (body.isArchived !== undefined) updateData.is_archived = body.isArchived;
 
     // Always update the timestamp
