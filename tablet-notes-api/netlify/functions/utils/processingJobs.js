@@ -307,7 +307,28 @@ function secretMatches(provided, expected) {
   return mismatch === 0;
 }
 
+/**
+ * Whether an existing job should be handed back untouched rather than revived
+ * (TAB-85).
+ *
+ * A `dead` job has already burned every attempt. Reviving it on an automatic
+ * sweep is what made an unusable recording retry forever: the client re-POSTs
+ * every pending/failed sermon each launch, the revive reset `attempts` to 0,
+ * and the reaper spent five more provider calls before it died again.
+ *
+ * A deliberate retry may still revive it. Nothing else may.
+ *
+ * Extracted here rather than written inline in `jobs.js` because functions are
+ * not directly testable (CLAUDE.md §10) — and the first version of this logic
+ * shipped a `ReferenceError` past a green suite precisely because the test
+ * asserted on the source text instead of calling anything.
+ */
+function isExhaustedWithoutRetry(existing, retry) {
+  return Boolean(existing) && existing.status === JOB_STATUS.DEAD && retry !== true;
+}
+
 module.exports = {
+  isExhaustedWithoutRetry,
   JOB_KINDS,
   JOB_STATUS,
   ACTIVE_STATUSES,

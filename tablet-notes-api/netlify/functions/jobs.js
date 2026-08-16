@@ -13,6 +13,7 @@ const {
   JOB_KINDS,
   JOB_STATUS,
   idempotencyKey,
+  isExhaustedWithoutRetry,
   webhookUrlFor,
   classifySubmitFailure
 } = require('./utils/processingJobs');
@@ -36,7 +37,12 @@ exports.handler = withDefaults(
   async (event, context) => {
     const logger = event.logger;
     const user = event.user;
-    const { sermonLocalId, filePath: requestedFilePath, kind = JOB_KINDS.TRANSCRIPTION } = event.validatedData;
+    const {
+      sermonLocalId,
+      filePath: requestedFilePath,
+      kind = JOB_KINDS.TRANSCRIPTION,
+      retry = false
+    } = event.validatedData;
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -169,7 +175,7 @@ exports.handler = withDefaults(
     // dead row back and leaves it alone. A deliberate retry still can, by
     // asking for it. No current client sends `retry`, and none needs to: the
     // in-app retry button routes through TranscriptionRetryService, not here.
-    if (existing && existing.status === JOB_STATUS.DEAD && !body.retry) {
+    if (isExhaustedWithoutRetry(existing, retry)) {
       logger.info('Not reviving an exhausted job for an automatic dispatch', {
         jobId: existing.id,
         attempts: existing.attempts
