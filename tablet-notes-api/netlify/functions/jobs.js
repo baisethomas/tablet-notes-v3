@@ -13,6 +13,7 @@ const {
   JOB_KINDS,
   JOB_STATUS,
   idempotencyKey,
+  isExhaustedWithoutRetry,
   webhookUrlFor,
   classifySubmitFailure
 } = require('./utils/processingJobs');
@@ -36,7 +37,12 @@ exports.handler = withDefaults(
   async (event, context) => {
     const logger = event.logger;
     const user = event.user;
-    const { sermonLocalId, filePath: requestedFilePath, kind = JOB_KINDS.TRANSCRIPTION } = event.validatedData;
+    const {
+      sermonLocalId,
+      filePath: requestedFilePath,
+      kind = JOB_KINDS.TRANSCRIPTION,
+      retry = false
+    } = event.validatedData;
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -158,6 +164,27 @@ exports.handler = withDefaults(
     // transcription. The claim cannot defend itself if its own precondition is
     // being rewritten underneath it.
     let job;
+
+    // A `dead` job has already burned every attempt. Reviving it automatically
+    // is what turned an unusable recording into an endless loop: the client's
+    // sweep re-POSTs every pending/failed sermon on each launch, this branch
+    // reset attempts to 0, and the reaper spent five more provider calls before
+    // it died again — forever (TAB-85).
+    //
+    // So automatic dispatch no longer resurrects an exhausted job; it gets the
+    // dead row back and leaves it alone. A deliberate retry still can, by
+    // asking for it. No current client sends `retry`, and none needs to: the
+    // in-app retry button routes through TranscriptionRetryService, not here.
+    if (isExhaustedWithoutRetry(existing, retry)) {
+      logger.info('Not reviving an exhausted job for an automatic dispatch', {
+        jobId: existing.id,
+        attempts: existing.attempts
+      });
+      return createSuccessResponse({ job: existing, reused: true, exhausted: true }, 200, {
+        ...(context.rateLimitHeaders || {}),
+        origin: event.headers.origin
+      });
+    }
 
     if (existing) {
       // Reached only for a dead/failed row (active ones returned above). Revive
