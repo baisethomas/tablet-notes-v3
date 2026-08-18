@@ -372,6 +372,11 @@ async function persistJobFailure({ supabase, job, failure, logger }) {
       sermonId: job?.sermon_id,
       stage: job?.kind,
       status: STATUS_FAILED_PERMANENT,
+      // A stage that already stopped keeps its outcome. The concrete case: the
+      // summary was saved and the stage marked complete, but the job-ledger
+      // update failed; retries exhaust; without this guard the dead job would
+      // stamp failed_permanent over a result the user actually has.
+      onlyIfNotTerminal: true,
       logger
     });
   } catch (statusError) {

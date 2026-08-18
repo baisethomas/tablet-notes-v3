@@ -86,16 +86,53 @@ function buildSermonStatusPatch({ stage, status = STATUS_COMPLETE, title, now = 
  * event or sync — whereas a paid re-transcription is not. The error is
  * returned so the caller logs it loudly instead of dropping it.
  */
-async function applySermonStageTerminal({ supabase, sermonId, stage, status = STATUS_COMPLETE, title, logger }) {
-  if (!sermonId) return { error: null, patch: null };
+async function applySermonStageTerminal({
+  supabase,
+  sermonId,
+  stage,
+  status = STATUS_COMPLETE,
+  title,
+  logger,
+  // When true, the write only lands while the stage has NOT already stopped.
+  //
+  // The failure path needs this and the success path must not have it. A dead
+  // job whose stage already reads `complete` is pure bookkeeping — the summary
+  // exists; the ledger update failed — and stamping `failed_permanent` over it
+  // would hide a saved result behind an error screen (PR #52 review). Whereas
+  // `complete` must stay unconditional: a job that eventually succeeds after
+  // the stage was stopped is exactly the write that should win.
+  onlyIfNotTerminal = false
+} = {}) {
+  if (!sermonId) return { error: null, patch: null, applied: false };
 
   const patch = buildSermonStatusPatch({ stage, status, title });
+  const column = SERMON_STAGE_COLUMNS[stage];
+
+  if (onlyIfNotTerminal) {
+    const { data, error } = await supabase
+      .from('sermons')
+      .update(patch)
+      .eq('id', sermonId)
+      .or(stageNotTerminalPredicate(column))
+      .select('id');
+
+    if (error) {
+      logger?.error?.('Failed to write sermon stage status', { sermonId, stage, status }, error);
+      return { error, patch, applied: false };
+    }
+    const applied = Array.isArray(data) && data.length > 0;
+    if (!applied) {
+      logger?.info?.('Stage already terminal; left as-is', { sermonId, stage, status });
+    }
+    return { error: null, patch, applied };
+  }
+
   const { error } = await supabase.from('sermons').update(patch).eq('id', sermonId);
 
   if (error) {
     logger?.error?.('Failed to write sermon stage status', { sermonId, stage, status }, error);
   }
-  return { error: error || null, patch };
+  return { error: error || null, patch, applied: !error };
 }
 
 /**

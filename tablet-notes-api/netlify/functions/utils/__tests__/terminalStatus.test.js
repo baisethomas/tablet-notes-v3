@@ -95,10 +95,24 @@ function fakePipelineSupabase() {
           return { eq() { return { async maybeSingle() { return { data: null, error: null }; } }; } };
         },
         async upsert(row) { writes[table].push(row); return { error: null }; },
+        // Records the update and every filter chained onto it, and is awaitable
+        // at any point in the chain — the code under test ends some updates at
+        // .eq() and others at .or().select().
         update(patch) {
-          return {
-            async eq(_c, value) { writes[table].push({ patch, id: value }); return { error: null }; }
+          const rec = { patch, filters: [] };
+          let recorded = false;
+          const record = () => { if (!recorded) { recorded = true; writes[table].push(rec); } };
+          const chain = {
+            eq(column, value) {
+              rec.filters.push(['eq', column, value]);
+              if (column === 'id') rec.id = value;
+              return chain;
+            },
+            or(expr) { rec.filters.push(['or', expr]); return chain; },
+            async select() { record(); return { data: [{ id: rec.id }], error: null }; },
+            then(resolve) { record(); resolve({ error: null }); }
           };
+          return chain;
         }
       };
     }
@@ -225,6 +239,48 @@ test('a dead summary job stops the summary stage, not the transcription', async 
   const patch = supabase.writes.sermons[0]?.patch;
   assert.equal(patch?.summary_status, STATUS_FAILED_PERMANENT);
   assert.ok(!('transcription_status' in (patch || {})), 'the transcript is still fine');
+});
+
+test('a dead job does not overwrite a stage that already stopped (PR #52 review)', async () => {
+  // The sequence that surfaced this: the summary is saved and the stage marked
+  // complete, but the job-ledger update fails; retries exhaust; the dead job
+  // must not stamp failed_permanent over a result the user actually has. The
+  // write goes out as a compare-and-set that only matches while the column is
+  // not already terminal — the same mechanism update-sermon uses (TAB-90).
+  const supabase = fakePipelineSupabase();
+  const job = { ...transcriptionJob, kind: 'summary', attempts: 4, max_attempts: 5 };
+
+  await persistJobFailure({ supabase, job, failure: planFailure(job, 'ledger update failed'), logger: silent });
+
+  const write = supabase.writes.sermons.find((w) => w.patch?.summary_status === STATUS_FAILED_PERMANENT);
+  assert.ok(write, 'the guarded write still goes out');
+  assert.deepEqual(
+    write.filters.find(([kind]) => kind === 'or'),
+    ['or', stageNotTerminalPredicate('summary_status')],
+    'and only lands while the stage has not already stopped'
+  );
+});
+
+test('a completion write is NOT guarded — success must win over a stale failure', async () => {
+  // The inverse must stay true: a job that eventually succeeds after its stage
+  // was stopped (a webhook landing after the reaper gave up, a TAB-91 retry)
+  // is exactly the write that should overwrite failed_permanent.
+  const supabase = fakePipelineSupabase();
+
+  await completeTranscriptionJob({
+    supabase,
+    job: transcriptionJob,
+    transcript: { text: 'x'.repeat(200), words: [] },
+    logger: silent
+  });
+
+  const write = supabase.writes.sermons.find((w) => w.patch?.transcription_status === 'complete');
+  assert.ok(write);
+  assert.equal(
+    write.filters.some(([kind]) => kind === 'or'),
+    false,
+    'complete is unconditional'
+  );
 });
 
 test('an unrecognised job kind cannot take down the failure path', async () => {
