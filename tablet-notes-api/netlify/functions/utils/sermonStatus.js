@@ -73,8 +73,7 @@ async function applySermonStageComplete({ supabase, sermonId, stage, title, logg
 }
 
 /**
- * Whether an incoming stage status is a **stale regression** that must be
- * ignored (TAB-90).
+ * Whether an incoming stage status must be refused (TAB-90).
  *
  * The server marks a stage `complete` when a durable job finishes. A client can
  * then undo that: `SermonSyncRemoteGateway` includes both stage statuses in the
@@ -83,48 +82,135 @@ async function applySermonStageComplete({ supabase, sermonId, stage, title, logg
  * The device's stale `pending` won, and because the job is already terminal no
  * further Realtime event ever corrected it.
  *
- * The rule cannot simply be "never regress from complete" — a user-initiated
- * re-transcription legitimately sets `pending`. What separates the two is
- * *when* the client last touched the row: a deliberate change was made after
- * the server's write, a stale push was made before it. So compare timestamps
- * and only refuse the regression when the client's view predates the server's.
+ * The first version of this guard compared timestamps, on the theory that a
+ * deliberate change happens *after* the server's write and a stale push before
+ * it. That was wrong, and review caught it: `Sermon.markPendingSync` stamps
+ * `updatedAt = Date()` for **any** dirty scope, so editing a title gives the
+ * whole row a fresh timestamp and carries the stale stage status through on its
+ * coat-tails — exactly the sequence this issue is about.
  *
- * Depends on device clocks, which is the honest weakness. It fails safe: an
- * unparseable or missing timestamp is treated as stale, so the server's
- * completion stands and the client can re-assert it on its next edit.
+ * So the rule is simply that a client may not walk a completed stage backwards.
+ * That is safe because there is no legitimate client-initiated path from
+ * `complete` to anything else: the retry affordance in `SermonDetailView` is
+ * only reachable while the local status is `processing`, `failed`, or
+ * `pending`. When a client that believes a stage failed retries one the server
+ * has since completed, keeping `complete` is the *desired* outcome — the
+ * transcript already exists, and the client lands it on its next pull instead
+ * of re-billing the provider.
+ *
+ * No clocks are involved, which is the point: the previous version's behaviour
+ * depended on device time being honest and ordered against the server's.
+ *
+ * Known limit: a `complete` the server wrote in error cannot be walked back by
+ * a client. Recovering from that needs a server-side path, which is where
+ * terminal states (TAB-85) will live.
  */
-function isStaleStageRegression({
-  serverStatus,
-  incomingStatus,
-  serverUpdatedAt,
-  clientUpdatedAt
-}) {
-  // Nothing being set, or not a regression away from a completed stage.
+function isForbiddenStageRegression({ serverStatus, incomingStatus }) {
   if (incomingStatus === undefined || incomingStatus === null) return false;
   if (serverStatus !== STATUS_COMPLETE) return false;
-  if (incomingStatus === STATUS_COMPLETE) return false;
-
-  return !isStrictlyNewer(clientUpdatedAt, serverUpdatedAt);
+  return incomingStatus !== STATUS_COMPLETE;
 }
 
-function isStrictlyNewer(candidate, reference) {
-  // Strings only. `Date.parse(12345)` coerces the number to "12345" and reads
-  // it as the year 12345 — a far-future date that would beat any server
-  // timestamp and wave the regression straight through. Caught by the
-  // fails-safe test, which is the only reason this is here.
-  if (typeof candidate !== 'string' || typeof reference !== 'string') return false;
+/**
+ * Decides what `update-sermon` should do with the stage statuses in a push.
+ *
+ * Pure, so the decision is testable without a database — the previous round of
+ * tests asserted on the *source text* of the endpoint, which proves only that
+ * certain characters are present and would have happily passed a broken
+ * implementation.
+ *
+ * Returns the writes to apply and the columns refused. A value the server
+ * already holds produces no write at all: that keeps the common metadata push
+ * to a single statement, and it means a stage that completes between the read
+ * and the write is left alone rather than being restated from a stale snapshot.
+ */
+function planStageStatusWrites({ incoming = {}, server = {} } = {}) {
+  const writes = [];
+  const dropped = [];
 
-  const a = Date.parse(candidate);
-  const b = Date.parse(reference);
-  // Unknown either way → not newer, so the regression is refused.
-  if (Number.isNaN(a) || Number.isNaN(b)) return false;
-  return a > b;
+  for (const [field, column] of [
+    ['transcriptionStatus', SERMON_STAGE_COLUMNS.transcription],
+    ['summaryStatus', SERMON_STAGE_COLUMNS.summary]
+  ]) {
+    const incomingStatus = incoming[field];
+    if (incomingStatus === undefined || incomingStatus === null) continue;
+
+    const serverStatus = server[column];
+    if (incomingStatus === serverStatus) continue;
+
+    if (isForbiddenStageRegression({ serverStatus, incomingStatus })) {
+      dropped.push(column);
+      continue;
+    }
+    writes.push({ column, value: incomingStatus });
+  }
+
+  return { writes, dropped };
+}
+
+/**
+ * PostgREST filter making a stage write a compare-and-set.
+ *
+ * The snapshot this decision was made from is already stale by the time the
+ * write goes out: a job finishing in that window would otherwise be clobbered
+ * by the client's value, and since the job is terminal nothing would correct
+ * it. Anding this onto the update means the row is only touched while the
+ * column is still not `complete`.
+ *
+ * The null branch matters — `status <> 'complete'` is NULL, not true, for a row
+ * where the column was never set, so a bare `neq` would silently match nothing.
+ */
+function stageNotCompletePredicate(column) {
+  return `${column}.is.null,${column}.neq.${STATUS_COMPLETE}`;
+}
+
+/**
+ * Applies the planned stage writes, returning the columns that did not land.
+ *
+ * Lives here rather than inline in the endpoint so the compare-and-set can be
+ * tested against a fake client: the filter is the entire point of this code,
+ * and a test that reads the endpoint's source proves only that some characters
+ * are present.
+ *
+ * A write that matches zero rows is not an error — it means the stage reached
+ * `complete` after the caller took its snapshot, so the server's value is the
+ * newer truth and the client's is reported as dropped.
+ */
+async function applyStageStatusWrites({ supabase, sermonId, userId, writes = [], logger }) {
+  const dropped = [];
+
+  for (const { column, value } of writes) {
+    const { data: applied, error } = await supabase
+      .from('sermons')
+      .update({ [column]: value })
+      .eq('id', sermonId)
+      .eq('user_id', userId)
+      .or(stageNotCompletePredicate(column))
+      .select('id');
+
+    if (error) {
+      logger?.warn?.('Failed to apply stage status', { sermonId, column, error: error.message });
+      continue;
+    }
+    if (!applied || applied.length === 0) {
+      dropped.push(column);
+      logger?.info?.('Stage completed while the update was in flight; kept the server value', {
+        sermonId,
+        column
+      });
+    }
+  }
+
+  return { dropped };
 }
 
 module.exports = {
   buildSermonStatusPatch,
   applySermonStageComplete,
-  isStaleStageRegression,
+  isForbiddenStageRegression,
+  planStageStatusWrites,
+  stageNotCompletePredicate,
+  applyStageStatusWrites,
   SERMON_STAGE_COLUMNS,
   STATUS_COMPLETE
 };
