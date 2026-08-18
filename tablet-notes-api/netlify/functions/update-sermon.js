@@ -7,6 +7,10 @@ const {
 } = require('./utils/security');
 const { withLogging } = require('./utils/logger');
 const { isOwnedObjectPath, objectPathFromUrl } = require('./utils/audioObjectPath');
+const {
+  planStageStatusWrites,
+  applyStageStatusWrites
+} = require('./utils/sermonStatus');
 
 exports.handler = withLogging('update-sermon', async (event, context) => {
   const logger = event.logger;
@@ -55,7 +59,8 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
     // Verify sermon belongs to user
     const { data: existingSermon, error: fetchError } = await supabase
       .from('sermons')
-      .select('id, user_id')
+      // updated_at + stage statuses come along for the TAB-90 staleness guard.
+      .select('id, user_id, updated_at, transcription_status, summary_status')
       .eq('id', body.remoteId)
       .single();
 
@@ -102,12 +107,51 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
       updateData.audio_file_url = body.audioFileUrl;
     }
     if (body.audioFileSizeBytes !== undefined) updateData.audio_file_size_bytes = body.audioFileSizeBytes;
-    if (body.transcriptionStatus !== undefined) updateData.transcription_status = body.transcriptionStatus;
-    if (body.summaryStatus !== undefined) updateData.summary_status = body.summaryStatus;
+    // A client with dirty metadata pushes BOTH stage statuses, even when it was
+    // only editing a title. If the server has since completed that stage,
+    // applying them would undo a finished transcription or summary (TAB-90).
+    // The title and every other field still apply — only the stale status is
+    // refused, and it is refused outright rather than on a timestamp comparison
+    // (see utils/sermonStatus.js for why the timestamp version did not work).
+    const { writes: stageWrites, dropped: droppedStages } = planStageStatusWrites({
+      incoming: { transcriptionStatus: body.transcriptionStatus, summaryStatus: body.summaryStatus },
+      server: existingSermon
+    });
+
+    // Each accepted status is written on its own, conditional on the column
+    // still not being complete, so a stage that finishes between the read above
+    // and the write is not overwritten. Runs BEFORE the metadata update so that
+    // update sees the final drop list and can stamp the row accordingly.
+    const { dropped: raceDropped } = await applyStageStatusWrites({
+      supabase,
+      sermonId: body.remoteId,
+      userId: user.id,
+      writes: stageWrites,
+      logger
+    });
+    droppedStages.push(...raceDropped);
+
+    if (droppedStages.length > 0) {
+      logger.info('Ignored a client stage status that would undo a completed stage', {
+        remoteId: body.remoteId,
+        columns: droppedStages,
+        clientUpdatedAt: body.updatedAt,
+        serverUpdatedAt: existingSermon.updated_at
+      });
+    }
+
     if (body.isArchived !== undefined) updateData.is_archived = body.isArchived;
 
-    // Always update the timestamp
-    updateData.updated_at = body.updatedAt || new Date().toISOString();
+    // Always update the timestamp.
+    //
+    // When a status was refused, the row must end up strictly NEWER than the
+    // client's own timestamp. `SyncService.mergeRemoteSermon` only applies a
+    // remote row whose updatedAt is strictly greater than the local one, so
+    // echoing the client's timestamp back would leave that device unable to
+    // ever import the `complete` this endpoint just protected.
+    updateData.updated_at = droppedStages.length > 0
+      ? new Date().toISOString()
+      : (body.updatedAt || new Date().toISOString());
 
     // Update sermon in database
     const { data: sermon, error: updateError } = await supabase
