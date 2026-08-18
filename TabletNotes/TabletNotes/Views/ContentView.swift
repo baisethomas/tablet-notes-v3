@@ -12,7 +12,15 @@ import SwiftData
 
 @MainActor
 func sermonStatusText(transcriptionStatus: String, summaryStatus: String) -> (String, Color) {
-    if transcriptionStatus == "failed" || summaryStatus == "failed" {
+    // Terminal states first. They fell through to the final `else` before
+    // TAB-85, so a recording the pipeline had given up on was listed as a green
+    // "Ready" — the row said done, the detail view said pending.
+    if transcriptionStatus == SermonStageStatus.failedPermanent.rawValue
+        || summaryStatus == SermonStageStatus.failedPermanent.rawValue {
+        return ("Couldn't process", .red)
+    } else if transcriptionStatus == SermonStageStatus.noSpeech.rawValue {
+        return ("No speech detected", .secondary)
+    } else if transcriptionStatus == "failed" || summaryStatus == "failed" {
         return ("Failed", .red)
     } else if transcriptionStatus == "processing" || summaryStatus == "processing" {
         return ("Processing...", .orange)
