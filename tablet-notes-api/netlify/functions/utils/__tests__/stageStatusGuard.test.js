@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   isForbiddenStageRegression,
   planStageStatusWrites,
-  stageNotCompletePredicate,
+  stageNotTerminalPredicate,
   applyStageStatusWrites
 } = require('../sermonStatus');
 
@@ -100,13 +100,13 @@ test('a push carrying no stage statuses is a no-op', () => {
 
 // --- the compare-and-set ------------------------------------------------------
 
-test('the predicate matches a null column, not just a non-complete one', () => {
+test('the predicate matches a null column, not just a non-terminal one', () => {
   // `status <> 'complete'` is NULL — not true — for a row that never had one,
   // so a bare neq would silently match nothing and drop every write.
-  assert.equal(
-    stageNotCompletePredicate('transcription_status'),
-    'transcription_status.is.null,transcription_status.neq.complete'
-  );
+  // The terminal set itself is pinned in terminalStatus.test.js.
+  const p = stageNotTerminalPredicate('transcription_status');
+  assert.ok(p.startsWith('transcription_status.is.null,'), 'a never-set column must still be writable');
+  assert.ok(p.includes('neq.complete'));
 });
 
 /** Records what was asked of it and returns a caller-chosen result. */
@@ -147,7 +147,7 @@ test('a stage write is scoped to the owner and refuses to overwrite complete', a
   assert.deepEqual(call.filters, [
     ['eq', 'id', 'sermon-1'],
     ['eq', 'user_id', 'user-1'],
-    ['or', 'transcription_status.is.null,transcription_status.neq.complete']
+    ['or', stageNotTerminalPredicate('transcription_status')]
   ]);
 });
 

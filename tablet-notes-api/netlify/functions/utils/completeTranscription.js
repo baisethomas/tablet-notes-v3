@@ -4,9 +4,10 @@ const {
   JOB_STATUS,
   idempotencyKey,
   planFailure,
+  persistJobFailure,
   shouldChainSummary
 } = require('./processingJobs');
-const { applySermonStageComplete } = require('./sermonStatus');
+const { applySermonStageTerminal, STATUS_NO_SPEECH, STATUS_COMPLETE } = require('./sermonStatus');
 
 /**
  * The single implementation of "a transcription finished successfully".
@@ -60,20 +61,39 @@ async function completeTranscriptionJob({ supabase, job, transcript, logger }) {
   if (transcriptError) {
     // Do NOT mark the job done — leave it retryable so the transcript isn't lost.
     const failure = planFailure(job, `transcript persist failed: ${transcriptError.message}`);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     logger?.error?.('Failed to persist transcript', { jobId: job.id }, transcriptError);
     return { ok: false, error: transcriptError.message };
   }
 
+  // The provider can succeed and still return nothing: the recording contained
+  // no speech. Five such sermons exist in production. `complete` would put a
+  // completion badge over a transcript the user does not have, so this stops on
+  // its own terminal state instead (TAB-85).
+  const hasSpeech = text.trim().length > 0;
+
   // Before marking the job done, for the same reason the transcript is written
   // first: a client reacting to `done` over Realtime must not find the sermon
-  // still claiming to be pending (TAB-89). Non-fatal — see applySermonStageComplete.
-  await applySermonStageComplete({
+  // still claiming to be pending (TAB-89). Non-fatal — see applySermonStageTerminal.
+  await applySermonStageTerminal({
     supabase,
     sermonId: job.sermon_id,
     stage: 'transcription',
+    status: hasSpeech ? STATUS_COMPLETE : STATUS_NO_SPEECH,
     logger
   });
+
+  // Nothing will ever chain a summary for an empty transcript, so leaving the
+  // summary stage `pending` would spin forever — the same bug, one tab over.
+  if (!hasSpeech) {
+    await applySermonStageTerminal({
+      supabase,
+      sermonId: job.sermon_id,
+      stage: 'summary',
+      status: STATUS_NO_SPEECH,
+      logger
+    });
+  }
 
   await supabase
     .from('processing_jobs')

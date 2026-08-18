@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildSermonStatusPatch,
-  applySermonStageComplete,
+  applySermonStageTerminal,
   SERMON_STAGE_COLUMNS
 } = require('../sermonStatus');
 const { completeTranscriptionJob } = require('../completeTranscription');
@@ -72,7 +72,7 @@ function fakeSermonsTable({ failWith = null } = {}) {
 
 test('applies the patch to the right sermon', async () => {
   const supabase = fakeSermonsTable();
-  const { error } = await applySermonStageComplete({
+  const { error } = await applySermonStageTerminal({
     supabase, sermonId: 'sermon-1', stage: 'transcription', logger: silentLogger
   });
 
@@ -86,7 +86,7 @@ test('applies the patch to the right sermon', async () => {
 test('reports a write failure instead of swallowing it', async () => {
   const supabase = fakeSermonsTable({ failWith: { message: 'permission denied' } });
   const logged = [];
-  const { error } = await applySermonStageComplete({
+  const { error } = await applySermonStageTerminal({
     supabase, sermonId: 'sermon-1', stage: 'summary',
     logger: { ...silentLogger, error: (...a) => logged.push(a) }
   });
@@ -97,7 +97,7 @@ test('reports a write failure instead of swallowing it', async () => {
 
 test('a missing sermon id is a no-op rather than an unfiltered update', async () => {
   const supabase = fakeSermonsTable();
-  const { error } = await applySermonStageComplete({
+  const { error } = await applySermonStageTerminal({
     supabase, sermonId: null, stage: 'summary', logger: silentLogger
   });
   assert.equal(error, null);
@@ -179,7 +179,7 @@ test('both summary completion paths write the status, including the early return
   const body = helper.slice(0, helper.indexOf('\n}\n'));
   assert.match(
     body,
-    /applySermonStageComplete/,
+    /applySermonStageTerminal/,
     'the sermon status write must live inside markSummaryJobDone, which both paths call'
   );
 
