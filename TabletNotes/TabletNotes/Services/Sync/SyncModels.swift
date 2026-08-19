@@ -121,8 +121,37 @@ struct RemoteTranscriptData: Codable {
     let id: String
     let localId: UUID
     let text: String
+    /// Unused on pull (`transcriptSnapshot` always imports `segments: []`).
+    /// Kept so a leftover string value still round-trips; jsonb arrays/objects
+    /// decode as `nil` instead of failing the whole library (TAB-93).
     let segments: String?
     let status: String
+
+    init(id: String, localId: UUID, text: String, segments: String? = nil, status: String) {
+        self.id = id
+        self.localId = localId
+        self.text = text
+        self.segments = segments
+        self.status = status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        localId = try container.decode(UUID.self, forKey: .localId)
+        text = try container.decode(String.self, forKey: .text)
+        status = try container.decode(String.self, forKey: .status)
+        // Prod `transcripts.segments` is jsonb. A synthesized `String?` throws
+        // `Expected to decode String but found an array instead` and aborts
+        // the entire `[RemoteSermonData]` pull. Import ignores this field
+        // (TAB-40); tolerate any JSON value so one timed transcript cannot
+        // drop the library.
+        if let value = try? container.decode(String.self, forKey: .segments) {
+            segments = value
+        } else {
+            segments = nil
+        }
+    }
 }
 
 struct RemoteSummaryData: Codable {
