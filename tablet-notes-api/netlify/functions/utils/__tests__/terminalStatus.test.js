@@ -81,12 +81,18 @@ test('the two new states are exported under stable names', () => {
 // --- where the states actually come from --------------------------------------
 
 const { completeTranscriptionJob } = require('../completeTranscription');
-const { persistJobFailure, planFailure, JOB_STATUS } = require('../processingJobs');
+const {
+  persistJobFailure,
+  planFailure,
+  JOB_STATUS,
+  TERMINAL_STAGE_WRITE_ATTEMPTS
+} = require('../processingJobs');
 
 const silent = { info() {}, warn() {}, error() {} };
 
-function fakePipelineSupabase() {
+function fakePipelineSupabase({ sermonSelectResults } = {}) {
   const writes = { transcripts: [], processing_jobs: [], sermons: [] };
+  let sermonSelectIndex = 0;
   return {
     writes,
     from(table) {
@@ -109,7 +115,16 @@ function fakePipelineSupabase() {
               return chain;
             },
             or(expr) { rec.filters.push(['or', expr]); return chain; },
-            async select() { record(); return { data: [{ id: rec.id }], error: null }; },
+            async select() {
+              record();
+              if (table === 'sermons' && sermonSelectResults) {
+                const next = sermonSelectResults[sermonSelectIndex]
+                  ?? sermonSelectResults[sermonSelectResults.length - 1];
+                sermonSelectIndex += 1;
+                return next;
+              }
+              return { data: [{ id: rec.id }], error: null };
+            },
             then(resolve) { record(); resolve({ error: null }); }
           };
           return chain;
@@ -304,6 +319,67 @@ test('an unrecognised job kind cannot take down the failure path', async () => {
     'the ledger is still correct'
   );
   assert.equal(errors.length, 1, 'and the problem is logged, not swallowed');
+});
+
+test('a blip on the stage write is retried and then lands (PR #52 review)', async () => {
+  // Dead jobs are not reaper candidates, so a single failed sermons update
+  // would leave the spinner up with nothing scheduled to repair it. The ledger
+  // is already dead — we retry the stage write, we do not undo the ledger.
+  const supabase = fakePipelineSupabase({
+    sermonSelectResults: [
+      { data: null, error: { message: 'timeout' } },
+      { data: [{ id: transcriptionJob.sermon_id }], error: null }
+    ]
+  });
+  const job = { ...transcriptionJob, attempts: 4, max_attempts: 5 };
+  const warnings = [];
+
+  const result = await persistJobFailure({
+    supabase,
+    job,
+    failure: planFailure(job, 'provider rejected the audio'),
+    logger: { ...silent, warn: (m, c) => warnings.push([m, c]) }
+  });
+
+  assert.deepEqual(result, { error: null }, 'the ledger success is not undone');
+  assert.equal(supabase.writes.sermons.length, 2, 'the stage write was retried');
+  assert.ok(
+    supabase.writes.sermons.every((w) => w.patch?.transcription_status === STATUS_FAILED_PERMANENT)
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0][0], /retrying/);
+});
+
+test('a stage write that keeps failing does not resurrect the dead job (PR #52 review)', async () => {
+  // Propagating this as persistJobFailure's error would send the exhausted job
+  // back around the paid loop. Log it, leave the ledger dead, stop.
+  const supabase = fakePipelineSupabase({
+    sermonSelectResults: [{ data: null, error: { message: 'check constraint' } }]
+  });
+  const job = { ...transcriptionJob, attempts: 4, max_attempts: 5 };
+  const errors = [];
+
+  const result = await persistJobFailure({
+    supabase,
+    job,
+    failure: planFailure(job, 'provider rejected the audio'),
+    logger: { ...silent, error: (m, c) => errors.push([m, c]) }
+  });
+
+  assert.deepEqual(result, { error: null });
+  assert.ok(
+    supabase.writes.processing_jobs.some((w) => w.patch?.status === JOB_STATUS.DEAD),
+    'the ledger stays dead'
+  );
+  assert.equal(
+    supabase.writes.sermons.length,
+    TERMINAL_STAGE_WRITE_ATTEMPTS,
+    'the stage write is retried a bounded number of times'
+  );
+  assert.ok(
+    errors.some(([m, c]) => /Could not stop the sermon stage/.test(m) && c.attempts === TERMINAL_STAGE_WRITE_ATTEMPTS),
+    'the exhausted retry is logged as an error, not returned as success-of-the-stage'
+  );
 });
 
 test('a ledger write that fails does not claim the stage was stopped', async () => {

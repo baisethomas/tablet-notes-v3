@@ -333,6 +333,19 @@ function isExhaustedWithoutRetry(existing, retry) {
 }
 
 /**
+ * How many times to try writing `failed_permanent` onto the sermon after the
+ * ledger is already `dead`.
+ *
+ * Dead jobs are not reaper candidates, so a single blip here would leave the
+ * sermon `pending` and the list spinning with nothing scheduled to repair it.
+ * The write is still non-fatal — returning an error after the ledger succeeded
+ * would send an exhausted job back around the paid loop this issue exists to
+ * stop (PR #52 review). Retrying the stage write, without failing the ledger,
+ * is the bound that actually belongs here.
+ */
+const TERMINAL_STAGE_WRITE_ATTEMPTS = 3;
+
+/**
  * Writes a failed attempt to the ledger, and stops the sermon stage when the
  * job has run out of attempts (TAB-85).
  *
@@ -367,18 +380,39 @@ async function persistJobFailure({ supabase, job, failure, logger }) {
   // unrecognised stage, so this is caught rather than trusted — a job kind that
   // has no sermon column must not take down the failure path itself.
   try {
-    await applySermonStageTerminal({
-      supabase,
-      sermonId: job?.sermon_id,
-      stage: job?.kind,
-      status: STATUS_FAILED_PERMANENT,
-      // A stage that already stopped keeps its outcome. The concrete case: the
-      // summary was saved and the stage marked complete, but the job-ledger
-      // update failed; retries exhaust; without this guard the dead job would
-      // stamp failed_permanent over a result the user actually has.
-      onlyIfNotTerminal: true,
-      logger
-    });
+    let lastError = null;
+    for (let attempt = 1; attempt <= TERMINAL_STAGE_WRITE_ATTEMPTS; attempt++) {
+      const result = await applySermonStageTerminal({
+        supabase,
+        sermonId: job?.sermon_id,
+        stage: job?.kind,
+        status: STATUS_FAILED_PERMANENT,
+        // A stage that already stopped keeps its outcome. The concrete case: the
+        // summary was saved and the stage marked complete, but the job-ledger
+        // update failed; retries exhaust; without this guard the dead job would
+        // stamp failed_permanent over a result the user actually has.
+        onlyIfNotTerminal: true,
+        logger
+      });
+      lastError = result?.error || null;
+      if (!lastError) break;
+      if (attempt < TERMINAL_STAGE_WRITE_ATTEMPTS) {
+        logger?.warn?.('Sermon stage stop failed; retrying', {
+          jobId: job?.id,
+          kind: job?.kind,
+          attempt,
+          error: lastError.message
+        });
+      }
+    }
+    if (lastError) {
+      logger?.error?.('Could not stop the sermon stage for a dead job', {
+        jobId: job?.id,
+        kind: job?.kind,
+        attempts: TERMINAL_STAGE_WRITE_ATTEMPTS,
+        error: lastError.message
+      });
+    }
   } catch (statusError) {
     logger?.error?.('Could not stop the sermon stage for a dead job', {
       jobId: job?.id,
@@ -405,6 +439,7 @@ module.exports = {
   isStale,
   planFailure,
   persistJobFailure,
+  TERMINAL_STAGE_WRITE_ATTEMPTS,
   webhookUrlFor,
   jobIdFromWebhookQuery,
   classifySubmitFailure,
