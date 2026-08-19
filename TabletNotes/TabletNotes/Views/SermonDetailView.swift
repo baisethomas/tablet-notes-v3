@@ -431,8 +431,33 @@ struct SermonDetailView: View {
                             generateSummaryForSermon(sermon)
                         }
                     )
+                case SermonStageStatus.noSpeech.rawValue:
+                    SermonErrorStateView(
+                        title: "Nothing to Summarize",
+                        subtitle: "No speech was detected in this recording, so there's no transcript to summarize.",
+                        actionTitle: nil,
+                        action: nil
+                    )
+                case SermonStageStatus.failedPermanent.rawValue:
+                    SermonErrorStateView(
+                        title: "Couldn't Generate a Summary",
+                        subtitle: "We tried several times and had to stop. Your recording and transcript are still saved.",
+                        actionTitle: nil,
+                        action: nil
+                    )
                 case "pending":
-                    if sermon.transcriptionStatus != "complete" {
+                    if let stage = SermonStageStatus.known(sermon.transcriptionStatus),
+                       stage.isTerminal, stage != .complete {
+                        // Transcription stopped without a usable transcript, so
+                        // no summary is coming. Promising one would be a lie the
+                        // user waits on forever.
+                        SermonErrorStateView(
+                            title: "No Summary Available",
+                            subtitle: "This recording didn't produce a transcript, so there's nothing to summarize.",
+                            actionTitle: nil,
+                            action: nil
+                        )
+                    } else if sermon.transcriptionStatus != "complete" {
                         ProcessingStateView(
                             title: "Waiting for Transcription",
                             subtitle: "Your summary will be generated once transcription finishes.",
@@ -497,6 +522,27 @@ struct SermonDetailView: View {
                             : "We couldn't transcribe this sermon. Please check your audio file and try again.",
                         actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
                         action: isRetryingTranscription ? nil : { retryTranscription(for: sermon) }
+                    )
+                case SermonStageStatus.noSpeech.rawValue:
+                    // Not an error: the provider ran and heard nothing. Showing
+                    // "complete" over an empty transcript would claim a result
+                    // the user does not have (TAB-85).
+                    SermonErrorStateView(
+                        title: "No Speech Detected",
+                        subtitle: "We processed this recording but couldn't hear any speech in it. The audio is still saved and you can play it back above.",
+                        actionTitle: nil,
+                        action: nil
+                    )
+                case SermonStageStatus.failedPermanent.rawValue:
+                    // Deliberately no Retry. The pipeline already used up its
+                    // attempts, and the button that used to sit here re-queued
+                    // work that could never succeed. Recovering one of these
+                    // needs a server-side reset — see TAB-91.
+                    SermonErrorStateView(
+                        title: "Couldn't Transcribe This Recording",
+                        subtitle: "We tried several times and had to stop. The audio may be incomplete or unreadable. Your recording is still saved and you can play it back above.",
+                        actionTitle: nil,
+                        action: nil
                     )
                 default:
                     ScrollView {

@@ -24,6 +24,27 @@ const SERMON_STAGE_COLUMNS = {
 };
 
 const STATUS_COMPLETE = 'complete';
+/** Transcription succeeded and the provider returned no speech at all. */
+const STATUS_NO_SPEECH = 'no_speech';
+/** The pipeline exhausted its attempts and stopped trying (TAB-85). */
+const STATUS_FAILED_PERMANENT = 'failed_permanent';
+
+/**
+ * The states a stage can STOP in.
+ *
+ * Before TAB-85 there was exactly one — `complete` — so the only way the
+ * pipeline could end was successfully. A recording that could never transcribe
+ * and one that transcribed to nothing both sat at `pending`: a spinner the user
+ * could not clear, and a sermon the client re-dispatched on every sweep.
+ *
+ * These are server-owned. A client may not write itself out of, or between,
+ * them — see isForbiddenStageRegression.
+ */
+const TERMINAL_STATUSES = [STATUS_COMPLETE, STATUS_NO_SPEECH, STATUS_FAILED_PERMANENT];
+
+function isTerminalStatus(status) {
+  return typeof status === 'string' && TERMINAL_STATUSES.includes(status);
+}
 
 /**
  * Builds the `sermons` patch for a finished stage.
@@ -35,13 +56,18 @@ const STATUS_COMPLETE = 'complete';
  * @param {string} [title] Optional generated title, folded into the same write
  *   so the summary path does one update instead of two.
  */
-function buildSermonStatusPatch({ stage, title, now = new Date().toISOString() }) {
+function buildSermonStatusPatch({ stage, status = STATUS_COMPLETE, title, now = new Date().toISOString() }) {
   const column = SERMON_STAGE_COLUMNS[stage];
   if (!column) {
     throw new Error(`buildSermonStatusPatch: unknown stage "${stage}"`);
   }
+  // Only the server writes these, and only ever a state the pipeline can stop
+  // in. Anything else here is a bug in the caller, not a value to persist.
+  if (!isTerminalStatus(status)) {
+    throw new Error(`buildSermonStatusPatch: "${status}" is not a terminal status`);
+  }
 
-  const patch = { [column]: STATUS_COMPLETE, updated_at: now };
+  const patch = { [column]: status, updated_at: now };
   // Only set a title when there is one — an empty string would wipe whatever
   // the user or an earlier stage already put there.
   if (typeof title === 'string' && title.trim()) {
@@ -60,16 +86,53 @@ function buildSermonStatusPatch({ stage, title, now = new Date().toISOString() }
  * event or sync — whereas a paid re-transcription is not. The error is
  * returned so the caller logs it loudly instead of dropping it.
  */
-async function applySermonStageComplete({ supabase, sermonId, stage, title, logger }) {
-  if (!sermonId) return { error: null, patch: null };
+async function applySermonStageTerminal({
+  supabase,
+  sermonId,
+  stage,
+  status = STATUS_COMPLETE,
+  title,
+  logger,
+  // When true, the write only lands while the stage has NOT already stopped.
+  //
+  // The failure path needs this and the success path must not have it. A dead
+  // job whose stage already reads `complete` is pure bookkeeping — the summary
+  // exists; the ledger update failed — and stamping `failed_permanent` over it
+  // would hide a saved result behind an error screen (PR #52 review). Whereas
+  // `complete` must stay unconditional: a job that eventually succeeds after
+  // the stage was stopped is exactly the write that should win.
+  onlyIfNotTerminal = false
+} = {}) {
+  if (!sermonId) return { error: null, patch: null, applied: false };
 
-  const patch = buildSermonStatusPatch({ stage, title });
+  const patch = buildSermonStatusPatch({ stage, status, title });
+  const column = SERMON_STAGE_COLUMNS[stage];
+
+  if (onlyIfNotTerminal) {
+    const { data, error } = await supabase
+      .from('sermons')
+      .update(patch)
+      .eq('id', sermonId)
+      .or(stageNotTerminalPredicate(column))
+      .select('id');
+
+    if (error) {
+      logger?.error?.('Failed to write sermon stage status', { sermonId, stage, status }, error);
+      return { error, patch, applied: false };
+    }
+    const applied = Array.isArray(data) && data.length > 0;
+    if (!applied) {
+      logger?.info?.('Stage already terminal; left as-is', { sermonId, stage, status });
+    }
+    return { error: null, patch, applied };
+  }
+
   const { error } = await supabase.from('sermons').update(patch).eq('id', sermonId);
 
   if (error) {
-    logger?.error?.('Failed to write sermon stage status', { sermonId, stage }, error);
+    logger?.error?.('Failed to write sermon stage status', { sermonId, stage, status }, error);
   }
-  return { error: error || null, patch };
+  return { error: error || null, patch, applied: !error };
 }
 
 /**
@@ -107,8 +170,12 @@ async function applySermonStageComplete({ supabase, sermonId, stage, title, logg
  */
 function isForbiddenStageRegression({ serverStatus, incomingStatus }) {
   if (incomingStatus === undefined || incomingStatus === null) return false;
-  if (serverStatus !== STATUS_COMPLETE) return false;
-  return incomingStatus !== STATUS_COMPLETE;
+  // Only a stage the server has already stopped needs protecting.
+  if (!isTerminalStatus(serverStatus)) return false;
+  // Re-sending the same value is a no-op, not a regression. Anything else —
+  // including one terminal state for another — is the client overruling a
+  // decision only the server is in a position to make.
+  return incomingStatus !== serverStatus;
 }
 
 /**
@@ -160,8 +227,12 @@ function planStageStatusWrites({ incoming = {}, server = {} } = {}) {
  * The null branch matters — `status <> 'complete'` is NULL, not true, for a row
  * where the column was never set, so a bare `neq` would silently match nothing.
  */
-function stageNotCompletePredicate(column) {
-  return `${column}.is.null,${column}.neq.${STATUS_COMPLETE}`;
+function stageNotTerminalPredicate(column) {
+  // `and(...)` nested inside the top-level `or` so this reads as
+  //   column IS NULL OR (column <> each terminal state)
+  // rather than the useless "differs from at least one of them".
+  const notAny = TERMINAL_STATUSES.map((s) => `${column}.neq.${s}`).join(',');
+  return `${column}.is.null,and(${notAny})`;
 }
 
 /**
@@ -185,7 +256,7 @@ async function applyStageStatusWrites({ supabase, sermonId, userId, writes = [],
       .update({ [column]: value })
       .eq('id', sermonId)
       .eq('user_id', userId)
-      .or(stageNotCompletePredicate(column))
+      .or(stageNotTerminalPredicate(column))
       .select('id');
 
     if (error) {
@@ -206,11 +277,15 @@ async function applyStageStatusWrites({ supabase, sermonId, userId, writes = [],
 
 module.exports = {
   buildSermonStatusPatch,
-  applySermonStageComplete,
+  applySermonStageTerminal,
   isForbiddenStageRegression,
   planStageStatusWrites,
-  stageNotCompletePredicate,
+  stageNotTerminalPredicate,
   applyStageStatusWrites,
   SERMON_STAGE_COLUMNS,
-  STATUS_COMPLETE
+  STATUS_COMPLETE,
+  STATUS_NO_SPEECH,
+  STATUS_FAILED_PERMANENT,
+  TERMINAL_STATUSES,
+  isTerminalStatus
 };

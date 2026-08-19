@@ -11,6 +11,7 @@ const {
   JOB_STATUS,
   interpretWebhook,
   planFailure,
+  persistJobFailure,
   secretMatches,
   jobIdFromWebhookQuery
 } = require('./utils/processingJobs');
@@ -183,7 +184,7 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
     const detail = await fetchProviderError(interpreted.transcriptId, logger);
 
     const failure = planFailure(job, detail || interpreted.error);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     logger.warn('Provider reported transcription error', {
       jobId: job.id,
       attempts: failure.attempts,
@@ -216,7 +217,7 @@ exports.handler = withLogging('assemblyai-webhook', async (event) => {
     );
   } catch (error) {
     const failure = planFailure(job, error);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     logger.error('Webhook completion handling failed', { jobId: job.id }, error);
     return createErrorResponse(new Error('Webhook handling failed'), 500);
   }

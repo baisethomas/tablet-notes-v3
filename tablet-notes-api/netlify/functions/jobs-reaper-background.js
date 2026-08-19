@@ -13,6 +13,7 @@ const {
   ACTIVE_STATUSES,
   isStale,
   planFailure,
+  persistJobFailure,
   webhookUrlFor,
   classifySubmitFailure,
   handoffGraceExpired,
@@ -21,7 +22,7 @@ const {
   HANDOFF_ABANDON_MS
 } = require('./utils/processingJobs');
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
-const { applySermonStageComplete } = require('./utils/sermonStatus');
+const { applySermonStageTerminal } = require('./utils/sermonStatus');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
 
 /**
@@ -50,7 +51,7 @@ function supabaseClient() {
 async function resubmitTranscription({ supabase, assembly, job, logger }) {
   if (!job.audio_file_path) {
     const failure = planFailure(job, 'no audio_file_path recorded; cannot resubmit');
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     return;
   }
 
@@ -130,10 +131,14 @@ async function resubmitTranscription({ supabase, assembly, job, logger }) {
     }
 
     const failure = planFailure(job, error);
-    await supabase
-      .from('processing_jobs')
-      .update({ ...failure, submitted_at: null })
-      .eq('id', job.id);
+    // submitted_at is cleared alongside the failure: this job never reached the
+    // provider, so the stale submission time would make it look in-flight.
+    await persistJobFailure({
+      supabase,
+      job,
+      failure: { ...failure, submitted_at: null },
+      logger
+    });
     logger.warn('Reaper resubmission failed', { jobId: job.id, status: failure.status });
   }
 }
@@ -245,16 +250,18 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
         logger.error('Abandoning a job whose provider handoff could never be resolved', {
           jobId: job.id
         });
-        await supabase
-          .from('processing_jobs')
-          .update({
+        await persistJobFailure({
+          supabase,
+          job,
+          failure: {
             status: JOB_STATUS.DEAD,
             last_error:
               'Could not determine whether this recording reached the transcription provider. Not retried automatically to avoid duplicate processing.',
             next_attempt_at: null,
             completed_at: new Date().toISOString()
-          })
-          .eq('id', job.id);
+          },
+          logger
+        });
         return;
       }
 
@@ -294,7 +301,7 @@ async function reconcileStale({ supabase, assembly, job, logger }) {
 
     if (transcript.status === 'error') {
       const failure = planFailure(job, transcript.error || 'provider error');
-      await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+      await persistJobFailure({ supabase, job, failure, logger });
       return;
     }
 
@@ -322,7 +329,7 @@ async function markSummaryJobDone({ supabase, jobId, sermonId, title, logger }) 
   // would be missing exactly on the recovery path — recreating TAB-89 in the
   // branch that runs after a failure. Before the job is marked, so a client
   // reacting to `done` never sees the sermon still pending.
-  await applySermonStageComplete({ supabase, sermonId, stage: 'summary', title, logger });
+  await applySermonStageTerminal({ supabase, sermonId, stage: 'summary', title, logger });
 
   const { error } = await supabase
     .from('processing_jobs')
@@ -369,7 +376,7 @@ async function runSummary({ supabase, job, logger }) {
         error: completionError.message
       });
       const failure = planFailure(job, `completion update failed: ${completionError.message}`);
-      await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+      await persistJobFailure({ supabase, job, failure, logger });
       return;
     }
     logger.info('Summary already present; marked job done without regenerating', { jobId: job.id });
@@ -385,7 +392,7 @@ async function runSummary({ supabase, job, logger }) {
   const text = transcript?.text || '';
   if (text.trim().length < 50) {
     const failure = planFailure(job, 'transcript too short to summarize');
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     return;
   }
 
@@ -487,7 +494,7 @@ async function runSummary({ supabase, job, logger }) {
     logger.info('Reaper completed summary job', { jobId: job.id, hasTitle: !!title });
   } catch (error) {
     const failure = planFailure(job, error);
-    await supabase.from('processing_jobs').update(failure).eq('id', job.id);
+    await persistJobFailure({ supabase, job, failure, logger });
     logger.warn('Reaper summary failed', { jobId: job.id, status: failure.status });
   }
 }
