@@ -5,6 +5,7 @@ const {
   TERMINAL_STATUSES,
   STATUS_NO_SPEECH,
   STATUS_FAILED_PERMANENT,
+  STATUS_TOO_SHORT,
   isTerminalStatus,
   isForbiddenStageRegression,
   stageNotTerminalPredicate
@@ -16,7 +17,7 @@ const {
 // sermon the client re-dispatched on every sweep.
 
 test('the terminal set is the three states the pipeline can stop in', () => {
-  assert.deepEqual([...TERMINAL_STATUSES].sort(), ['complete', 'failed_permanent', 'no_speech']);
+  assert.deepEqual([...TERMINAL_STATUSES].sort(), ['complete', 'failed_permanent', 'no_speech', 'too_short']);
 });
 
 test('every terminal state is recognised, and the working states are not', () => {
@@ -66,7 +67,8 @@ test('the compare-and-set predicate protects every terminal state', () => {
   assert.equal(
     p,
     'transcription_status.is.null,and(transcription_status.neq.complete,'
-      + 'transcription_status.neq.no_speech,transcription_status.neq.failed_permanent)'
+      + 'transcription_status.neq.no_speech,transcription_status.neq.failed_permanent,'
+      + 'transcription_status.neq.too_short)'
   );
   for (const s of TERMINAL_STATUSES) {
     assert.ok(p.includes(`neq.${s}`), `${s} must be excluded from the write`);
@@ -76,6 +78,7 @@ test('the compare-and-set predicate protects every terminal state', () => {
 test('the two new states are exported under stable names', () => {
   assert.equal(STATUS_NO_SPEECH, 'no_speech');
   assert.equal(STATUS_FAILED_PERMANENT, 'failed_permanent');
+  assert.equal(STATUS_TOO_SHORT, 'too_short');
 });
 
 // --- where the states actually come from --------------------------------------
@@ -191,6 +194,48 @@ test('a no-speech transcription also stops the summary, which can never run', as
   );
 });
 
+test('a too-short transcript completes transcription and stops the summary (TAB-92)', async () => {
+  // Ten production transcripts are 1–49 characters. shouldChainSummary
+  // correctly refuses to queue a summary that would 400, but nothing then
+  // moved summary_status off pending — the tab spun forever. These are not
+  // no_speech: there was speech, just not enough of it to summarize.
+  const supabase = fakePipelineSupabase();
+
+  const result = await completeTranscriptionJob({
+    supabase,
+    job: transcriptionJob,
+    transcript: { text: 'x'.repeat(49), words: [] },
+    logger: silent
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryChained, false);
+  const patches = supabase.writes.sermons.map((w) => w.patch);
+  assert.ok(
+    patches.some((p) => p.transcription_status === 'complete'),
+    'there was speech, so transcription is complete'
+  );
+  assert.ok(
+    patches.some((p) => p.summary_status === STATUS_TOO_SHORT),
+    'summary must stop rather than sit at pending'
+  );
+  assert.ok(
+    !patches.some((p) => p.transcription_status === STATUS_NO_SPEECH),
+    'too_short is not no_speech'
+  );
+  assert.equal(
+    supabase.writes.processing_jobs.filter((w) => w.kind === 'summary').length,
+    0,
+    'no summary job may be queued'
+  );
+  const summaryWrite = supabase.writes.sermons.find((w) => w.patch?.summary_status === STATUS_TOO_SHORT);
+  assert.deepEqual(
+    summaryWrite.filters.find(([kind]) => kind === 'or'),
+    ['or', stageNotTerminalPredicate('summary_status')],
+    'must not stamp too_short over a summary that already exists'
+  );
+});
+
 test('a real transcript is unaffected by any of this', async () => {
   const supabase = fakePipelineSupabase();
 
@@ -204,6 +249,7 @@ test('a real transcript is unaffected by any of this', async () => {
   const patches = supabase.writes.sermons.map((w) => w.patch);
   assert.ok(patches.some((p) => p.transcription_status === 'complete'));
   assert.ok(!patches.some((p) => p.summary_status === STATUS_NO_SPEECH), 'the summary still runs');
+  assert.ok(!patches.some((p) => p.summary_status === STATUS_TOO_SHORT), 'a long enough transcript is not too_short');
   assert.equal(
     supabase.writes.processing_jobs.filter((w) => w.kind === 'summary').length,
     1,

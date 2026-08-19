@@ -13,7 +13,7 @@ struct SermonStageStatusTests {
     @Test("the terminal states are the ones nothing further will happen to")
     func terminalSet() {
         let terminal = SermonStageStatus.allCases.filter(\.isTerminal).map(\.rawValue).sorted()
-        #expect(terminal == ["complete", "failed_permanent", "no_speech"])
+        #expect(terminal == ["complete", "failed_permanent", "no_speech", "too_short"])
     }
 
     @Test("a stopped stage is never dispatched again")
@@ -39,6 +39,7 @@ struct SermonStageStatusTests {
         // A typo on either side is a state the other one silently ignores.
         #expect(SermonStageStatus.noSpeech.rawValue == "no_speech")
         #expect(SermonStageStatus.failedPermanent.rawValue == "failed_permanent")
+        #expect(SermonStageStatus.tooShort.rawValue == "too_short")
         #expect(SermonStageStatus.complete.rawValue == "complete")
     }
 
@@ -47,6 +48,7 @@ struct SermonStageStatusTests {
         // The server can write a new state before every device can render it.
         // Reading it as `pending` would restart the churn this issue ends.
         #expect(SermonStageStatus.known("something_new_and_unreleased") == nil)
+        #expect(SermonStageStatus.known("too_short") == .tooShort)
         #expect(SermonStageStatus.known("no_speech") == .noSpeech)
     }
 }
@@ -89,6 +91,19 @@ struct SermonStatusTextTests {
     func permanentSummaryFailure() {
         let (text, _) = sermonStatusText(transcriptionStatus: "complete", summaryStatus: "failed_permanent")
         #expect(text == "Couldn't process")
+    }
+
+    @Test("a short transcript is Ready, not stuck Processing")
+    func tooShortSummaryIsSettled() {
+        // TAB-92: transcription complete, summary refused because the
+        // transcript is below the 50-character floor. Before too_short this
+        // sat at summary pending and the row said "Processing..." forever.
+        let (text, color) = sermonStatusText(
+            transcriptionStatus: "complete",
+            summaryStatus: "too_short"
+        )
+        #expect(text == "Ready")
+        #expect(color == .green)
     }
 
     @Test("the ordinary states are unchanged")

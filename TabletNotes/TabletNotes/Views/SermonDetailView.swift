@@ -445,6 +445,16 @@ struct SermonDetailView: View {
                         actionTitle: nil,
                         action: nil
                     )
+                case SermonStageStatus.tooShort.rawValue:
+                    // Not a failure: the transcript is real, just below the
+                    // summarizer floor. Queuing a job would 400, and leaving
+                    // this pending is the spinner TAB-92 ends.
+                    SermonErrorStateView(
+                        title: "Not Enough to Summarize",
+                        subtitle: "This recording is too short for a useful summary. The transcript is still saved.",
+                        actionTitle: nil,
+                        action: nil
+                    )
                 case "pending":
                     if let stage = SermonStageStatus.known(sermon.transcriptionStatus),
                        stage.isTerminal, stage != .complete {
