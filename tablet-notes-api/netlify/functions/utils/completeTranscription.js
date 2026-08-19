@@ -7,7 +7,7 @@ const {
   persistJobFailure,
   shouldChainSummary
 } = require('./processingJobs');
-const { applySermonStageTerminal, STATUS_NO_SPEECH, STATUS_COMPLETE } = require('./sermonStatus');
+const { applySermonStageTerminal, STATUS_NO_SPEECH, STATUS_COMPLETE, STATUS_TOO_SHORT } = require('./sermonStatus');
 
 /**
  * The single implementation of "a transcription finished successfully".
@@ -91,6 +91,20 @@ async function completeTranscriptionJob({ supabase, job, transcript, logger }) {
       sermonId: job.sermon_id,
       stage: 'summary',
       status: STATUS_NO_SPEECH,
+      logger
+    });
+  } else if (!shouldChainSummary(job, text)) {
+    // Real speech, but below summarize.js's 50-character floor. Queuing a
+    // summary job would only 400; leaving summary_status `pending` is the
+    // spinner TAB-92 is about. This is not no_speech — the transcript exists.
+    // Compare-and-set so a short re-transcription cannot hide a summary the
+    // user already has.
+    await applySermonStageTerminal({
+      supabase,
+      sermonId: job.sermon_id,
+      stage: 'summary',
+      status: STATUS_TOO_SHORT,
+      onlyIfNotTerminal: true,
       logger
     });
   }

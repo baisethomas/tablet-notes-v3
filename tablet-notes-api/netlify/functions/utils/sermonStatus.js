@@ -28,6 +28,11 @@ const STATUS_COMPLETE = 'complete';
 const STATUS_NO_SPEECH = 'no_speech';
 /** The pipeline exhausted its attempts and stopped trying (TAB-85). */
 const STATUS_FAILED_PERMANENT = 'failed_permanent';
+/**
+ * Transcription succeeded with real speech, but the transcript is below the
+ * summarizer's floor (TAB-92). Summary is stopped; transcription stays complete.
+ */
+const STATUS_TOO_SHORT = 'too_short';
 
 /**
  * The states a stage can STOP in.
@@ -40,7 +45,12 @@ const STATUS_FAILED_PERMANENT = 'failed_permanent';
  * These are server-owned. A client may not write itself out of, or between,
  * them — see isForbiddenStageRegression.
  */
-const TERMINAL_STATUSES = [STATUS_COMPLETE, STATUS_NO_SPEECH, STATUS_FAILED_PERMANENT];
+const TERMINAL_STATUSES = [
+  STATUS_COMPLETE,
+  STATUS_NO_SPEECH,
+  STATUS_FAILED_PERMANENT,
+  STATUS_TOO_SHORT
+];
 
 function isTerminalStatus(status) {
   return typeof status === 'string' && TERMINAL_STATUSES.includes(status);
@@ -286,6 +296,7 @@ module.exports = {
   STATUS_COMPLETE,
   STATUS_NO_SPEECH,
   STATUS_FAILED_PERMANENT,
+  STATUS_TOO_SHORT,
   TERMINAL_STATUSES,
   isTerminalStatus
 };

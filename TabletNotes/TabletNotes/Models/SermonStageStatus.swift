@@ -25,6 +25,8 @@ enum SermonStageStatus: String, CaseIterable, Sendable {
     case noSpeech = "no_speech"
     /// The pipeline used up its attempts and stopped trying.
     case failedPermanent = "failed_permanent"
+    /// Transcription succeeded, but the transcript is below the summarizer floor.
+    case tooShort = "too_short"
 
     /// The stage has stopped and nothing further will happen on its own.
     ///
@@ -32,7 +34,7 @@ enum SermonStageStatus: String, CaseIterable, Sendable {
     /// UI can render them as settled rather than as a stage still in motion.
     var isTerminal: Bool {
         switch self {
-        case .complete, .noSpeech, .failedPermanent: return true
+        case .complete, .noSpeech, .failedPermanent, .tooShort: return true
         case .pending, .processing, .failed: return false
         }
     }
@@ -47,7 +49,7 @@ enum SermonStageStatus: String, CaseIterable, Sendable {
     var isDispatchable: Bool {
         switch self {
         case .pending, .failed: return true
-        case .processing, .complete, .noSpeech, .failedPermanent: return false
+        case .processing, .complete, .noSpeech, .failedPermanent, .tooShort: return false
         }
     }
 
