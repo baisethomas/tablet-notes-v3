@@ -159,6 +159,27 @@ struct ProcessingJobTests {
         #expect(parsed["sermonLocalId"] as? String == sermonId.uuidString)
         #expect(parsed["filePath"] as? String == "user-a/audio.m4a")
         #expect(parsed["kind"] as? String == "transcription")
+        #expect(parsed["retry"] == nil)
+    }
+
+    @Test func deliberateRetrySendsTheRetryFlag() async throws {
+        // TAB-91: omitting retry keeps automatic dispatch from reviving a dead
+        // job; only an explicit user tap may set it.
+        let client = makeClient()
+        defer { StubURLProtocol.responder = nil }
+
+        StubURLProtocol.responder = { request in
+            (
+                HTTPURLResponse(url: request.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!,
+                self.envelope(status: "queued")
+            )
+        }
+
+        _ = try await client.requestTranscription(sermonLocalId: UUID(), retry: true)
+
+        let body = try #require(StubURLProtocol.lastBody)
+        let parsed = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(parsed["retry"] as? Bool == true)
     }
 
     @Test func treats200AsAnIdempotentReplay() async throws {

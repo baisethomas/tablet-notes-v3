@@ -246,7 +246,34 @@ final class SermonProcessingCoordinator {
     /// up on the next foreground. Nothing is marked complete either way.
     private func startDurableProcessing(for sermonId: UUID) async {
         await triggerSync()
-        _ = await durableDispatcher().dispatch(sermonLocalId: sermonId)
+        _ = await durableDispatcher().dispatch(sermonLocalId: sermonId, retry: false)
+    }
+
+    /// User-initiated retry through the durable pipeline (TAB-91).
+    ///
+    /// The legacy `TranscriptionRetryService` path sets local status to pending
+    /// and pushes — TAB-90 refuses that push once the server has written
+    /// `failed_permanent`. So with the flag on, Retry must ask the server to
+    /// revive the job and clear the stage, then land the result on the next
+    /// pull / Realtime event.
+    private func retryDurableTranscription(for sermonId: UUID) async {
+        guard let modelContext else { return }
+
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { $0.id == sermonId }
+        )
+        guard let sermon = try? modelContext.fetch(descriptor).first else { return }
+
+        // Automatic sweeps never pass retry:true. This path is only the button.
+        let ok = await durableDispatcher().dispatch(sermonLocalId: sermonId, retry: true)
+        guard ok else { return }
+
+        // Optimistic UI only. Do not markPendingSync(metadata:) for the stage
+        // flip — a client push of processing over failed_permanent is refused,
+        // and the server already cleared it. Pull / Realtime brings the truth.
+        sermon.transcriptionStatus = "processing"
+        try? modelContext.save()
+        await triggerSync()
     }
 
     /// Applies a mid-session change to the durable-processing flag.
@@ -330,7 +357,7 @@ final class SermonProcessingCoordinator {
                 }
             }
 
-            let dispatched = await dispatcher.dispatch(sermonLocalId: sermon.id)
+            let dispatched = await dispatcher.dispatch(sermonLocalId: sermon.id, retry: false)
 
             // Handing ownership over failed, so hand it back rather than leaving
             // the sermon with no owner at all.
@@ -401,7 +428,14 @@ final class SermonProcessingCoordinator {
 
     @discardableResult
     func retryTranscription(for sermonId: UUID) -> Bool {
-        TranscriptionRetryService.shared.retryTranscriptionNow(for: sermonId)
+        if isDurableProcessingEnabled() {
+            // Accept immediately so the detail view can show "Retrying...".
+            // The network work is async; a failed dispatch leaves the local
+            // status alone and the next pull / tap can try again.
+            Task { await self.retryDurableTranscription(for: sermonId) }
+            return true
+        }
+        return TranscriptionRetryService.shared.retryTranscriptionNow(for: sermonId)
     }
 
     func enqueueSummary(for sermonId: UUID) {

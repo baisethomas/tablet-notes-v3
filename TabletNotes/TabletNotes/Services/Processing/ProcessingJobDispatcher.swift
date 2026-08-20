@@ -4,8 +4,11 @@ import Foundation
 protocol ProcessingJobDispatching: AnyObject {
     /// Asks the server to own transcription for this sermon. Idempotent on the
     /// server, so calling it again after a lost response is safe and free.
+    ///
+    /// Pass `retry: true` only for a deliberate user action after the pipeline
+    /// stopped — automatic sweeps must leave it false (TAB-91).
     @discardableResult
-    func dispatch(sermonLocalId: UUID) async -> Bool
+    func dispatch(sermonLocalId: UUID, retry: Bool) async -> Bool
 }
 
 /// Client-side entry point to the durable pipeline (TAB-72).
@@ -31,13 +34,17 @@ final class ProcessingJobDispatcher: ProcessingJobDispatching {
     }
 
     @discardableResult
-    func dispatch(sermonLocalId: UUID) async -> Bool {
+    func dispatch(sermonLocalId: UUID, retry: Bool = false) async -> Bool {
         guard !inFlight.contains(sermonLocalId) else { return false }
         inFlight.insert(sermonLocalId)
         defer { inFlight.remove(sermonLocalId) }
 
         do {
-            let job = try await client.requestTranscription(sermonLocalId: sermonLocalId, filePath: nil)
+            let job = try await client.requestTranscription(
+                sermonLocalId: sermonLocalId,
+                filePath: nil,
+                retry: retry
+            )
             lastError = nil
             print("[ProcessingJobDispatcher] Job \(job.id) is \(job.status.rawValue) for sermon \(sermonLocalId)")
             return true

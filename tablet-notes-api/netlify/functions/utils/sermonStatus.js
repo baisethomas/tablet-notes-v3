@@ -285,9 +285,58 @@ async function applyStageStatusWrites({ supabase, sermonId, userId, writes = [],
   return { dropped };
 }
 
+/**
+ * Opens a stage the pipeline had stopped, so a deliberate retry can run again
+ * (TAB-91).
+ *
+ * Entry into `failed_permanent` is server-owned (`persistJobFailure`). Exit must
+ * be too: TAB-90 refuses a client push that walks a stage out of any terminal
+ * state, which is what made the old Retry button a no-op after #52.
+ *
+ * Only `failed_permanent` clears. `no_speech` / `too_short` / `complete` stay —
+ * there is nothing useful to retry for those, and a stale retry request must
+ * not hide a real result.
+ *
+ * @param {'transcription'|'summary'} stage
+ */
+async function clearFailedPermanentStage({
+  supabase,
+  sermonId,
+  stage,
+  logger,
+  now = new Date().toISOString()
+} = {}) {
+  const column = SERMON_STAGE_COLUMNS[stage];
+  if (!column || !sermonId) {
+    return { error: null, applied: false };
+  }
+
+  const patch = { [column]: 'pending', updated_at: now };
+  const { data, error } = await supabase
+    .from('sermons')
+    .update(patch)
+    .eq('id', sermonId)
+    .eq(column, STATUS_FAILED_PERMANENT)
+    .select('id');
+
+  if (error) {
+    logger?.error?.('Failed to clear failed_permanent for retry', { sermonId, stage }, error);
+    return { error, applied: false };
+  }
+
+  const applied = Array.isArray(data) && data.length > 0;
+  if (applied) {
+    logger?.info?.('Cleared failed_permanent for deliberate retry', { sermonId, stage });
+  } else {
+    logger?.info?.('Stage was not failed_permanent; left as-is for retry', { sermonId, stage });
+  }
+  return { error: null, applied };
+}
+
 module.exports = {
   buildSermonStatusPatch,
   applySermonStageTerminal,
+  clearFailedPermanentStage,
   isForbiddenStageRegression,
   planStageStatusWrites,
   stageNotTerminalPredicate,

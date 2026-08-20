@@ -18,6 +18,7 @@ const {
   classifySubmitFailure
 } = require('./utils/processingJobs');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
+const { clearFailedPermanentStage } = require('./utils/sermonStatus');
 
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
@@ -173,8 +174,11 @@ exports.handler = withDefaults(
     //
     // So automatic dispatch no longer resurrects an exhausted job; it gets the
     // dead row back and leaves it alone. A deliberate retry still can, by
-    // asking for it. No current client sends `retry`, and none needs to: the
-    // in-app retry button routes through TranscriptionRetryService, not here.
+    // asking for it (`retry: true`). That path also clears `failed_permanent`
+    // on the sermon — the only server-owned way out of the state TAB-85 wrote
+    // (TAB-91). Attempts reset to 0 for that one user-initiated budget; the
+    // automatic sweep still cannot revive, so tapping Retry on dead audio
+    // cannot recreate the unbounded loop on its own.
     if (isExhaustedWithoutRetry(existing, retry)) {
       logger.info('Not reviving an exhausted job for an automatic dispatch', {
         jobId: existing.id,
@@ -256,6 +260,18 @@ exports.handler = withDefaults(
     if (!job) {
       logger.error('Failed to create processing job', { userId: user.id });
       return createErrorResponse(new Error('Could not create processing job'), 500);
+    }
+
+    // Deliberate retry is the only way out of failed_permanent (TAB-91). Do this
+    // after the job row is ready to run, and only when the caller asked — an
+    // automatic sweep must never reopen a stopped stage.
+    if (retry === true) {
+      await clearFailedPermanentStage({
+        supabase,
+        sermonId: sermon.id,
+        stage: kind,
+        logger
+      });
     }
 
     // Atomically CLAIM the job before spending money (PR #37 review). Shared
