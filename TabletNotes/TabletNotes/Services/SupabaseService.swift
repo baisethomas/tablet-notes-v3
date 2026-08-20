@@ -194,10 +194,9 @@ class SupabaseService: SupabaseServiceProtocol {
     /// streams from disk instead — the recording's size no longer bounds
     /// whether the upload can happen at all.
     ///
-    /// Still a single non-resumable PUT on a foreground session: a drop at 95%
-    /// restarts the transfer, and suspension kills it. Resumability and
-    /// background transfer are TAB-73 part B (TUS + background URLSession),
-    /// which the Supabase Swift SDK cannot express today.
+    /// Still a single non-resumable PUT on a foreground session when the
+    /// resumable-uploads flag is off. With the flag on, `UploadManager` owns
+    /// TUS on a background URLSession (TAB-73 Part B).
     func uploadAudioFile(at localUrl: URL, to signedUploadUrl: URL, upsert: Bool = false) async throws {
         try await NetworkRetry.withExponentialBackoff(maxAttempts: 3) {
             var request = URLRequest(url: signedUploadUrl)

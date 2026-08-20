@@ -24,6 +24,9 @@ struct FeatureFlags: @unchecked Sendable {
         /// Route new recordings through `POST /api/jobs` + the server-side
         /// reaper + Realtime completion, instead of the on-device retry queues.
         case durableProcessingPipeline = "feature.durableProcessingPipeline"
+        /// Upload sermon audio via TUS on a background URLSession (TAB-73 Part B).
+        /// Default off — flip only after device airplane-mode / kill-app proof.
+        case resumableUploads = "feature.resumableUploads"
     }
 
     /// Defaults to `false` for every flag: an unset flag must never mean "on".
@@ -37,5 +40,9 @@ struct FeatureFlags: @unchecked Sendable {
 
     var durableProcessingPipeline: Bool {
         isEnabled(.durableProcessingPipeline)
+    }
+
+    var resumableUploads: Bool {
+        isEnabled(.resumableUploads)
     }
 }
