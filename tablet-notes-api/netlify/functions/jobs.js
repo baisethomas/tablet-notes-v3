@@ -18,7 +18,7 @@ const {
   classifySubmitFailure
 } = require('./utils/processingJobs');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
-const { clearFailedPermanentStage } = require('./utils/sermonStatus');
+const { prepareStageForDeliberateRetry } = require('./utils/sermonStatus');
 
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
@@ -78,7 +78,7 @@ exports.handler = withDefaults(
     // must already exist (create-sermon runs first in the client's save flow).
     const { data: sermon, error: sermonError } = await supabase
       .from('sermons')
-      .select('id, user_id, audio_file_path')
+      .select('id, user_id, audio_file_path, transcription_status, summary_status')
       .eq('user_id', user.id)
       .eq('local_id', sermonLocalId)
       .maybeSingle();
@@ -190,6 +190,22 @@ exports.handler = withDefaults(
       });
     }
 
+    // Deliberate retry must reopen failed_permanent BEFORE the job becomes
+    // claimable. Reviving first leaves a queued row the reaper can submit while
+    // the stage is still closed — TAB-90 then refuses the completion write
+    // (Ternary blocking on #55). Automatic sweeps never enter this block.
+    if (retry === true) {
+      const prepared = await prepareStageForDeliberateRetry({
+        supabase,
+        sermon,
+        stage: kind,
+        logger
+      });
+      if (!prepared.ok) {
+        return createErrorResponse(new Error(prepared.message), prepared.statusCode || 500);
+      }
+    }
+
     if (existing) {
       // Reached only for a dead/failed row (active ones returned above). Revive
       // it, but conditionally: `.in('status', [...])` means a row someone else
@@ -260,39 +276,6 @@ exports.handler = withDefaults(
     if (!job) {
       logger.error('Failed to create processing job', { userId: user.id });
       return createErrorResponse(new Error('Could not create processing job'), 500);
-    }
-
-    // Deliberate retry is the only way out of failed_permanent (TAB-91). Do this
-    // after the job row is ready to run, and only when the caller asked — an
-    // automatic sweep must never reopen a stopped stage.
-    //
-    // The clear must succeed before we claim/submit. If it fails and we still
-    // bill AssemblyAI, TAB-90 will refuse the completion write while the stage
-    // stays failed_permanent — a paid job whose result cannot land, plus a
-    // false-success Retry on the client (Ternary blocking on #55).
-    if (retry === true) {
-      const cleared = await clearFailedPermanentStage({
-        supabase,
-        sermonId: sermon.id,
-        stage: kind,
-        logger
-      });
-      if (cleared.error) {
-        // Revive (or insert) may already have left the row queued. Park it as
-        // dead so the reaper cannot claim it while the stage is still closed.
-        await supabase
-          .from('processing_jobs')
-          .update({
-            status: JOB_STATUS.DEAD,
-            last_error: 'failed to clear failed_permanent for retry'
-          })
-          .eq('id', job.id)
-          .eq('status', JOB_STATUS.QUEUED);
-        return createErrorResponse(
-          new Error('Could not reopen this recording for retry. Please try again.'),
-          500
-        );
-      }
     }
 
     // Atomically CLAIM the job before spending money (PR #37 review). Shared

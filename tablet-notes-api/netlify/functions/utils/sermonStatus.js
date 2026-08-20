@@ -333,15 +333,137 @@ async function clearFailedPermanentStage({
   return { error: null, applied };
 }
 
+/**
+ * Terminal stages where Retry must not spend another provider call (TAB-91).
+ * `failed_permanent` is intentionally absent — that is the one terminal a
+ * deliberate retry is allowed to reopen.
+ */
+const CLOSED_NO_RETRY_STAGE_STATUSES = Object.freeze([
+  STATUS_NO_SPEECH,
+  STATUS_TOO_SHORT,
+  STATUS_COMPLETE
+]);
+
+/**
+ * Prepares the sermon stage for a deliberate `retry: true` BEFORE the job row
+ * becomes claimable.
+ *
+ * Ordering matters (Ternary on #55): if we revive a dead job to `queued` and
+ * only then clear `failed_permanent`, the reaper can claim/submit in the gap
+ * and TAB-90 will refuse the completion write. Clear first; only then revive.
+ *
+ * Also refuses `no_speech` / `too_short` / `complete` so a stale retry:true
+ * cannot bill for a result that must not land. Plain `failed` / `pending` /
+ * `processing` are left alone — durable Retry still uses retry:true for those,
+ * and they are not blocked by TAB-90.
+ *
+ * @param {'transcription'|'summary'} stage
+ * @param {object} sermon row that includes the stage column
+ */
+async function prepareStageForDeliberateRetry({
+  supabase,
+  sermon,
+  stage,
+  logger,
+  now = new Date().toISOString()
+} = {}) {
+  const column = SERMON_STAGE_COLUMNS[stage];
+  if (!column || !sermon?.id) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: 'Could not reopen this recording for retry.'
+    };
+  }
+
+  const current = sermon[column];
+  if (CLOSED_NO_RETRY_STAGE_STATUSES.includes(current)) {
+    logger?.info?.('Refusing retry for a closed terminal stage', {
+      sermonId: sermon.id,
+      stage,
+      status: current
+    });
+    return {
+      ok: false,
+      statusCode: 409,
+      message: 'This recording cannot be retried.'
+    };
+  }
+
+  if (current !== STATUS_FAILED_PERMANENT) {
+    return { ok: true, cleared: false };
+  }
+
+  const cleared = await clearFailedPermanentStage({
+    supabase,
+    sermonId: sermon.id,
+    stage,
+    logger,
+    now
+  });
+
+  if (cleared.error) {
+    return {
+      ok: false,
+      statusCode: 500,
+      message: 'Could not reopen this recording for retry. Please try again.',
+      error: cleared.error
+    };
+  }
+
+  if (cleared.applied) {
+    return { ok: true, cleared: true };
+  }
+
+  // Concurrent clear (or the row drifted). Confirm the stage is open for work
+  // before we make a job claimable — do not bill while it is still closed.
+  const { data: fresh, error: readError } = await supabase
+    .from('sermons')
+    .select(column)
+    .eq('id', sermon.id)
+    .maybeSingle();
+
+  if (readError) {
+    logger?.error?.('Failed to re-read stage after clear miss', { sermonId: sermon.id, stage }, readError);
+    return {
+      ok: false,
+      statusCode: 500,
+      message: 'Could not reopen this recording for retry. Please try again.',
+      error: readError
+    };
+  }
+
+  const freshStatus = fresh?.[column];
+  if (
+    freshStatus === STATUS_FAILED_PERMANENT
+    || CLOSED_NO_RETRY_STAGE_STATUSES.includes(freshStatus)
+  ) {
+    logger?.info?.('Stage still closed after clear miss; refusing retry', {
+      sermonId: sermon.id,
+      stage,
+      status: freshStatus
+    });
+    return {
+      ok: false,
+      statusCode: 409,
+      message: 'This recording cannot be retried.'
+    };
+  }
+
+  return { ok: true, cleared: false };
+}
+
 module.exports = {
   buildSermonStatusPatch,
   applySermonStageTerminal,
   clearFailedPermanentStage,
+  prepareStageForDeliberateRetry,
   isForbiddenStageRegression,
   planStageStatusWrites,
   stageNotTerminalPredicate,
   applyStageStatusWrites,
   SERMON_STAGE_COLUMNS,
+  CLOSED_NO_RETRY_STAGE_STATUSES,
   STATUS_COMPLETE,
   STATUS_NO_SPEECH,
   STATUS_FAILED_PERMANENT,
