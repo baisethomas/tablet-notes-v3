@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import TabletNotes
 
@@ -204,5 +205,55 @@ struct DurableProcessingWiringTests {
 
         #expect(reads == 2)
         #expect(spy.dispatched.isEmpty)
+    }
+
+    @Test func failedPermanentRetryUsesTheServerEvenWhenTheFlagIsOff() async throws {
+        // Codex P2 / TAB-91: durable flag off is the default and the rollback
+        // state. Retry still must send retry:true — TAB-90 refuses the legacy
+        // client push out of failed_permanent.
+        let isolated = IsolatedRecoveryStore()
+        defer { isolated.defaults.removeObject(forKey: "SermonService.localDataOwnerUserId") }
+
+        let schema = Schema([
+            Sermon.self, Note.self, Transcript.self, Summary.self,
+            ProcessingJob.self, TranscriptSegment.self, ChatMessage.self,
+            User.self, UserNotificationSettings.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+        let sermon = Sermon(
+            title: "Stopped",
+            audioFileName: "stopped.m4a",
+            date: Date(),
+            serviceType: "Sunday",
+            transcriptionStatus: SermonStageStatus.failedPermanent.rawValue,
+            remoteId: "remote-stopped"
+        )
+        context.insert(sermon)
+        try context.save()
+
+        let coordinator = SermonProcessingCoordinator.shared
+        coordinator.resetForTesting()
+        defer { coordinator.resetForTesting() }
+
+        let spy = SpyDispatcher()
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { false }
+        coordinator.syncRunner = {}
+        let sermonService = SermonService(
+            modelContext: context,
+            recoveryStore: isolated.store,
+            userDefaults: isolated.defaults
+        )
+        coordinator.configure(modelContext: context, sermonService: sermonService)
+
+        let ok = await coordinator.retryTranscriptionAwaitingServer(for: sermon.id)
+
+        #expect(ok)
+        #expect(spy.dispatched.map(\.1) == [true])
+        #expect(sermon.transcriptionStatus == "processing")
     }
 }

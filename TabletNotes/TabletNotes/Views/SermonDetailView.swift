@@ -932,15 +932,20 @@ struct SermonDetailView: View {
 
     private func retryTranscription(for sermon: Sermon) {
         isRetryingTranscription = true
-        if !processingCoordinator.retryTranscription(for: sermon.id) {
-            isRetryingTranscription = false
-            return
-        }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if isRetryingTranscription, self.sermon?.transcriptionStatus == "pending" {
+            // Await the server-owned path so a failed dispatch re-enables the
+            // button. The old fire-and-forget return-true left Retry stuck on
+            // "Retrying..." for failed_permanent when the device was offline.
+            let ok = await processingCoordinator.retryTranscriptionAwaitingServer(for: sermon.id)
+            if !ok {
                 isRetryingTranscription = false
+                return
             }
+            // Give the optimistic "processing" status a moment to redraw, then
+            // always clear — do not wait for "pending", which failed_permanent
+            // never becomes locally before the next pull.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            isRetryingTranscription = false
         }
     }
 

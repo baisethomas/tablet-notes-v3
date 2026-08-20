@@ -176,9 +176,9 @@ exports.handler = withDefaults(
     // dead row back and leaves it alone. A deliberate retry still can, by
     // asking for it (`retry: true`). That path also clears `failed_permanent`
     // on the sermon — the only server-owned way out of the state TAB-85 wrote
-    // (TAB-91). Attempts reset to 0 for that one user-initiated budget; the
-    // automatic sweep still cannot revive, so tapping Retry on dead audio
-    // cannot recreate the unbounded loop on its own.
+    // (TAB-91). The revive update below resets `attempts` to 0 for that one
+    // user-initiated budget; the automatic sweep still cannot revive, so
+    // tapping Retry on dead audio cannot recreate the unbounded loop on its own.
     if (isExhaustedWithoutRetry(existing, retry)) {
       logger.info('Not reviving an exhausted job for an automatic dispatch', {
         jobId: existing.id,

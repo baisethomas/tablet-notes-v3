@@ -253,20 +253,22 @@ final class SermonProcessingCoordinator {
     ///
     /// The legacy `TranscriptionRetryService` path sets local status to pending
     /// and pushes — TAB-90 refuses that push once the server has written
-    /// `failed_permanent`. So with the flag on, Retry must ask the server to
+    /// `failed_permanent`. So Retry for a stopped stage must ask the server to
     /// revive the job and clear the stage, then land the result on the next
-    /// pull / Realtime event.
-    private func retryDurableTranscription(for sermonId: UUID) async {
-        guard let modelContext else { return }
+    /// pull / Realtime event. That is true even when the durable *flag* is off:
+    /// the jobs endpoint is what owns the transition, not the flag.
+    @discardableResult
+    private func retryDurableTranscription(for sermonId: UUID) async -> Bool {
+        guard let modelContext else { return false }
 
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { $0.id == sermonId }
         )
-        guard let sermon = try? modelContext.fetch(descriptor).first else { return }
+        guard let sermon = try? modelContext.fetch(descriptor).first else { return false }
 
         // Automatic sweeps never pass retry:true. This path is only the button.
         let ok = await durableDispatcher().dispatch(sermonLocalId: sermonId, retry: true)
-        guard ok else { return }
+        guard ok else { return false }
 
         // Optimistic UI only. Do not markPendingSync(metadata:) for the stage
         // flip — a client push of processing over failed_permanent is refused,
@@ -274,6 +276,24 @@ final class SermonProcessingCoordinator {
         sermon.transcriptionStatus = "processing"
         try? modelContext.save()
         await triggerSync()
+        return true
+    }
+
+    /// Whether this Retry must go through POST /api/jobs with `retry: true`.
+    ///
+    /// Durable flag on → always (that is the pipeline this device is using).
+    /// `failed_permanent` with a remote row → always, even if the flag is off:
+    /// TAB-90 refuses a client push out of that state, so the legacy queue
+    /// cannot recover it.
+    private func mustUseServerOwnedRetry(for sermonId: UUID) -> Bool {
+        if isDurableProcessingEnabled() { return true }
+        guard let modelContext else { return false }
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { $0.id == sermonId }
+        )
+        guard let sermon = try? modelContext.fetch(descriptor).first else { return false }
+        return sermon.transcriptionStatus == SermonStageStatus.failedPermanent.rawValue
+            && sermon.remoteId != nil
     }
 
     /// Applies a mid-session change to the durable-processing flag.
@@ -426,14 +446,23 @@ final class SermonProcessingCoordinator {
         TranscriptionRetryService.shared.enqueueTranscription(for: sermonId)
     }
 
+    /// Fire-and-forget Retry for legacy / recovered-recording callers.
+    /// Prefer `retryTranscriptionAwaitingServer` when the UI needs the result.
     @discardableResult
     func retryTranscription(for sermonId: UUID) -> Bool {
-        if isDurableProcessingEnabled() {
-            // Accept immediately so the detail view can show "Retrying...".
-            // The network work is async; a failed dispatch leaves the local
-            // status alone and the next pull / tap can try again.
-            Task { await self.retryDurableTranscription(for: sermonId) }
+        if mustUseServerOwnedRetry(for: sermonId) {
+            Task { _ = await self.retryDurableTranscription(for: sermonId) }
             return true
+        }
+        return TranscriptionRetryService.shared.retryTranscriptionNow(for: sermonId)
+    }
+
+    /// Detail-view Retry (TAB-91). Awaits the server so the button can clear on
+    /// failure instead of sticking on "Retrying...".
+    @discardableResult
+    func retryTranscriptionAwaitingServer(for sermonId: UUID) async -> Bool {
+        if mustUseServerOwnedRetry(for: sermonId) {
+            return await retryDurableTranscription(for: sermonId)
         }
         return TranscriptionRetryService.shared.retryTranscriptionNow(for: sermonId)
     }
