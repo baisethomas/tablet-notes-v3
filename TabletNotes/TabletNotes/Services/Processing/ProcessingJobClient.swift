@@ -65,7 +65,11 @@ protocol ProcessingJobRequesting: Sendable {
     /// `filePath` is optional and normally omitted: the server resolves the
     /// audio location from the sermon row it wrote itself. Only the caller that
     /// just performed the upload has a reason to pass one.
-    func requestTranscription(sermonLocalId: UUID, filePath: String?) async throws -> RemoteProcessingJob
+    ///
+    /// `retry` is for a deliberate user tap after the pipeline stopped
+    /// (`failed_permanent` / a dead job). Automatic sweeps must leave it
+    /// false — that is what keeps TAB-85's unbounded loop closed (TAB-91).
+    func requestTranscription(sermonLocalId: UUID, filePath: String?, retry: Bool) async throws -> RemoteProcessingJob
 }
 
 /// Thin client for `POST /api/jobs`.
@@ -102,7 +106,7 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         }
     }
 
-    func requestTranscription(sermonLocalId: UUID, filePath: String? = nil) async throws -> RemoteProcessingJob {
+    func requestTranscription(sermonLocalId: UUID, filePath: String? = nil, retry: Bool = false) async throws -> RemoteProcessingJob {
         // House rule: check connectivity before starting network-dependent work
         // (a known-offline call would otherwise burn a token refresh and three
         // backoff attempts). Not proof of success — only a cheap early exit.
@@ -129,6 +133,12 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         ]
         if let filePath {
             body["filePath"] = filePath
+        }
+        // Only send the flag when asking for a revive. Omitting it keeps the
+        // automatic-dispatch body identical to every build that predates TAB-91,
+        // and the server's Joi default is false.
+        if retry {
+            body["retry"] = true
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

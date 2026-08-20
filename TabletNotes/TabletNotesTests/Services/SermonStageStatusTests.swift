@@ -93,6 +93,17 @@ struct SermonStatusTextTests {
         #expect(text == "Couldn't process")
     }
 
+    @Test("failed_permanent is still a settled list state after Retry exists")
+    func permanentFailureListLabelUnchanged() {
+        // TAB-91 re-enables the detail Retry button; the list must still say
+        // the pipeline stopped, not "Processing..." or "Failed".
+        let (text, _) = sermonStatusText(
+            transcriptionStatus: "failed_permanent",
+            summaryStatus: "pending"
+        )
+        #expect(text == "Couldn't process")
+    }
+
     @Test("a short transcript is Ready, not stuck Processing")
     func tooShortSummaryIsSettled() {
         // TAB-92: transcription complete, summary refused because the

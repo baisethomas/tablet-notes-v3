@@ -18,6 +18,7 @@ const {
   classifySubmitFailure
 } = require('./utils/processingJobs');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
+const { prepareStageForDeliberateRetry } = require('./utils/sermonStatus');
 
 const assemblyAIBreaker = new CircuitBreaker(3, 60000);
 
@@ -77,7 +78,7 @@ exports.handler = withDefaults(
     // must already exist (create-sermon runs first in the client's save flow).
     const { data: sermon, error: sermonError } = await supabase
       .from('sermons')
-      .select('id, user_id, audio_file_path')
+      .select('id, user_id, audio_file_path, transcription_status, summary_status')
       .eq('user_id', user.id)
       .eq('local_id', sermonLocalId)
       .maybeSingle();
@@ -173,8 +174,11 @@ exports.handler = withDefaults(
     //
     // So automatic dispatch no longer resurrects an exhausted job; it gets the
     // dead row back and leaves it alone. A deliberate retry still can, by
-    // asking for it. No current client sends `retry`, and none needs to: the
-    // in-app retry button routes through TranscriptionRetryService, not here.
+    // asking for it (`retry: true`). That path also clears `failed_permanent`
+    // on the sermon — the only server-owned way out of the state TAB-85 wrote
+    // (TAB-91). The revive update below resets `attempts` to 0 for that one
+    // user-initiated budget; the automatic sweep still cannot revive, so
+    // tapping Retry on dead audio cannot recreate the unbounded loop on its own.
     if (isExhaustedWithoutRetry(existing, retry)) {
       logger.info('Not reviving an exhausted job for an automatic dispatch', {
         jobId: existing.id,
@@ -184,6 +188,22 @@ exports.handler = withDefaults(
         ...(context.rateLimitHeaders || {}),
         origin: event.headers.origin
       });
+    }
+
+    // Deliberate retry must reopen failed_permanent BEFORE the job becomes
+    // claimable. Reviving first leaves a queued row the reaper can submit while
+    // the stage is still closed — TAB-90 then refuses the completion write
+    // (Ternary blocking on #55). Automatic sweeps never enter this block.
+    if (retry === true) {
+      const prepared = await prepareStageForDeliberateRetry({
+        supabase,
+        sermon,
+        stage: kind,
+        logger
+      });
+      if (!prepared.ok) {
+        return createErrorResponse(new Error(prepared.message), prepared.statusCode || 500);
+      }
     }
 
     if (existing) {

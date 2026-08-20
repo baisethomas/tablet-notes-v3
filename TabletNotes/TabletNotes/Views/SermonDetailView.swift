@@ -544,15 +544,15 @@ struct SermonDetailView: View {
                         action: nil
                     )
                 case SermonStageStatus.failedPermanent.rawValue:
-                    // Deliberately no Retry. The pipeline already used up its
-                    // attempts, and the button that used to sit here re-queued
-                    // work that could never succeed. Recovering one of these
-                    // needs a server-side reset — see TAB-91.
+                    // Retry is server-owned (TAB-91): the client cannot push
+                    // itself out of failed_permanent (TAB-90), so this button
+                    // asks POST /api/jobs with retry:true. Never offered for
+                    // no_speech — there is nothing to retry.
                     SermonErrorStateView(
                         title: "Couldn't Transcribe This Recording",
-                        subtitle: "We tried several times and had to stop. The audio may be incomplete or unreadable. Your recording is still saved and you can play it back above.",
-                        actionTitle: nil,
-                        action: nil
+                        subtitle: "We tried several times and had to stop. The audio may be incomplete or unreadable. Your recording is still saved — tap Retry if you want us to try again.",
+                        actionTitle: isRetryingTranscription ? "Retrying..." : "Retry",
+                        action: isRetryingTranscription ? nil : { retryTranscription(for: sermon) }
                     )
                 default:
                     ScrollView {
@@ -932,15 +932,20 @@ struct SermonDetailView: View {
 
     private func retryTranscription(for sermon: Sermon) {
         isRetryingTranscription = true
-        if !processingCoordinator.retryTranscription(for: sermon.id) {
-            isRetryingTranscription = false
-            return
-        }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if isRetryingTranscription, self.sermon?.transcriptionStatus == "pending" {
+            // Await the server-owned path so a failed dispatch re-enables the
+            // button. The old fire-and-forget return-true left Retry stuck on
+            // "Retrying..." for failed_permanent when the device was offline.
+            let ok = await processingCoordinator.retryTranscriptionAwaitingServer(for: sermon.id)
+            if !ok {
                 isRetryingTranscription = false
+                return
             }
+            // Give the optimistic "processing" status a moment to redraw, then
+            // always clear — do not wait for "pending", which failed_permanent
+            // never becomes locally before the next pull.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            isRetryingTranscription = false
         }
     }
 
