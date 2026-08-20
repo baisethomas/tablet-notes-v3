@@ -111,21 +111,65 @@ test('a missing sermon id is a no-op, not a throw', async () => {
   assert.deepEqual(supabase.writes, []);
 });
 
+test('a supabase write failure is reported, not swallowed', async () => {
+  const writes = [];
+  const supabase = {
+    from(table) {
+      assert.equal(table, 'sermons');
+      return {
+        update(patch) {
+          const chain = {
+            eq() {
+              return chain;
+            },
+            async select() {
+              writes.push(patch);
+              return { data: null, error: { message: 'connection reset' } };
+            }
+          };
+          return chain;
+        }
+      };
+    }
+  };
+
+  const result = await clearFailedPermanentStage({
+    supabase,
+    sermonId: 'sermon-1',
+    stage: 'transcription'
+  });
+
+  assert.equal(result.applied, false);
+  assert.equal(result.error.message, 'connection reset');
+  assert.equal(writes.length, 1);
+});
+
 const JOBS_SRC = fs.readFileSync(path.join(__dirname, '../../jobs.js'), 'utf8');
 
 test('jobs.js clears failed_permanent only on a deliberate retry', () => {
   assert.match(JOBS_SRC, /clearFailedPermanentStage/);
   assert.match(
     JOBS_SRC,
-    /if \(retry === true\) \{\s*await clearFailedPermanentStage/,
+    /if \(retry === true\) \{\s*const cleared = await clearFailedPermanentStage/,
     'automatic dispatch must never reopen a stopped stage'
+  );
+  assert.match(
+    JOBS_SRC,
+    /if \(cleared\.error\)/,
+    'a failed stage-clear must abort before claim/submit'
+  );
+  assert.match(
+    JOBS_SRC,
+    /Could not reopen this recording for retry/,
+    'the client must see a real error, not a false-success Retry'
   );
 
   const clearAt = JOBS_SRC.indexOf('clearFailedPermanentStage');
+  const abortAt = JOBS_SRC.indexOf('if (cleared.error)');
   const claimAt = JOBS_SRC.indexOf('claimJob({');
-  assert.ok(clearAt !== -1 && claimAt !== -1);
+  assert.ok(clearAt !== -1 && abortAt !== -1 && claimAt !== -1);
   assert.ok(
-    clearAt < claimAt,
-    'clear the stage before spending money so a concurrent pull sees pending'
+    clearAt < abortAt && abortAt < claimAt,
+    'clear the stage, abort on write failure, then claim — never claim first'
   );
 });
