@@ -1,9 +1,12 @@
 import Foundation
 
-enum UploadManagerError: LocalizedError {
+enum UploadManagerError: LocalizedError, Equatable {
     case fileMissing
     case createFailed(status: Int)
     case patchFailed(status: Int)
+    /// HEAD said the TUS resource is gone / invalid — record cleared; restart create.
+    case headRestart(status: Int)
+    /// Transient HEAD failure — keep the resume record and surface the error.
     case headFailed(status: Int)
     case incomplete(offset: Int64, length: Int64)
     case timedOut
@@ -18,6 +21,8 @@ enum UploadManagerError: LocalizedError {
             return "Could not start resumable upload (\(status))."
         case .patchFailed(let status):
             return "Resumable upload chunk failed (\(status))."
+        case .headRestart(let status):
+            return "Upload session expired (\(status)); restarting."
         case .headFailed(let status):
             return "Could not resume upload (\(status))."
         case .incomplete(let offset, let length):
@@ -69,7 +74,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     private var backgroundSession: URLSession!
     private var backgroundCompletionHandler: (() -> Void)?
-    private var patchContinuations: [Int: CheckedContinuation<HTTPURLResponse, Error>] = [:]
+    private let patchGate = PatchCompletionGate()
     private var prepared = false
 
     /// Test seam — inject store / token / URLs without touching the real session.
@@ -125,7 +130,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
         let fileLength = try fileByteLength(at: localFile)
         guard fileLength >= 0 else { throw UploadManagerError.fileMissing }
 
-        // Adopt — never start a second writer to the same stable path.
+        // Adopt any live PATCH for this sermon BEFORE HEAD / new PATCH — otherwise
+        // a second sync starts a concurrent writer to the same TUS resource.
+        try await awaitActiveUploadTaskIfAny(sermonLocalId: sermonLocalId)
+
         if let existing = resumeStore.record(for: sermonLocalId),
            existing.objectPath == objectPath,
            let uploadURL = existing.uploadURL {
@@ -149,35 +157,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     upsert: upsert
                 )
                 return
-            } catch UploadManagerError.headFailed {
-                // Record discarded inside headOffset on 404/410 / over-length —
-                // fall through to a fresh create.
-            }
-        }
-
-        // Also adopt a live background task if the process died mid-continuation.
-        let tasks = await backgroundSession.tasks.1 // uploadTasks
-        if tasks.contains(where: { $0.taskDescription == sermonLocalId.uuidString }) {
-            // Wait for the in-flight chunk; then re-enter via HEAD.
-            if let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }) {
-                _ = try await awaitPatchTask(task, timeout: Self.chunkWaitTimeoutNanoseconds)
-            }
-            if let uploadURL = resumeStore.record(for: sermonLocalId)?.uploadURL {
-                let offset = try await headOffset(uploadURL: uploadURL, fileLength: fileLength, sermonLocalId: sermonLocalId)
-                if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
-                    resumeStore.remove(sermonLocalId: sermonLocalId)
-                    return
-                }
-                try await patchUntilComplete(
-                    localFile: localFile,
-                    sermonLocalId: sermonLocalId,
-                    objectPath: objectPath,
-                    uploadURL: uploadURL,
-                    startOffset: offset,
-                    fileLength: fileLength,
-                    upsert: upsert
-                )
-                return
+            } catch UploadManagerError.headRestart {
+                // Record discarded inside headOffset — fall through to a fresh create.
             }
         }
 
@@ -310,13 +291,26 @@ final class UploadManager: NSObject, SermonAudioUploading {
             fileLength: fileLength
         ) {
             resumeStore.remove(sermonLocalId: sermonLocalId)
-            throw UploadManagerError.headFailed(status: http.statusCode)
+            throw UploadManagerError.headRestart(status: http.statusCode)
         }
         guard (200...299).contains(http.statusCode),
               let offset = TusUploadClient.parseUploadOffset(from: http) else {
+            // Keep the resume record — transient auth/server failures must not
+            // abandon a valid TUS Location and restart from byte zero.
             throw UploadManagerError.headFailed(status: http.statusCode)
         }
         return offset
+    }
+
+    private func awaitActiveUploadTaskIfAny(sermonLocalId: UUID) async throws {
+        let tasks = await backgroundSession.tasks.1
+        guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }) else {
+            return
+        }
+        _ = try await waitForPatchCompletion(
+            taskId: task.taskIdentifier,
+            timeout: Self.chunkWaitTimeoutNanoseconds
+        )
     }
 
     private func patchUntilComplete(
@@ -387,9 +381,15 @@ final class UploadManager: NSObject, SermonAudioUploading {
         record.objectPath = objectPath
         resumeStore.save(record)
 
-        task.resume()
         defer { try? FileManager.default.removeItem(at: chunkURL) }
-        let http = try await awaitPatchTask(task, timeout: Self.chunkWaitTimeoutNanoseconds)
+        // Register the waiter on this MainActor turn BEFORE resume so a short
+        // final chunk cannot complete into a dropped finishPatch.
+        let http = try await patchGate.wait(
+            taskId: task.taskIdentifier,
+            timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
+            timedOutError: UploadManagerError.timedOut,
+            beforeWaiting: { task.resume() }
+        )
 
         if http.statusCode == 401 {
             // Refresh and re-HEAD rather than treating as success.
@@ -420,34 +420,16 @@ final class UploadManager: NSObject, SermonAudioUploading {
         return temp
     }
 
-    private func awaitPatchTask(
-        _ task: URLSessionUploadTask,
-        timeout: UInt64
-    ) async throws -> HTTPURLResponse {
-        try await withThrowingTaskGroup(of: HTTPURLResponse.self) { group in
-            group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
-                    self.patchContinuations[task.taskIdentifier] = cont
-                }
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: timeout)
-                throw UploadManagerError.timedOut
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
-        }
+    private func waitForPatchCompletion(taskId: Int, timeout: UInt64) async throws -> HTTPURLResponse {
+        try await patchGate.wait(
+            taskId: taskId,
+            timeoutNanoseconds: timeout,
+            timedOutError: UploadManagerError.timedOut
+        )
     }
 
     private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) {
-        guard let cont = patchContinuations.removeValue(forKey: taskId) else { return }
-        switch result {
-        case .success(let response):
-            cont.resume(returning: response)
-        case .failure(let error):
-            cont.resume(throwing: error)
-        }
+        patchGate.finish(taskId: taskId, result: result)
     }
 }
 
@@ -478,6 +460,9 @@ extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
+            // Multi-chunk continuation while the app stays terminated is not in
+            // this slice — the resume record is adopted on the next foreground
+            // sync. Call the system completion handler promptly.
             let handler = self.backgroundCompletionHandler
             self.backgroundCompletionHandler = nil
             handler?()

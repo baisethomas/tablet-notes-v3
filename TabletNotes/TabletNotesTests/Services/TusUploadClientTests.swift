@@ -75,6 +75,11 @@ struct TusUploadClientTests {
         #expect(TusUploadClient.shouldRestartResume(httpStatus: 410, offset: 0, fileLength: 10))
         #expect(TusUploadClient.shouldRestartResume(httpStatus: 200, offset: 11, fileLength: 10))
         #expect(!TusUploadClient.shouldRestartResume(httpStatus: 200, offset: 5, fileLength: 10))
+        // Transient statuses must NOT restart — keep the TUS Location.
+        #expect(!TusUploadClient.shouldRestartResume(httpStatus: 401, offset: nil, fileLength: 10))
+        #expect(!TusUploadClient.shouldRestartResume(httpStatus: 403, offset: nil, fileLength: 10))
+        #expect(!TusUploadClient.shouldRestartResume(httpStatus: 500, offset: nil, fileLength: 10))
+        #expect(!TusUploadClient.shouldRestartResume(httpStatus: 200, offset: nil, fileLength: 10))
     }
 
     @Test func parseLocationResolvesRelativeUrls() throws {
@@ -87,6 +92,71 @@ struct TusUploadClientTests {
         )!
         let location = TusUploadClient.parseLocation(from: response, endpoint: endpoint)
         #expect(location?.absoluteString.contains("/storage/v1/upload/resumable/abc") == true)
+    }
+}
+
+@MainActor
+struct PatchCompletionGateTests {
+    @Test func deliversEarlyCompletionWhenFinishBeatsWaiterRegistration() async throws {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: ["Upload-Offset": "10"]
+        )!
+        gate.finish(taskId: 42, result: .success(response))
+        let got = try await gate.wait(
+            taskId: 42,
+            timeoutNanoseconds: 5_000_000_000,
+            timedOutError: UploadManagerError.timedOut
+        )
+        #expect(got.statusCode == 204)
+    }
+
+    @Test func timesOutWhenNoDelegateCompletionArrives() async {
+        let gate = PatchCompletionGate()
+        do {
+            _ = try await gate.wait(
+                taskId: 7,
+                timeoutNanoseconds: 50_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+            Issue.record("expected timeout")
+        } catch let error as UploadManagerError {
+            #expect(error == .timedOut)
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
+
+    @Test func discardsLateCompletionAfterTimeout() async throws {
+        let gate = PatchCompletionGate()
+        do {
+            _ = try await gate.wait(
+                taskId: 9,
+                timeoutNanoseconds: 30_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+            Issue.record("expected timeout")
+        } catch is UploadManagerError {
+            // expected
+        }
+        let late = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        gate.finish(taskId: 9, result: .success(late))
+        // A fresh wait on a new id still works; timed-out id must not poison early stash.
+        gate.finish(taskId: 10, result: .success(late))
+        let got = try await gate.wait(
+            taskId: 10,
+            timeoutNanoseconds: 1_000_000_000,
+            timedOutError: UploadManagerError.timedOut
+        )
+        #expect(got.statusCode == 204)
     }
 }
 
