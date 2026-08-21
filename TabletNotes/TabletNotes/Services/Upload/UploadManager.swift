@@ -75,6 +75,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var backgroundSession: URLSession!
     private var backgroundCompletionHandler: (() -> Void)?
     private let patchGate = PatchCompletionGate()
+    /// Temp chunk files keyed by URLSession task id — deleted only after the
+    /// task completes (or is cancelled), never while the system may still read.
+    private var chunkFilesByTaskId: [Int: URL] = [:]
     private var prepared = false
 
     /// Test seam — inject store / token / URLs without touching the real session.
@@ -203,11 +206,19 @@ final class UploadManager: NSObject, SermonAudioUploading {
         let sermonIds = Set(flagged.map(\.sermonLocalId))
 
         let uploadTasks = await backgroundSession.tasks.1
+        var cancelledTaskIds: Set<Int> = []
         for task in uploadTasks {
-            if let desc = task.taskDescription,
-               let id = UUID(uuidString: desc),
-               sermonIds.contains(id) {
+            guard let desc = task.taskDescription,
+                  let id = UUID(uuidString: desc),
+                  sermonIds.contains(id) else { continue }
+            // Only cancel work that is still outstanding. Completed tasks are
+            // already gone from this list; cancelling them is a no-op.
+            switch task.state {
+            case .running, .suspended:
                 task.cancel()
+                cancelledTaskIds.insert(task.taskIdentifier)
+            default:
+                break
             }
         }
 
@@ -216,13 +227,19 @@ final class UploadManager: NSObject, SermonAudioUploading {
             let remaining = await backgroundSession.tasks.1.filter { task in
                 guard let desc = task.taskDescription,
                       let id = UUID(uuidString: desc) else { return false }
-                return sermonIds.contains(id)
+                guard sermonIds.contains(id) else { return false }
+                switch task.state {
+                case .running, .suspended, .canceling:
+                    return true
+                default:
+                    return false
+                }
             }
             if remaining.isEmpty {
+                // Flag-off abandons TUS resume on purpose — next sync uses PUT.
                 for id in sermonIds { resumeStore.remove(sermonLocalId: id) }
-                // paths retained only for clarity in logs
                 if !paths.isEmpty {
-                    print("[UploadManager] Cleared \(sermonIds.count) resumable upload(s) after flag-off")
+                    print("[UploadManager] Cleared \(sermonIds.count) resumable upload(s) after flag-off (cancelled \(cancelledTaskIds.count) task(s))")
                 }
                 return
             }
@@ -351,8 +368,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
     ) async throws -> Int64 {
         let token = try await tokenProvider()
         let chunkURL = try writeChunkFile(from: localFile, range: range)
-        // Do not delete until the background task finishes — the system may
-        // read the file after this method returns.
+        // Kept until didComplete / cancel — see chunkFilesByTaskId.
 
         let contentLength = range.upperBound - range.lowerBound
         var request = TusUploadClient.makePatchRequest(
@@ -365,6 +381,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         // Background upload task
         let task = backgroundSession.uploadTask(with: request, fromFile: chunkURL)
         task.taskDescription = sermonLocalId.uuidString
+        chunkFilesByTaskId[task.taskIdentifier] = chunkURL
 
         var record = resumeStore.record(for: sermonLocalId) ?? UploadResumeRecord(
             sermonLocalId: sermonLocalId,
@@ -381,15 +398,22 @@ final class UploadManager: NSObject, SermonAudioUploading {
         record.objectPath = objectPath
         resumeStore.save(record)
 
-        defer { try? FileManager.default.removeItem(at: chunkURL) }
         // Register the waiter on this MainActor turn BEFORE resume so a short
         // final chunk cannot complete into a dropped finishPatch.
-        let http = try await patchGate.wait(
-            taskId: task.taskIdentifier,
-            timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
-            timedOutError: UploadManagerError.timedOut,
-            beforeWaiting: { task.resume() }
-        )
+        let http: HTTPURLResponse
+        do {
+            http = try await patchGate.wait(
+                taskId: task.taskIdentifier,
+                timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
+                timedOutError: UploadManagerError.timedOut,
+                beforeWaiting: { task.resume() }
+            )
+        } catch {
+            if (error as? UploadManagerError) == .timedOut {
+                task.cancel()
+            }
+            throw error
+        }
 
         if http.statusCode == 401 {
             // Refresh and re-HEAD rather than treating as success.
@@ -429,6 +453,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) {
+        if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
+            try? FileManager.default.removeItem(at: chunkURL)
+        }
         patchGate.finish(taskId: taskId, result: result)
     }
 }

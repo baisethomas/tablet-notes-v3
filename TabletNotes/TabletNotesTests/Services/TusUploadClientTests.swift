@@ -158,6 +158,39 @@ struct PatchCompletionGateTests {
         )
         #expect(got.statusCode == 204)
     }
+
+    @Test func successfulFinishCancelsTimeoutSoTaskIdCanBeReused() async throws {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        let first = Task {
+            try await gate.wait(
+                taskId: 11,
+                timeoutNanoseconds: 200_000_000,
+                timedOutError: UploadManagerError.timedOut,
+                beforeWaiting: {
+                    Task { @MainActor in
+                        gate.finish(taskId: 11, result: .success(response))
+                    }
+                }
+            )
+        }
+        let got = try await first.value
+        #expect(got.statusCode == 204)
+        // After the short timeout window, a reused task id must still accept finish.
+        try await Task.sleep(nanoseconds: 250_000_000)
+        gate.finish(taskId: 11, result: .success(response))
+        let reused = try await gate.wait(
+            taskId: 11,
+            timeoutNanoseconds: 1_000_000_000,
+            timedOutError: UploadManagerError.timedOut
+        )
+        #expect(reused.statusCode == 204)
+    }
 }
 
 struct UploadResumeStoreTests {

@@ -8,7 +8,12 @@ import Foundation
 ///    unresumed CheckedContinuation inside a task group).
 @MainActor
 final class PatchCompletionGate {
-    private var continuations: [Int: CheckedContinuation<HTTPURLResponse, Error>] = [:]
+    private struct Waiter {
+        let continuation: CheckedContinuation<HTTPURLResponse, Error>
+        let timeoutTask: Task<Void, Never>
+    }
+
+    private var waiters: [Int: Waiter] = [:]
     private var earlyResults: [Int: Result<HTTPURLResponse, Error>] = [:]
     private var timedOutIds: Set<Int> = []
 
@@ -29,15 +34,16 @@ final class PatchCompletionGate {
                 return
             }
 
-            continuations[taskId] = cont
-            beforeWaiting?()
-            Task { @MainActor in
+            let timeoutTask = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                if let waiting = self.continuations.removeValue(forKey: taskId) {
+                guard !Task.isCancelled else { return }
+                if let waiter = self.waiters.removeValue(forKey: taskId) {
                     self.timedOutIds.insert(taskId)
-                    waiting.resume(throwing: timedOutError)
+                    waiter.continuation.resume(throwing: timedOutError)
                 }
             }
+            waiters[taskId] = Waiter(continuation: cont, timeoutTask: timeoutTask)
+            beforeWaiting?()
         }
     }
 
@@ -45,12 +51,13 @@ final class PatchCompletionGate {
         if timedOutIds.remove(taskId) != nil {
             return
         }
-        if let cont = continuations.removeValue(forKey: taskId) {
+        if let waiter = waiters.removeValue(forKey: taskId) {
+            waiter.timeoutTask.cancel()
             switch result {
             case .success(let response):
-                cont.resume(returning: response)
+                waiter.continuation.resume(returning: response)
             case .failure(let error):
-                cont.resume(throwing: error)
+                waiter.continuation.resume(throwing: error)
             }
             return
         }
