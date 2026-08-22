@@ -11,10 +11,23 @@ protocol SermonSyncRemoteGatewayProtocol {
 
 final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let supabaseService: SupabaseServiceProtocol
+    private let audioUploader: any SermonAudioUploading
+    private let isResumableUploadsEnabled: () -> Bool
+    private let resumeStore: UploadResumeStoring
     private let apiBaseURL = "https://comfy-daffodil-7ecc55.netlify.app"
 
-    init(supabaseService: SupabaseServiceProtocol) {
+    init(
+        supabaseService: SupabaseServiceProtocol,
+        audioUploader: (any SermonAudioUploading)? = nil,
+        resumeStore: UploadResumeStoring? = nil,
+        isResumableUploadsEnabled: (() -> Bool)? = nil
+    ) {
         self.supabaseService = supabaseService
+        self.audioUploader = audioUploader ?? UploadManager.shared
+        self.resumeStore = resumeStore ?? UploadResumeStore()
+        self.isResumableUploadsEnabled = isResumableUploadsEnabled ?? {
+            FeatureFlags.shared.resumableUploads
+        }
     }
 
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
@@ -28,26 +41,53 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         let audioFileName = data.audioFileURL.lastPathComponent
         let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
 
-        // Passing the sermon's local id gives this upload a stable object path,
-        // so a retry replaces its own partial rather than orphaning a ~100MB
-        // object nothing reaps (TAB-73).
-        let upload = try await supabaseService.getSignedUploadURL(
-            for: audioFileName,
-            contentType: "audio/m4a",
-            fileSize: fileSize,
-            sermonLocalId: data.id
-        )
+        let objectPath: String
 
-        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl, upsert: upload.upsert)
+        if isResumableUploadsEnabled() {
+            let plan = try await ResumableUploadPathResolver.plan(
+                sermonLocalId: data.id,
+                resumeStore: resumeStore,
+                mint: {
+                    let minted = try await supabaseService.getSignedUploadURL(
+                        for: audioFileName,
+                        contentType: "audio/m4a",
+                        fileSize: fileSize,
+                        sermonLocalId: data.id
+                    )
+                    return (minted.path, minted.upsert)
+                }
+            )
+            try await audioUploader.uploadResumable(
+                localFile: data.audioFileURL,
+                sermonLocalId: data.id,
+                objectPath: plan.objectPath,
+                upsert: plan.upsert
+            )
+            objectPath = plan.objectPath
+        } else {
+            // Part A: streaming PUT on a foreground session.
+            let upload = try await supabaseService.getSignedUploadURL(
+                for: audioFileName,
+                contentType: "audio/m4a",
+                fileSize: fileSize,
+                sermonLocalId: data.id
+            )
+            try await supabaseService.uploadAudioFile(
+                at: data.audioFileURL,
+                to: upload.uploadUrl,
+                upsert: upload.upsert
+            )
+            objectPath = upload.path
+        }
 
         let audioFileURL = try supabaseService.client.storage
             .from("sermon-audio")
-            .getPublicURL(path: upload.path)
+            .getPublicURL(path: objectPath)
 
         var payload: [String: Any] = [
             "localId": data.id.uuidString,
             "title": data.title,
-            "audioFilePath": upload.path,
+            "audioFilePath": objectPath,
             "audioFileUrl": audioFileURL.absoluteString,
             "audioFileName": audioFileName,
             "audioFileSizeBytes": fileSize,

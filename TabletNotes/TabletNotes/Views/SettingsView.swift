@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
     @State private var durableProcessingEnabled = FeatureFlags.shared.durableProcessingPipeline
+    @State private var resumableUploadsEnabled = FeatureFlags.shared.resumableUploads
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -358,6 +359,38 @@ struct SettingsView: View {
                                         Task {
                                             await SermonProcessingCoordinator.shared
                                                 .handleProcessingModeChange(userId: userId)
+                                        }
+                                    }
+                                )
+                            )
+
+                            SettingsDivider()
+
+                            // TAB-73 Part B: TUS on a background URLSession. Ships
+                            // dark until airplane-mode / kill-app proof on device.
+                            SettingsToggle(
+                                icon: "arrow.triangle.2.circlepath",
+                                title: "Resumable Uploads (Beta)",
+                                subtitle: "Resume large uploads after backgrounding or a dropped connection",
+                                isOn: Binding(
+                                    get: { resumableUploadsEnabled },
+                                    set: { newValue in
+                                        Task { @MainActor in
+                                            if !newValue {
+                                                // Confirmed cancel before legacy PUT may touch those paths.
+                                                do {
+                                                    try await UploadManager.shared
+                                                        .cancelInFlightResumableUploads()
+                                                } catch {
+                                                    print("[Settings] Flag-off cancel failed: \(error.localizedDescription)")
+                                                    return
+                                                }
+                                            }
+                                            resumableUploadsEnabled = newValue
+                                            FeatureFlags.shared.setEnabled(
+                                                newValue,
+                                                for: .resumableUploads
+                                            )
                                         }
                                     }
                                 )

@@ -16,6 +16,7 @@ import Firebase
 
 @main
 struct TabletNotesApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     let container: ModelContainer
     let modelContext: ModelContext
     @StateObject private var deepLinkHandler = DeepLinkHandler()
