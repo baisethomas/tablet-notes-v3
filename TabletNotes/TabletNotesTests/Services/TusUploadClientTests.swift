@@ -80,6 +80,11 @@ struct TusUploadClientTests {
         #expect(!TusUploadClient.shouldRestartResume(httpStatus: 403, offset: nil, fileLength: 10))
         #expect(!TusUploadClient.shouldRestartResume(httpStatus: 500, offset: nil, fileLength: 10))
         #expect(!TusUploadClient.shouldRestartResume(httpStatus: 200, offset: nil, fileLength: 10))
+        #expect(TusUploadClient.shouldRestartResume(httpStatus: 200, offset: -1, fileLength: 10))
+        #expect(!TusUploadClient.isValidOffset(-1, fileLength: 10))
+        #expect(TusUploadClient.isValidOffset(0, fileLength: 10))
+        #expect(TusUploadClient.isValidOffset(10, fileLength: 10))
+        #expect(TusUploadClient.nextChunkRange(offset: -1, fileLength: 10) == nil)
     }
 
     @Test func parseLocationResolvesRelativeUrls() throws {
@@ -207,6 +212,7 @@ struct UploadResumeStoreTests {
             uploadURL: URL(string: "https://example.com/upload/1"),
             uploadLength: 100,
             filePath: "/tmp/a.m4a",
+            fileModificationTime: 1_700_000_000,
             taskIdentifier: 7,
             startedUnderFlag: true,
             upsert: true
@@ -216,6 +222,41 @@ struct UploadResumeStoreTests {
 
         store.remove(sermonLocalId: id)
         #expect(store.record(for: id) == nil)
+    }
+
+    @Test func matchesLocalFileRequiresPathLengthAndMtime() throws {
+        let dir = FileManager.default.temporaryDirectory
+        let file = dir.appendingPathComponent("tus-match-\(UUID().uuidString).m4a")
+        try Data("abc".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let mtime = values.contentModificationDate!.timeIntervalSince1970
+        let length = Int64(values.fileSize!)
+
+        let matching = UploadResumeRecord(
+            sermonLocalId: UUID(),
+            objectPath: "user/x.m4a",
+            uploadURL: nil,
+            uploadLength: length,
+            filePath: file.path,
+            fileModificationTime: mtime,
+            taskIdentifier: nil,
+            startedUnderFlag: true,
+            upsert: true
+        )
+        #expect(matching.matchesLocalFile(file, length: length))
+
+        var wrongLength = matching
+        wrongLength.uploadLength = length + 1
+        #expect(!wrongLength.matchesLocalFile(file, length: length))
+
+        var missingMtime = matching
+        missingMtime.fileModificationTime = nil
+        #expect(!missingMtime.matchesLocalFile(file, length: length))
+
+        var wrongPath = matching
+        wrongPath.filePath = file.path + ".other"
+        #expect(!wrongPath.matchesLocalFile(file, length: length))
     }
 }
 

@@ -16,9 +16,16 @@ enum TusUploadClient {
         fileLength >= 0 && offset == fileLength
     }
 
-    /// Next half-open byte range to PATCH, or nil when already complete.
+    /// Offsets used for seek/range construction must be in `0...fileLength`.
+    static func isValidOffset(_ offset: Int64, fileLength: Int64) -> Bool {
+        fileLength >= 0 && offset >= 0 && offset <= fileLength
+    }
+
+    /// Next half-open byte range to PATCH, or nil when already complete / invalid.
     static func nextChunkRange(offset: Int64, fileLength: Int64, chunkSize: Int64 = chunkSize) -> Range<Int64>? {
-        guard offset < fileLength, chunkSize > 0 else { return nil }
+        guard isValidOffset(offset, fileLength: fileLength),
+              offset < fileLength,
+              chunkSize > 0 else { return nil }
         let end = min(offset + chunkSize, fileLength)
         return offset..<end
     }
@@ -117,10 +124,10 @@ enum TusUploadClient {
         return URL(string: raw, relativeTo: endpoint)?.absoluteURL
     }
 
-    /// HEAD 404/410 → discard resume and restart. Offset past local length → same.
+    /// HEAD 404/410 → discard resume and restart. Offset outside `0...fileLength` → same.
     static func shouldRestartResume(httpStatus: Int, offset: Int64?, fileLength: Int64) -> Bool {
         if httpStatus == 404 || httpStatus == 410 { return true }
-        if let offset, offset > fileLength { return true }
+        if let offset, !isValidOffset(offset, fileLength: fileLength) { return true }
         return false
     }
 

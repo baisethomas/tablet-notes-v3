@@ -11,9 +11,26 @@ struct UploadResumeRecord: Codable, Equatable, Sendable {
     var uploadURL: URL?
     var uploadLength: Int64
     var filePath: String
+    /// `contentModificationDate` at the moment upload began. Optional so older
+    /// persisted blobs still decode; a missing value never matches (forces restart).
+    var fileModificationTime: TimeInterval? = nil
     var taskIdentifier: Int?
     var startedUnderFlag: Bool
     var upsert: Bool
+
+    /// True only when the on-disk recording is the same bytes we started uploading.
+    func matchesLocalFile(_ localFile: URL, length: Int64) -> Bool {
+        guard filePath == localFile.path,
+              uploadLength == length,
+              let stored = fileModificationTime else {
+            return false
+        }
+        guard let values = try? localFile.resourceValues(forKeys: [.contentModificationDateKey]),
+              let date = values.contentModificationDate else {
+            return false
+        }
+        return date.timeIntervalSince1970 == stored
+    }
 }
 
 protocol UploadResumeStoring: AnyObject {

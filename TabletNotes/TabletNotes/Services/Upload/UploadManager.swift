@@ -9,6 +9,7 @@ enum UploadManagerError: LocalizedError, Equatable {
     /// Transient HEAD failure — keep the resume record and surface the error.
     case headFailed(status: Int)
     case incomplete(offset: Int64, length: Int64)
+    case invalidOffset(offset: Int64, length: Int64)
     case timedOut
     case flagOffCancelTimedOut
     case notConfigured
@@ -27,6 +28,8 @@ enum UploadManagerError: LocalizedError, Equatable {
             return "Could not resume upload (\(status))."
         case .incomplete(let offset, let length):
             return "Upload incomplete (\(offset)/\(length) bytes)."
+        case .invalidOffset(let offset, let length):
+            return "Server returned an invalid upload offset (\(offset)/\(length))."
         case .timedOut:
             return "Upload timed out waiting for the system transfer."
         case .flagOffCancelTimedOut:
@@ -138,39 +141,46 @@ final class UploadManager: NSObject, SermonAudioUploading {
         try await awaitActiveUploadTaskIfAny(sermonLocalId: sermonLocalId)
 
         if let existing = resumeStore.record(for: sermonLocalId),
-           existing.objectPath == objectPath,
-           let uploadURL = existing.uploadURL {
-            do {
-                let offset = try await headOffset(
-                    uploadURL: uploadURL,
-                    fileLength: fileLength,
-                    sermonLocalId: sermonLocalId
-                )
-                if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
-                    resumeStore.remove(sermonLocalId: sermonLocalId)
+           existing.objectPath == objectPath {
+            // Never append new-file bytes onto an old TUS resource.
+            if !existing.matchesLocalFile(localFile, length: fileLength) {
+                await cancelActiveUploadTasks(for: sermonLocalId)
+                resumeStore.remove(sermonLocalId: sermonLocalId)
+            } else if let uploadURL = existing.uploadURL {
+                do {
+                    let offset = try await headOffset(
+                        uploadURL: uploadURL,
+                        fileLength: fileLength,
+                        sermonLocalId: sermonLocalId
+                    )
+                    if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
+                        resumeStore.remove(sermonLocalId: sermonLocalId)
+                        return
+                    }
+                    try await patchUntilComplete(
+                        localFile: localFile,
+                        sermonLocalId: sermonLocalId,
+                        objectPath: objectPath,
+                        uploadURL: uploadURL,
+                        startOffset: offset,
+                        fileLength: fileLength,
+                        upsert: upsert
+                    )
                     return
+                } catch UploadManagerError.headRestart {
+                    // Record discarded inside headOffset — fall through to a fresh create.
                 }
-                try await patchUntilComplete(
-                    localFile: localFile,
-                    sermonLocalId: sermonLocalId,
-                    objectPath: objectPath,
-                    uploadURL: uploadURL,
-                    startOffset: offset,
-                    fileLength: fileLength,
-                    upsert: upsert
-                )
-                return
-            } catch UploadManagerError.headRestart {
-                // Record discarded inside headOffset — fall through to a fresh create.
             }
         }
 
+        let modificationTime = try fileModificationTime(at: localFile)
         var record = UploadResumeRecord(
             sermonLocalId: sermonLocalId,
             objectPath: objectPath,
             uploadURL: nil,
             uploadLength: fileLength,
             filePath: localFile.path,
+            fileModificationTime: modificationTime,
             taskIdentifier: nil,
             startedUnderFlag: true,
             upsert: upsert
@@ -258,6 +268,26 @@ final class UploadManager: NSObject, SermonAudioUploading {
         return Int64(size)
     }
 
+    private func fileModificationTime(at url: URL) throws -> TimeInterval {
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let date = values.contentModificationDate else {
+            throw UploadManagerError.fileMissing
+        }
+        return date.timeIntervalSince1970
+    }
+
+    private func cancelActiveUploadTasks(for sermonLocalId: UUID) async {
+        let uploadTasks = await backgroundSession.tasks.1
+        for task in uploadTasks where task.taskDescription == sermonLocalId.uuidString {
+            switch task.state {
+            case .running, .suspended:
+                task.cancel()
+            default:
+                break
+            }
+        }
+    }
+
     private func createUpload(
         objectPath: String,
         fileLength: Int64,
@@ -315,6 +345,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
             // Keep the resume record — transient auth/server failures must not
             // abandon a valid TUS Location and restart from byte zero.
             throw UploadManagerError.headFailed(status: http.statusCode)
+        }
+        guard TusUploadClient.isValidOffset(offset, fileLength: fileLength) else {
+            resumeStore.remove(sermonLocalId: sermonLocalId)
+            throw UploadManagerError.headRestart(status: http.statusCode)
         }
         return offset
     }
@@ -389,6 +423,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             uploadURL: uploadURL,
             uploadLength: fileLength,
             filePath: localFile.path,
+            fileModificationTime: try? fileModificationTime(at: localFile),
             taskIdentifier: task.taskIdentifier,
             startedUnderFlag: true,
             upsert: upsert
@@ -424,8 +459,13 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return try await headOffset(uploadURL: uploadURL, fileLength: fileLength, sermonLocalId: sermonLocalId)
         }
         guard http.statusCode == 204,
-              let newOffset = TusUploadClient.parseUploadOffset(from: http) else {
+              let newOffset = TusUploadClient.parseUploadOffset(from: http),
+              TusUploadClient.isValidOffset(newOffset, fileLength: fileLength) else {
             throw UploadManagerError.patchFailed(status: http.statusCode)
+        }
+        // TUS: successful PATCH advances Upload-Offset to the end of the chunk.
+        guard newOffset == range.upperBound else {
+            throw UploadManagerError.invalidOffset(offset: newOffset, length: fileLength)
         }
         return newOffset
     }
