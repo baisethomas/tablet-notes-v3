@@ -1146,15 +1146,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     func scheduleIncompleteBackgroundUploadContinuations() async {
-        // Finish leftover sign-out drains before any ownership pruning. Without a
-        // signed-in user we must not drop records until matching tasks are gone.
-        if currentUserIdProvider() == nil {
-            let drained = await cancelAllResumableBackgroundWorkForSignOut()
-            if drained {
-                resumeStore.removeAll()
-            }
-            return
-        }
+        // Auth may still be restoring on cold launch — a nil user here is not
+        // confirmed sign-out. Sign-out itself drains via clearPersistedResumeRecords().
+        guard currentUserIdProvider() != nil else { return }
         guard featureFlags.resumableUploads else {
             let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
             for record in flagged {

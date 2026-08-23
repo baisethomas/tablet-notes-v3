@@ -233,7 +233,7 @@ struct ResumableUploadPathResolverTests {
         #expect(store.record(for: id) == nil)
     }
 
-    @Test func differentOwnerRecordIsDroppedWithoutAbandon() async throws {
+    @Test func differentOwnerRecordIsAbandonedBeforeRemint() async throws {
         let file = try makeTempAudioFile(named: "owner")
         defer { try? FileManager.default.removeItem(at: file.url) }
 
@@ -270,7 +270,7 @@ struct ResumableUploadPathResolverTests {
             abandonStaleRecord: { _ in abandonCalls += 1 }
         )
 
-        #expect(abandonCalls == 0)
+        #expect(abandonCalls == 1)
         #expect(store.record(for: id)?.ownerUserId == currentOwner)
     }
 

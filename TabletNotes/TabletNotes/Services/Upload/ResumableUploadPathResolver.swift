@@ -78,9 +78,9 @@ enum ResumableUploadPathResolver {
             return Plan(objectPath: record.objectPath, upsert: record.upsert, didMint: false)
         }
         if let stale = resumeStore.record(for: sermonLocalId) {
-            if stale.ownerUserId == ownerUserId {
-                try await abandonStaleRecord?(stale)
-            }
+            // Always drain via UploadManager (same-owner remint or foreign-owner
+            // leftovers) before dropping the only sermon→task mapping.
+            try await abandonStaleRecord?(stale)
             resumeStore.remove(sermonLocalId: sermonLocalId)
         }
         let minted = try await mint()

@@ -356,11 +356,11 @@ struct UploadManagerFlagOffTests {
         #expect(store.record(for: sermonId) == nil)
     }
 
-    @Test func unsignedLaunchDrainsBeforeDroppingResumeRecords() async {
+    @Test func unsignedLaunchDoesNotTreatRestoringAuthAsSignOut() async {
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let store = UploadResumeStore(defaults: defaults, key: "unsigned-drain")
+        let store = UploadResumeStore(defaults: defaults, key: "unsigned-launch")
         let flags = FeatureFlags(defaults: defaults)
         flags.setEnabled(true, for: .resumableUploads)
 
@@ -387,15 +387,9 @@ struct UploadManagerFlagOffTests {
             currentUserIdProvider: { nil },
             createBackgroundSession: false
         )
-        // Incomplete drain must retain the mapping.
-        manager.signOutDrainSucceededOverride = false
         await manager.continueIncompleteBackgroundUploads()
+        // Cold-launch nil user must not wipe/cancel — auth may still be restoring.
         #expect(store.record(for: sermonId) != nil)
-
-        // Confirmed drain may clear while unsigned-in.
-        manager.signOutDrainSucceededOverride = true
-        await manager.continueIncompleteBackgroundUploads()
-        #expect(store.record(for: sermonId) == nil)
     }
 
     @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
