@@ -155,6 +155,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     func prepareBackgroundSessionIfNeeded() {
         guard !prepared else { return }
+        sweepOrphanedChunkFiles()
         let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
@@ -699,8 +700,24 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) {
         if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
             try? FileManager.default.removeItem(at: chunkURL)
+        } else {
+            // After relaunch the in-memory map is empty — remove deterministic name if present.
+            let orphan = FileManager.default.temporaryDirectory
+                .appendingPathComponent("tus-chunk-\(taskId)")
+            try? FileManager.default.removeItem(at: orphan)
         }
         patchGate.finish(taskId: taskId, result: result)
+    }
+
+    private func sweepOrphanedChunkFiles() {
+        let temp = FileManager.default.temporaryDirectory
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: temp,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        for url in entries where url.lastPathComponent.hasPrefix("tus-chunk-") {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
     private func continueIncompleteBackgroundUploads() async {
         let records = resumeStore.allRecords().filter {
@@ -750,10 +767,13 @@ extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
-            await self.continueIncompleteBackgroundUploads()
+            // Call the system handler promptly — do not await a full multi-chunk upload here.
             let handler = self.backgroundCompletionHandler
             self.backgroundCompletionHandler = nil
             handler?()
+            Task { @MainActor in
+                await self.continueIncompleteBackgroundUploads()
+            }
         }
     }
 }

@@ -98,6 +98,23 @@ struct TusUploadClientTests {
         let location = TusUploadClient.parseLocation(from: response, endpoint: endpoint)
         #expect(location?.absoluteString.contains("/storage/v1/upload/resumable/abc") == true)
     }
+
+    @Test func parseLocationRejectsUntrustedAbsoluteHost() {
+        let endpoint = URL(string: "https://example.supabase.co/storage/v1/upload/resumable")!
+        let response = HTTPURLResponse(
+            url: endpoint,
+            statusCode: 201,
+            httpVersion: nil,
+            headerFields: ["Location": "https://evil.example/upload/hijack"]
+        )!
+        #expect(TusUploadClient.parseLocation(from: response, endpoint: endpoint) == nil)
+    }
+
+    @Test func isTrustedUploadLocationAllowsSameOrigin() {
+        let endpoint = URL(string: "https://example.supabase.co/storage/v1/upload/resumable")!
+        let location = URL(string: "https://example.supabase.co/storage/v1/upload/resumable/abc")!
+        #expect(TusUploadClient.isTrustedUploadLocation(location, endpoint: endpoint))
+    }
 }
 
 @MainActor

@@ -118,10 +118,31 @@ enum TusUploadClient {
               !raw.isEmpty else {
             return nil
         }
+        let resolved: URL?
         if let absolute = URL(string: raw), absolute.scheme != nil {
-            return absolute
+            resolved = absolute
+        } else {
+            resolved = URL(string: raw, relativeTo: endpoint)?.absoluteURL
         }
-        return URL(string: raw, relativeTo: endpoint)?.absoluteURL
+        guard let location = resolved,
+              isTrustedUploadLocation(location, endpoint: endpoint) else {
+            return nil
+        }
+        return location
+    }
+
+    /// Reject attacker-controlled absolute Locations before attaching bearer tokens.
+    static func isTrustedUploadLocation(_ location: URL, endpoint: URL) -> Bool {
+        guard location.scheme?.lowercased() == "https",
+              let locationHost = location.host?.lowercased(),
+              let endpointHost = endpoint.host?.lowercased(),
+              locationHost == endpointHost else {
+            return false
+        }
+        let locationPort = location.port ?? 443
+        let endpointPort = endpoint.port ?? 443
+        guard locationPort == endpointPort else { return false }
+        return location.path.hasPrefix("/storage/v1/upload/resumable")
     }
 
     /// HEAD 404/410 → discard resume and restart. Offset outside `0...fileLength` → same.
