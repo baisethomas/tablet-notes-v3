@@ -217,4 +217,45 @@ struct UploadManagerFlagOffTests {
 
         #expect(scheduled)
     }
+
+    @Test func relaunchFinishPatchRemovesPersistedChunkFile() async throws {
+        let chunk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tus-chunk-\(UUID().uuidString)")
+        try Data(repeating: 0x11, count: 16).write(to: chunk)
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "chunk-cleanup")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/test.m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/abc")!,
+                uploadLength: 16,
+                filePath: "/tmp/test.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 77,
+                chunkFilePath: chunk.path,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            createBackgroundSession: false
+        )
+        manager.finishPatchForTesting(taskId: 77)
+
+        #expect(!FileManager.default.fileExists(atPath: chunk.path))
+        #expect(store.record(for: sermonId)?.chunkFilePath == nil)
+        #expect(store.record(for: sermonId)?.taskIdentifier == nil)
+    }
 }

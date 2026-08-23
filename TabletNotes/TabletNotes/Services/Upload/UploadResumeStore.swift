@@ -15,6 +15,8 @@ struct UploadResumeRecord: Codable, Equatable, Sendable {
     /// persisted blobs still decode; a missing value never matches (forces restart).
     var fileModificationTime: TimeInterval? = nil
     var taskIdentifier: Int?
+    /// Temp PATCH source file — survives relaunch so completed tasks can delete it.
+    var chunkFilePath: String? = nil
     var startedUnderFlag: Bool
     var upsert: Bool
 
@@ -35,6 +37,7 @@ struct UploadResumeRecord: Codable, Equatable, Sendable {
 
 protocol UploadResumeStoring: AnyObject {
     func record(for sermonLocalId: UUID) -> UploadResumeRecord?
+    func record(forTaskIdentifier taskIdentifier: Int) -> UploadResumeRecord?
     func save(_ record: UploadResumeRecord)
     func remove(sermonLocalId: UUID)
     func allRecords() -> [UploadResumeRecord]
@@ -53,6 +56,10 @@ final class UploadResumeStore: UploadResumeStoring {
 
     func record(for sermonLocalId: UUID) -> UploadResumeRecord? {
         allRecords().first { $0.sermonLocalId == sermonLocalId }
+    }
+
+    func record(forTaskIdentifier taskIdentifier: Int) -> UploadResumeRecord? {
+        allRecords().first { $0.taskIdentifier == taskIdentifier }
     }
 
     func save(_ record: UploadResumeRecord) {

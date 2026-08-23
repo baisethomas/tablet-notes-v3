@@ -688,7 +688,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
         chunkFilesByTaskId[task.taskIdentifier] = chunkURL
 
         if var existingRecord = resumeStore.record(for: sermonLocalId) {
+            if let oldPath = existingRecord.chunkFilePath, oldPath != chunkURL.path {
+                try? FileManager.default.removeItem(atPath: oldPath)
+            }
             existingRecord.taskIdentifier = task.taskIdentifier
+            existingRecord.chunkFilePath = chunkURL.path
             existingRecord.uploadURL = uploadURL
             existingRecord.objectPath = objectPath
             resumeStore.save(existingRecord)
@@ -702,11 +706,13 @@ final class UploadManager: NSObject, SermonAudioUploading {
             filePath: localFile.path,
             fileModificationTime: try? fileModificationTime(at: localFile),
             taskIdentifier: task.taskIdentifier,
+            chunkFilePath: chunkURL.path,
             startedUnderFlag: true,
             upsert: upsert
         )
         record.uploadURL = uploadURL
         record.taskIdentifier = task.taskIdentifier
+        record.chunkFilePath = chunkURL.path
         record.objectPath = objectPath
         resumeStore.save(record)
         return task
@@ -827,11 +833,81 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) {
-        if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
-            try? FileManager.default.removeItem(at: chunkURL)
-        }
+        removeChunkFile(forTaskId: taskId)
         patchGate.finish(taskId: taskId, result: result)
     }
+
+    private func removeChunkFile(forTaskId taskId: Int) {
+        if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
+            try? FileManager.default.removeItem(at: chunkURL)
+            clearPersistedChunkReference(forTaskId: taskId)
+            return
+        }
+        guard var record = resumeStore.record(forTaskIdentifier: taskId),
+              let path = record.chunkFilePath else {
+            return
+        }
+        try? FileManager.default.removeItem(atPath: path)
+        record.chunkFilePath = nil
+        if record.taskIdentifier == taskId {
+            record.taskIdentifier = nil
+        }
+        resumeStore.save(record)
+    }
+
+    private func clearPersistedChunkReference(forTaskId taskId: Int) {
+        guard var record = resumeStore.record(forTaskIdentifier: taskId) else { return }
+        record.chunkFilePath = nil
+        if record.taskIdentifier == taskId {
+            record.taskIdentifier = nil
+        }
+        resumeStore.save(record)
+    }
+
+    private func reconcileOrphanedChunkFiles() async {
+        let activeTaskIds = Set(
+            (await backgroundSession.tasks.1)
+                .filter { Self.shouldAwaitBackgroundUploadTask(state: $0.state) }
+                .map(\.taskIdentifier)
+        )
+        for var record in resumeStore.allRecords() {
+            guard let path = record.chunkFilePath else { continue }
+            let taskActive = record.taskIdentifier.map { activeTaskIds.contains($0) } ?? false
+            guard !taskActive else { continue }
+            try? FileManager.default.removeItem(atPath: path)
+            record.chunkFilePath = nil
+            record.taskIdentifier = nil
+            resumeStore.save(record)
+        }
+        let protectedPaths = Set(
+            resumeStore.allRecords().compactMap { record -> String? in
+                guard let path = record.chunkFilePath,
+                      let taskId = record.taskIdentifier,
+                      activeTaskIds.contains(taskId) else {
+                    return nil
+                }
+                return path
+            }
+        )
+        let tempDir = FileManager.default.temporaryDirectory
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: tempDir,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        for url in entries where url.lastPathComponent.hasPrefix("tus-chunk-") {
+            guard !protectedPaths.contains(url.path) else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Test seam — relaunch cleanup when the in-memory chunk map is empty.
+    internal func finishPatchForTesting(taskId: Int) {
+        finishPatch(
+            taskId: taskId,
+            result: .failure(UploadManagerError.patchFailed(status: -1))
+        )
+    }
+
     func scheduleIncompleteBackgroundUploadContinuations() async {
         guard featureFlags.resumableUploads else {
             let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
@@ -841,6 +917,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
         prepareBackgroundSessionIfNeeded()
+        await reconcileOrphanedChunkFiles()
         let records = resumeStore.allRecords().filter {
             $0.startedUnderFlag && $0.uploadURL != nil
         }
