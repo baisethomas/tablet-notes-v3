@@ -311,7 +311,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         guard featureFlags.resumableUploads, !resumableAdmissionClosed else {
             throw UploadManagerError.resumableCancelled
         }
-        purgeResumeRecordsForOtherUsers()
+        await purgeResumeRecordsForOtherUsers()
         prepareBackgroundSessionIfNeeded()
 
         let fileLength = try fileByteLength(at: localFile)
@@ -692,9 +692,67 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
     }
 
-    private func purgeResumeRecordsForOtherUsers() {
+    private func purgeResumeRecordsForOtherUsers() async {
         guard let current = currentUserIdProvider() else { return }
-        resumeStore.removeAll(notOwnedBy: current)
+        let foreign = resumeStore.allRecords().filter { record in
+            record.ownerUserId != current
+        }
+        guard !foreign.isEmpty else { return }
+
+        prepareBackgroundSessionIfNeeded()
+        let sermonIds = Set(foreign.map(\.sermonLocalId))
+
+        for record in foreign {
+            if let taskId = record.taskIdentifier {
+                patchGate.cancelWait(taskId: taskId)
+            }
+        }
+        for taskId in chunkFilesByTaskId.keys {
+            patchGate.cancelWait(taskId: taskId)
+        }
+
+        let uploadTasks = await backgroundSession.tasks.1
+        for task in uploadTasks {
+            guard let desc = task.taskDescription,
+                  let id = UUID(uuidString: desc),
+                  sermonIds.contains(id) else { continue }
+            patchGate.cancelWait(taskId: task.taskIdentifier)
+            switch task.state {
+            case .running, .suspended:
+                task.cancel()
+            default:
+                break
+            }
+        }
+
+        for key in inFlightUploads.keys where sermonIds.contains(key.sermonLocalId) {
+            inFlightUploads[key]?.cancel()
+        }
+
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.flagOffCancelTimeoutNanoseconds))
+        while ContinuousClock.now < deadline {
+            let remaining = await backgroundSession.tasks.1.filter { task in
+                guard let desc = task.taskDescription,
+                      let id = UUID(uuidString: desc),
+                      sermonIds.contains(id) else { return false }
+                switch task.state {
+                case .running, .suspended, .canceling:
+                    return true
+                default:
+                    return false
+                }
+            }
+            let remainingOps = inFlightSermonIds().contains(where: sermonIds.contains)
+            if remaining.isEmpty && !remainingOps {
+                for record in foreign {
+                    resumeStore.remove(sermonLocalId: record.sermonLocalId)
+                }
+                return
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        // Drain incomplete — keep foreign records so a later pass can finish cancel.
+        print("[UploadManager] Cross-account resume purge drain incomplete — retaining \(foreign.count) record(s)")
     }
 
     private func validateRecordOwnership(_ record: UploadResumeRecord) throws {
@@ -1096,7 +1154,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
         prepareBackgroundSessionIfNeeded()
-        purgeResumeRecordsForOtherUsers()
+        await purgeResumeRecordsForOtherUsers()
         await reconcileOrphanedChunkFiles()
         let records = resumeStore.allRecords().filter {
             $0.startedUnderFlag && $0.uploadURL != nil

@@ -319,6 +319,43 @@ struct UploadManagerFlagOffTests {
         #expect(store.record(for: sermonId) != nil)
     }
 
+    @Test func crossAccountPurgeRemovesForeignRecordsAfterDrain() async {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "cross-account-purge")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let foreignOwner = UUID()
+        let currentOwner = UUID()
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/foreign.m4a",
+                uploadURL: URL(string: "https://example.com/foreign")!,
+                uploadLength: 8,
+                filePath: "/tmp/foreign.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 3,
+                ownerUserId: foreignOwner,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            currentUserIdProvider: { currentOwner },
+            createBackgroundSession: false
+        )
+        await manager.continueIncompleteBackgroundUploads()
+        #expect(store.record(for: sermonId) == nil)
+    }
+
     @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
