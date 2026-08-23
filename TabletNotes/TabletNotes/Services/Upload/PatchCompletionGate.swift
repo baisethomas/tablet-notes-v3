@@ -30,6 +30,11 @@ final class PatchCompletionGate {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
             timedOutIds.remove(taskId)
 
+            if waiters[taskId] != nil {
+                cont.resume(throwing: UploadManagerError.duplicatePatchWait)
+                return
+            }
+
             if let early = earlyResults.removeValue(forKey: taskId) {
                 switch early {
                 case .success(let response):

@@ -10,6 +10,7 @@ enum UploadManagerError: LocalizedError, Equatable {
     case headFailed(status: Int)
     case incomplete(offset: Int64, length: Int64)
     case invalidOffset(offset: Int64, length: Int64)
+    case duplicatePatchWait
     case timedOut
     case flagOffCancelTimedOut
     case notConfigured
@@ -30,6 +31,8 @@ enum UploadManagerError: LocalizedError, Equatable {
             return "Upload incomplete (\(offset)/\(length) bytes)."
         case .invalidOffset(let offset, let length):
             return "Server returned an invalid upload offset (\(offset)/\(length))."
+        case .duplicatePatchWait:
+            return "An upload chunk is already waiting for completion."
         case .timedOut:
             return "Upload timed out waiting for the system transfer."
         case .flagOffCancelTimedOut:
@@ -148,6 +151,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 upsert: upsert
             )
         }
+        if let raced = inFlightUploads[sermonLocalId] {
+            try await raced.value
+            return
+        }
         inFlightUploads[sermonLocalId] = task
         defer { inFlightUploads.removeValue(forKey: sermonLocalId) }
         try await task.value
@@ -162,6 +169,24 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
         let fileLength = try fileByteLength(at: localFile)
         guard fileLength >= 0 else { throw UploadManagerError.fileMissing }
+        let modificationTime = try fileModificationTime(at: localFile)
+
+        // Path authority must survive any await (mint → create gap, relaunch).
+        if resumeStore.record(for: sermonLocalId) == nil {
+            resumeStore.save(
+                UploadResumeRecord(
+                    sermonLocalId: sermonLocalId,
+                    objectPath: objectPath,
+                    uploadURL: nil,
+                    uploadLength: fileLength,
+                    filePath: localFile.path,
+                    fileModificationTime: modificationTime,
+                    taskIdentifier: nil,
+                    startedUnderFlag: true,
+                    upsert: upsert
+                )
+            )
+        }
 
         // Adopt any live PATCH for this sermon BEFORE HEAD / new PATCH — otherwise
         // a second sync starts a concurrent writer to the same TUS resource.
@@ -204,8 +229,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
         try await cancelAndDrainUploadTasks(for: sermonLocalId, cancelRunning: false)
 
-        let modificationTime = try fileModificationTime(at: localFile)
-        var record = UploadResumeRecord(
+        var record = resumeStore.record(for: sermonLocalId) ?? UploadResumeRecord(
             sermonLocalId: sermonLocalId,
             objectPath: objectPath,
             uploadURL: nil,
@@ -216,6 +240,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
             startedUnderFlag: true,
             upsert: upsert
         )
+        record.objectPath = objectPath
+        record.uploadLength = fileLength
+        record.filePath = localFile.path
+        record.fileModificationTime = modificationTime
+        record.upsert = upsert
         resumeStore.save(record)
 
         let uploadURL = try await createUpload(
@@ -244,7 +273,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
         prepareBackgroundSessionIfNeeded()
         let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
         let paths = Set(flagged.map(\.objectPath))
-        let sermonIds = Set(flagged.map(\.sermonLocalId))
+        let activeSermonIds = Set(inFlightUploads.keys)
+        let sermonIds = Set(flagged.map(\.sermonLocalId)).subtracting(activeSermonIds)
 
         let uploadTasks = await backgroundSession.tasks.1
         var cancelledTaskIds: Set<Int> = []
