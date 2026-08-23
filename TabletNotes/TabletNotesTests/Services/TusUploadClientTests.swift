@@ -230,6 +230,27 @@ struct PatchCompletionGateTests {
         #expect(reused.statusCode == 204)
     }
 
+    @Test func waitHonoursTaskCancellation() async {
+        let gate = PatchCompletionGate()
+        let waitTask = Task { @MainActor in
+            try await gate.wait(
+                taskId: 14,
+                timeoutNanoseconds: 5_000_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        waitTask.cancel()
+        do {
+            _ = try await waitTask.value
+            Issue.record("expected cancellation")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
+
     @Test func newWaitAfterTimeoutAcceptsFinishOnceTimedOutStateCleared() async throws {
         let gate = PatchCompletionGate()
         let response = HTTPURLResponse(

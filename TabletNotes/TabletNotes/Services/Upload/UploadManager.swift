@@ -312,22 +312,12 @@ final class UploadManager: NSObject, SermonAudioUploading {
             inFlightSermonIds: inFlightUploads.keys
         )
 
-        let operations = Array(inFlightUploads.values)
-        for operation in operations {
-            operation.cancel()
-        }
-        for operation in operations {
-            _ = await operation.result
-        }
-
         let uploadTasks = await backgroundSession.tasks.1
         var cancelledTaskIds: Set<Int> = []
         for task in uploadTasks {
             guard let desc = task.taskDescription,
                   let id = UUID(uuidString: desc),
                   sermonIds.contains(id) else { continue }
-            // Only cancel work that is still outstanding. Completed tasks are
-            // already gone from this list; cancelling them is a no-op.
             switch task.state {
             case .running, .suspended:
                 task.cancel()
@@ -337,9 +327,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
             }
         }
 
+        let operations = Array(inFlightUploads.values)
+        for operation in operations {
+            operation.cancel()
+        }
+
         let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
         while ContinuousClock.now < deadline {
-            let remaining = await backgroundSession.tasks.1.filter { task in
+            let remainingSession = await backgroundSession.tasks.1.filter { task in
                 guard let desc = task.taskDescription,
                       let id = UUID(uuidString: desc) else { return false }
                 guard sermonIds.contains(id) else { return false }
@@ -350,11 +345,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     return false
                 }
             }
-            if remaining.isEmpty {
-                // Flag-off abandons TUS resume on purpose — next sync uses PUT.
+            let remainingOps = inFlightUploads.keys.contains(where: sermonIds.contains)
+            if remainingSession.isEmpty && !remainingOps {
                 for id in sermonIds { resumeStore.remove(sermonLocalId: id) }
                 if !paths.isEmpty {
-                    print("[UploadManager] Cleared \(sermonIds.count) resumable upload(s) after flag-off (cancelled \(cancelledTaskIds.count) task(s))")
+                    print("[UploadManager] Cleared \(sermonIds.count) resumable upload(s) after flag-off (cancelled \(cancelledTaskIds.count) URLSession task(s))")
                 }
                 return
             }

@@ -27,42 +27,55 @@ final class PatchCompletionGate {
         timedOutError: Error,
         beforeWaiting: (() -> Void)? = nil
     ) async throws -> HTTPURLResponse {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
-            timedOutIds.remove(taskId)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
+                timedOutIds.remove(taskId)
 
-            if waiters[taskId] != nil {
-                cont.resume(throwing: UploadManagerError.duplicatePatchWait)
-                return
-            }
-
-            if let early = earlyResults.removeValue(forKey: taskId) {
-                switch early {
-                case .success(let response):
-                    cont.resume(returning: response)
-                case .failure(let error):
-                    cont.resume(throwing: error)
+                if waiters[taskId] != nil {
+                    cont.resume(throwing: UploadManagerError.duplicatePatchWait)
+                    return
                 }
-                return
-            }
 
-            let generation = nextGeneration
-            nextGeneration &+= 1
-            let timeoutTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                guard !Task.isCancelled else { return }
-                guard self.waiters[taskId]?.generation == generation else { return }
-                if let waiter = self.waiters.removeValue(forKey: taskId),
-                   waiter.generation == generation {
-                    self.timedOutIds.insert(taskId)
-                    waiter.continuation.resume(throwing: timedOutError)
+                if let early = earlyResults.removeValue(forKey: taskId) {
+                    switch early {
+                    case .success(let response):
+                        cont.resume(returning: response)
+                    case .failure(let error):
+                        cont.resume(throwing: error)
+                    }
+                    return
                 }
+
+                let generation = nextGeneration
+                nextGeneration &+= 1
+                let timeoutTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    guard self.waiters[taskId]?.generation == generation else { return }
+                    if let waiter = self.waiters.removeValue(forKey: taskId),
+                       waiter.generation == generation {
+                        self.timedOutIds.insert(taskId)
+                        waiter.continuation.resume(throwing: timedOutError)
+                    }
+                }
+                waiters[taskId] = Waiter(
+                    generation: generation,
+                    continuation: cont,
+                    timeoutTask: timeoutTask
+                )
+                beforeWaiting?()
             }
-            waiters[taskId] = Waiter(
-                generation: generation,
-                continuation: cont,
-                timeoutTask: timeoutTask
-            )
-            beforeWaiting?()
+        } onCancel: {
+            Task { @MainActor in
+                self.cancelWaiter(taskId: taskId)
+            }
+        }
+    }
+
+    private func cancelWaiter(taskId: Int) {
+        if let waiter = waiters.removeValue(forKey: taskId) {
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume(throwing: CancellationError())
         }
     }
 
