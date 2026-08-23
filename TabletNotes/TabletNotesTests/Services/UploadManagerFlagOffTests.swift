@@ -164,4 +164,11 @@ struct UploadManagerFlagOffTests {
 
         #expect(order == ["scheduled", "handler"])
     }
+
+    @Test func onlyAwaitsTransferableBackgroundTaskStates() {
+        #expect(UploadManager.shouldAwaitBackgroundUploadTask(state: .running))
+        #expect(UploadManager.shouldAwaitBackgroundUploadTask(state: .suspended))
+        #expect(UploadManager.shouldAwaitBackgroundUploadTask(state: .canceling))
+        #expect(!UploadManager.shouldAwaitBackgroundUploadTask(state: .completed))
+    }
 }

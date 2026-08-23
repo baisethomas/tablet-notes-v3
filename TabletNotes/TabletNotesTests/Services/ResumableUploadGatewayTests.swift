@@ -144,6 +144,30 @@ struct ResumableUploadPathResolverTests {
         #expect(saved?.matchesLocalFile(file.url, length: file.length) == true)
     }
 
+    @Test func mintSkipsPersistWhenAdmissionClosed() async throws {
+        let file = try makeTempAudioFile(named: "no-persist")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "resolver")
+        let id = UUID()
+
+        let plan = try await ResumableUploadPathResolver.plan(
+            sermonLocalId: id,
+            localFile: file.url,
+            fileLength: file.length,
+            resumeStore: store,
+            mint: { ("user/race.m4a", true) },
+            mayPersistNewRecord: { false }
+        )
+
+        #expect(plan.didMint)
+        #expect(plan.objectPath == "user/race.m4a")
+        #expect(store.record(for: id) == nil)
+    }
+
     @Test func staleFileRequiresCancelNotAdopt() throws {
         let file = try makeTempAudioFile(named: "policy")
         defer { try? FileManager.default.removeItem(at: file.url) }

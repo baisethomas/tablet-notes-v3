@@ -59,6 +59,9 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                         sermonLocalId: data.id
                     )
                     return (minted.path, minted.upsert)
+                },
+                mayPersistNewRecord: { [audioUploader] in
+                    audioUploader.acceptsResumableAdmission
                 }
             )
             try await audioUploader.uploadResumable(

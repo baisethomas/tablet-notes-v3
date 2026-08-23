@@ -292,6 +292,20 @@ struct PatchCompletionGateTests {
         }
     }
 
+    @Test func boundsUnconsumedEarlyResults() {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        for taskId in 0..<70 {
+            gate.finish(taskId: taskId, result: .success(response))
+        }
+        #expect(gate.earlyResultsCountForTesting == 64)
+    }
+
     @Test func newWaitAfterTimeoutAcceptsFinishOnceTimedOutStateCleared() async throws {
         let gate = PatchCompletionGate()
         let response = HTTPURLResponse(

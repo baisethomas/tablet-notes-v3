@@ -16,11 +16,18 @@ final class PatchCompletionGate {
         let timeoutTask: Task<Void, Never>
     }
 
+    private static let maxEarlyResults = 64
+
     private var waiters: [Int: Waiter] = [:]
     private var earlyResults: [Int: Result<HTTPURLResponse, Error>] = [:]
+    /// FIFO order for bounded eviction of unconsumed early completions.
+    private var earlyResultOrder: [Int] = []
     private var timedOutIds: Set<Int> = []
     private var cancelledIds: Set<Int> = []
     private var nextGeneration: UInt64 = 0
+
+    /// Test seam — count of stashed early completions.
+    internal var earlyResultsCountForTesting: Int { earlyResults.count }
 
     func wait(
         taskId: Int,
@@ -39,6 +46,7 @@ final class PatchCompletionGate {
                 }
 
                 if let early = earlyResults.removeValue(forKey: taskId) {
+                    earlyResultOrder.removeAll { $0 == taskId }
                     switch early {
                     case .success(let response):
                         cont.resume(returning: response)
@@ -103,6 +111,19 @@ final class PatchCompletionGate {
             }
             return
         }
+        stashEarlyResult(taskId: taskId, result: result)
+    }
+
+    private func stashEarlyResult(taskId: Int, result: Result<HTTPURLResponse, Error>) {
+        if earlyResults[taskId] != nil {
+            earlyResults[taskId] = result
+            return
+        }
+        while earlyResultOrder.count >= Self.maxEarlyResults, let oldest = earlyResultOrder.first {
+            earlyResultOrder.removeFirst()
+            earlyResults.removeValue(forKey: oldest)
+        }
+        earlyResultOrder.append(taskId)
         earlyResults[taskId] = result
     }
 }

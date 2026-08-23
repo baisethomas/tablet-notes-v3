@@ -76,6 +76,9 @@ protocol SermonAudioUploading: AnyObject {
     /// Cancel background tasks started under the resumable flag and wait until
     /// `getAllTasks()` reports none left for those paths (bounded).
     func cancelInFlightResumableUploads(timeoutNanoseconds: UInt64) async throws
+
+    /// False while flag-off drain runs — path mint must not persist resume records.
+    var acceptsResumableAdmission: Bool { get }
 }
 
 /// Process-wide owner of the background TUS session (TAB-73 Part B).
@@ -112,6 +115,20 @@ final class UploadManager: NSObject, SermonAudioUploading {
     /// While flag-off drain runs, reject newly admitted resumable uploads.
     private var resumableAdmissionClosed = false
     private var prepared = false
+
+    /// Only await delegate completion for tasks the system may still deliver.
+    static func shouldAwaitBackgroundUploadTask(state: URLSessionTask.State) -> Bool {
+        switch state {
+        case .running, .suspended, .canceling:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var acceptsResumableAdmission: Bool {
+        featureFlags.resumableUploads && !resumableAdmissionClosed
+    }
 
     /// Which sermon IDs flag-off must tear down (flagged records ∪ active ops).
     static func sermonIdsAffectedByFlagOff(
@@ -403,9 +420,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
             }
             let remainingOps = inFlightSermonIds().contains(where: sermonIds.contains)
             if remainingSession.isEmpty && !remainingOps {
-                for id in sermonIds { resumeStore.remove(sermonLocalId: id) }
+                removeAllFlaggedResumeRecords()
                 if !paths.isEmpty {
-                    print("[UploadManager] Cleared \(sermonIds.count) resumable upload(s) after flag-off (cancelled \(cancelledTaskIds.count) URLSession task(s))")
+                    print("[UploadManager] Cleared flagged resumable upload(s) after flag-off (cancelled \(cancelledTaskIds.count) URLSession task(s))")
                 }
                 return
             }
@@ -539,9 +556,16 @@ final class UploadManager: NSObject, SermonAudioUploading {
         return offset
     }
 
+    private func removeAllFlaggedResumeRecords() {
+        for record in resumeStore.allRecords().filter(\.startedUnderFlag) {
+            resumeStore.remove(sermonLocalId: record.sermonLocalId)
+        }
+    }
+
     private func awaitActiveUploadTaskIfAny(sermonLocalId: UUID) async throws {
         let tasks = await backgroundSession.tasks.1
-        guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }) else {
+        guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }),
+              Self.shouldAwaitBackgroundUploadTask(state: task.state) else {
             return
         }
         do {

@@ -30,7 +30,8 @@ enum ResumableUploadPathResolver {
         localFile: URL,
         fileLength: Int64,
         resumeStore: UploadResumeStoring,
-        mint: () async throws -> (path: String, upsert: Bool)
+        mint: () async throws -> (path: String, upsert: Bool),
+        mayPersistNewRecord: @escaping () -> Bool = { true }
     ) async throws -> Plan {
         if let record = resumeStore.record(for: sermonLocalId),
            record.matchesLocalFile(localFile, length: fileLength) {
@@ -41,21 +42,23 @@ enum ResumableUploadPathResolver {
             resumeStore.remove(sermonLocalId: sermonLocalId)
         }
         let minted = try await mint()
-        let mtime = try? localFile.resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate?.timeIntervalSince1970
-        resumeStore.save(
-            UploadResumeRecord(
-                sermonLocalId: sermonLocalId,
-                objectPath: minted.path,
-                uploadURL: nil,
-                uploadLength: fileLength,
-                filePath: localFile.path,
-                fileModificationTime: mtime,
-                taskIdentifier: nil,
-                startedUnderFlag: true,
-                upsert: minted.upsert
+        if mayPersistNewRecord() {
+            let mtime = try? localFile.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate?.timeIntervalSince1970
+            resumeStore.save(
+                UploadResumeRecord(
+                    sermonLocalId: sermonLocalId,
+                    objectPath: minted.path,
+                    uploadURL: nil,
+                    uploadLength: fileLength,
+                    filePath: localFile.path,
+                    fileModificationTime: mtime,
+                    taskIdentifier: nil,
+                    startedUnderFlag: true,
+                    upsert: minted.upsert
+                )
             )
-        )
+        }
         return Plan(objectPath: minted.path, upsert: minted.upsert, didMint: true)
     }
 }
