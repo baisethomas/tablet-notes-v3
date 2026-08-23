@@ -46,10 +46,12 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         let objectPath: String
 
         if isResumableUploadsEnabled() {
+            let ownerUserId = try await currentAuthUserId()
             let plan = try await ResumableUploadPathResolver.plan(
                 sermonLocalId: data.id,
                 localFile: data.audioFileURL,
                 fileLength: Int64(fileSize),
+                ownerUserId: ownerUserId,
                 resumeStore: resumeStore,
                 mint: {
                     let minted = try await supabaseService.getSignedUploadURL(
@@ -62,6 +64,9 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 },
                 mayPersistNewRecord: { [audioUploader] in
                     audioUploader.acceptsResumableAdmission
+                },
+                abandonStaleRecord: { [audioUploader] record in
+                    try await audioUploader.abandonStaleResumeRecord(record)
                 }
             )
             try await audioUploader.uploadResumable(
@@ -336,5 +341,10 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 throw SyncError.authenticationFailed
             }
         }
+    }
+
+    private func currentAuthUserId() async throws -> UUID {
+        let session = try await supabaseService.client.auth.session
+        return session.user.id
     }
 }

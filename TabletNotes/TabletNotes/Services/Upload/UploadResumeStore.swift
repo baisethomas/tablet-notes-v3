@@ -17,6 +17,8 @@ struct UploadResumeRecord: Codable, Equatable, Sendable {
     var taskIdentifier: Int?
     /// Temp PATCH source file — survives relaunch so completed tasks can delete it.
     var chunkFilePath: String? = nil
+    /// Authenticated user who started this upload — prevents cross-account resume.
+    var ownerUserId: UUID? = nil
     var startedUnderFlag: Bool
     var upsert: Bool
 
@@ -40,6 +42,7 @@ protocol UploadResumeStoring: AnyObject {
     func record(forTaskIdentifier taskIdentifier: Int) -> UploadResumeRecord?
     func save(_ record: UploadResumeRecord)
     func remove(sermonLocalId: UUID)
+    func removeAll(notOwnedBy ownerUserId: UUID)
     func allRecords() -> [UploadResumeRecord]
     func removeAll()
 }
@@ -70,6 +73,10 @@ final class UploadResumeStore: UploadResumeStoring {
 
     func remove(sermonLocalId: UUID) {
         write(allRecords().filter { $0.sermonLocalId != sermonLocalId })
+    }
+
+    func removeAll(notOwnedBy ownerUserId: UUID) {
+        write(allRecords().filter { $0.ownerUserId == ownerUserId })
     }
 
     func allRecords() -> [UploadResumeRecord] {

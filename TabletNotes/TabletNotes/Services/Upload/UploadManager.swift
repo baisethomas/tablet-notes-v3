@@ -79,6 +79,12 @@ protocol SermonAudioUploading: AnyObject {
 
     /// False while flag-off drain runs — path mint must not persist resume records.
     var acceptsResumableAdmission: Bool { get }
+
+    /// Drop all persisted TUS resume state (sign-out / account switch).
+    func clearPersistedResumeRecords()
+
+    /// Cancel client work and delete a stale partial object before reminting.
+    func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws
 }
 
 /// Process-wide owner of the background TUS session (TAB-73 Part B).
@@ -100,6 +106,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private let resumeStore: UploadResumeStoring
     private let featureFlags: FeatureFlags
     private let tokenProvider: () async throws -> String
+    private let currentUserIdProvider: () -> UUID?
+    private let storageObjectDeleter: (String) async throws -> Void
     private let ephemeralSession: URLSession
 
     private var backgroundSession: URLSession!
@@ -128,6 +136,16 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     var acceptsResumableAdmission: Bool {
         featureFlags.resumableUploads && !resumableAdmissionClosed
+    }
+
+    func clearPersistedResumeRecords() {
+        resumeStore.removeAll()
+    }
+
+    func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws {
+        try await cancelAndDrainUploadTasks(for: record.sermonLocalId)
+        await abandonPartialStorageObject(at: record.objectPath)
+        resumeStore.remove(sermonLocalId: record.sermonLocalId)
     }
 
     /// Which sermon IDs flag-off must tear down (flagged records ∪ active ops).
@@ -161,6 +179,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
         resumeStore: UploadResumeStoring = UploadResumeStore(),
         featureFlags: FeatureFlags = .shared,
         tokenProvider: (() async throws -> String)? = nil,
+        currentUserIdProvider: (() -> UUID?)? = nil,
+        storageObjectDeleter: ((String) async throws -> Void)? = nil,
         createBackgroundSession: Bool = true
     ) {
         self.projectURL = projectURL
@@ -170,6 +190,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
         self.tokenProvider = tokenProvider ?? {
             let session = try await SupabaseService.shared.client.auth.session
             return session.accessToken
+        }
+        self.currentUserIdProvider = currentUserIdProvider ?? {
+            AuthenticationManager.shared.currentUser?.id
+        }
+        self.storageObjectDeleter = storageObjectDeleter ?? { objectPath in
+            _ = try await SupabaseService.shared.client.storage
+                .from(TusUploadClient.bucketName)
+                .remove(paths: [objectPath])
         }
         self.ephemeralSession = URLSession(configuration: .ephemeral)
         super.init()
@@ -207,6 +235,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         guard !resumableAdmissionClosed else {
             throw UploadManagerError.resumableCancelled
         }
+        purgeResumeRecordsForOtherUsers()
         prepareBackgroundSessionIfNeeded()
 
         let fileLength = try fileByteLength(at: localFile)
@@ -267,10 +296,15 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     filePath: localFile.path,
                     fileModificationTime: modificationTime,
                     taskIdentifier: nil,
+                    ownerUserId: currentUserIdProvider(),
                     startedUnderFlag: true,
                     upsert: upsert
                 )
             )
+        }
+
+        if let existing = resumeStore.record(for: sermonLocalId) {
+            try validateRecordOwnership(existing)
         }
 
         // Adopt a live PATCH only when resuming the same file + TUS resource.
@@ -291,7 +325,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         if let existing = resumeStore.record(for: sermonLocalId),
            existing.objectPath == objectPath {
             if !existing.matchesLocalFile(localFile, length: fileLength) {
-                resumeStore.remove(sermonLocalId: sermonLocalId)
+                try await abandonStaleResumeRecord(existing)
             } else if let uploadURL = existing.uploadURL {
                 do {
                     let offset = try await headOffset(
@@ -330,6 +364,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             filePath: localFile.path,
             fileModificationTime: modificationTime,
             taskIdentifier: nil,
+            ownerUserId: currentUserIdProvider(),
             startedUnderFlag: true,
             upsert: upsert
         )
@@ -337,6 +372,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         record.uploadLength = fileLength
         record.filePath = localFile.path
         record.fileModificationTime = modificationTime
+        record.ownerUserId = currentUserIdProvider()
         record.upsert = upsert
         resumeStore.save(record)
 
@@ -391,6 +427,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             guard let desc = task.taskDescription,
                   let id = UUID(uuidString: desc),
                   sermonIds.contains(id) else { continue }
+            patchGate.cancelWait(taskId: task.taskIdentifier)
             switch task.state {
             case .running, .suspended:
                 task.cancel()
@@ -562,10 +599,35 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
     }
 
+    private func purgeResumeRecordsForOtherUsers() {
+        guard let current = currentUserIdProvider() else { return }
+        resumeStore.removeAll(notOwnedBy: current)
+    }
+
+    private func validateRecordOwnership(_ record: UploadResumeRecord) throws {
+        guard let current = currentUserIdProvider() else {
+            resumeStore.remove(sermonLocalId: record.sermonLocalId)
+            throw UploadManagerError.notConfigured
+        }
+        guard record.ownerUserId == current else {
+            resumeStore.remove(sermonLocalId: record.sermonLocalId)
+            throw UploadManagerError.resumableCancelled
+        }
+    }
+
+    private func abandonPartialStorageObject(at objectPath: String) async {
+        do {
+            try await storageObjectDeleter(objectPath)
+        } catch {
+            print("[UploadManager] Could not delete abandoned partial at \(objectPath): \(error.localizedDescription)")
+        }
+    }
+
     private func awaitActiveUploadTaskIfAny(sermonLocalId: UUID) async throws {
         let tasks = await backgroundSession.tasks.1
         guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }),
-              Self.shouldAwaitBackgroundUploadTask(state: task.state) else {
+              Self.shouldAwaitBackgroundUploadTask(state: task.state),
+              chunkFilesByTaskId[task.taskIdentifier] != nil else {
             return
         }
         do {
@@ -688,7 +750,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
         chunkFilesByTaskId[task.taskIdentifier] = chunkURL
 
         if var existingRecord = resumeStore.record(for: sermonLocalId) {
-            if let oldPath = existingRecord.chunkFilePath, oldPath != chunkURL.path {
+            if let oldPath = existingRecord.chunkFilePath,
+               oldPath != chunkURL.path,
+               !(await isChunkFileInUse(path: oldPath, taskIdentifier: existingRecord.taskIdentifier)) {
                 try? FileManager.default.removeItem(atPath: oldPath)
             }
             existingRecord.taskIdentifier = task.taskIdentifier
@@ -707,15 +771,29 @@ final class UploadManager: NSObject, SermonAudioUploading {
             fileModificationTime: try? fileModificationTime(at: localFile),
             taskIdentifier: task.taskIdentifier,
             chunkFilePath: chunkURL.path,
+            ownerUserId: currentUserIdProvider(),
             startedUnderFlag: true,
             upsert: upsert
         )
         record.uploadURL = uploadURL
         record.taskIdentifier = task.taskIdentifier
         record.chunkFilePath = chunkURL.path
+        record.ownerUserId = currentUserIdProvider()
         record.objectPath = objectPath
         resumeStore.save(record)
         return task
+    }
+
+    private func isChunkFileInUse(path: String, taskIdentifier: Int?) async -> Bool {
+        if let taskIdentifier, chunkFilesByTaskId[taskIdentifier]?.path == path {
+            return true
+        }
+        guard let taskIdentifier else { return false }
+        let tasks = await backgroundSession.tasks.1
+        return tasks.contains {
+            $0.taskIdentifier == taskIdentifier
+                && Self.shouldAwaitBackgroundUploadTask(state: $0.state)
+        }
     }
 
     private func interpretPatchResponse(
@@ -917,6 +995,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
         prepareBackgroundSessionIfNeeded()
+        purgeResumeRecordsForOtherUsers()
         await reconcileOrphanedChunkFiles()
         let records = resumeStore.allRecords().filter {
             $0.startedUnderFlag && $0.uploadURL != nil
@@ -940,10 +1019,12 @@ final class UploadManager: NSObject, SermonAudioUploading {
               let uploadURL = record.uploadURL else {
             return
         }
+        try validateRecordOwnership(record)
 
         let tasks = await backgroundSession.tasks.1
         if let active = tasks.first(where: { $0.taskDescription == record.sermonLocalId.uuidString }),
-           active.state == .running || active.state == .suspended {
+           active.state == .running || active.state == .suspended,
+           chunkFilesByTaskId[active.taskIdentifier] != nil {
             onPatchTaskScheduled?()
             return
         }

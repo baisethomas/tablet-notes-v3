@@ -29,16 +29,21 @@ enum ResumableUploadPathResolver {
         sermonLocalId: UUID,
         localFile: URL,
         fileLength: Int64,
+        ownerUserId: UUID?,
         resumeStore: UploadResumeStoring,
         mint: () async throws -> (path: String, upsert: Bool),
-        mayPersistNewRecord: @escaping () -> Bool = { true }
+        mayPersistNewRecord: @escaping () -> Bool = { true },
+        abandonStaleRecord: ((UploadResumeRecord) async throws -> Void)? = nil
     ) async throws -> Plan {
         if let record = resumeStore.record(for: sermonLocalId),
+           record.ownerUserId == ownerUserId,
            record.matchesLocalFile(localFile, length: fileLength) {
             return Plan(objectPath: record.objectPath, upsert: record.upsert, didMint: false)
         }
-        // Stale record (different file bytes) must not reuse objectPath — mint fresh.
-        if resumeStore.record(for: sermonLocalId) != nil {
+        if let stale = resumeStore.record(for: sermonLocalId) {
+            if stale.ownerUserId == ownerUserId {
+                try await abandonStaleRecord?(stale)
+            }
             resumeStore.remove(sermonLocalId: sermonLocalId)
         }
         let minted = try await mint()
@@ -54,6 +59,7 @@ enum ResumableUploadPathResolver {
                     filePath: localFile.path,
                     fileModificationTime: mtime,
                     taskIdentifier: nil,
+                    ownerUserId: ownerUserId,
                     startedUnderFlag: true,
                     upsert: minted.upsert
                 )

@@ -132,6 +132,7 @@ struct UploadManagerFlagOffTests {
         let flags = FeatureFlags(defaults: defaults)
         flags.setEnabled(true, for: .resumableUploads)
 
+        let ownerId = UUID()
         let sermonId = UUID()
         store.save(
             UploadResumeRecord(
@@ -142,6 +143,7 @@ struct UploadManagerFlagOffTests {
                 filePath: file.path,
                 fileModificationTime: mtime,
                 taskIdentifier: 42,
+                ownerUserId: ownerId,
                 startedUnderFlag: true,
                 upsert: true
             )
@@ -152,6 +154,7 @@ struct UploadManagerFlagOffTests {
             resumeStore: store,
             featureFlags: flags,
             tokenProvider: { "token" },
+            currentUserIdProvider: { ownerId },
             createBackgroundSession: true
         )
         manager.headOffsetOverride = { _, _, _ in 0 }
@@ -188,6 +191,7 @@ struct UploadManagerFlagOffTests {
         let flags = FeatureFlags(defaults: defaults)
         flags.setEnabled(true, for: .resumableUploads)
 
+        let ownerId = UUID()
         let sermonId = UUID()
         store.save(
             UploadResumeRecord(
@@ -198,6 +202,7 @@ struct UploadManagerFlagOffTests {
                 filePath: file.path,
                 fileModificationTime: mtime,
                 taskIdentifier: nil,
+                ownerUserId: ownerId,
                 startedUnderFlag: true,
                 upsert: true
             )
@@ -208,6 +213,7 @@ struct UploadManagerFlagOffTests {
             resumeStore: store,
             featureFlags: flags,
             tokenProvider: { "token" },
+            currentUserIdProvider: { ownerId },
             createBackgroundSession: true
         )
         manager.headOffsetOverride = { _, _, _ in 0 }

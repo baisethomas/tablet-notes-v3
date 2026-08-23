@@ -19,12 +19,14 @@ struct ResumableUploadPathResolverTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UploadResumeStore(defaults: defaults, key: "resolver")
+        let ownerId = UUID()
 
         var mintCalls = 0
         let plan = try await ResumableUploadPathResolver.plan(
             sermonLocalId: UUID(),
             localFile: file.url,
             fileLength: file.length,
+            ownerUserId: ownerId,
             resumeStore: store,
             mint: {
                 mintCalls += 1
@@ -47,6 +49,7 @@ struct ResumableUploadPathResolverTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UploadResumeStore(defaults: defaults, key: "resolver")
         let id = UUID()
+        let ownerId = UUID()
         store.save(
             UploadResumeRecord(
                 sermonLocalId: id,
@@ -56,6 +59,7 @@ struct ResumableUploadPathResolverTests {
                 filePath: file.url.path,
                 fileModificationTime: file.mtime,
                 taskIdentifier: 1,
+                ownerUserId: ownerId,
                 startedUnderFlag: true,
                 upsert: true
             )
@@ -66,6 +70,7 @@ struct ResumableUploadPathResolverTests {
             sermonLocalId: id,
             localFile: file.url,
             fileLength: file.length,
+            ownerUserId: ownerId,
             resumeStore: store,
             mint: {
                 mintCalls += 1
@@ -87,6 +92,7 @@ struct ResumableUploadPathResolverTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UploadResumeStore(defaults: defaults, key: "resolver")
         let id = UUID()
+        let ownerId = UUID()
         store.save(
             UploadResumeRecord(
                 sermonLocalId: id,
@@ -96,26 +102,33 @@ struct ResumableUploadPathResolverTests {
                 filePath: file.url.path,
                 fileModificationTime: file.mtime - 60,
                 taskIdentifier: 1,
+                ownerUserId: ownerId,
                 startedUnderFlag: true,
                 upsert: true
             )
         )
 
+        var abandonCalls = 0
         var mintCalls = 0
         let plan = try await ResumableUploadPathResolver.plan(
             sermonLocalId: id,
             localFile: file.url,
             fileLength: file.length,
+            ownerUserId: ownerId,
             resumeStore: store,
             mint: {
                 mintCalls += 1
                 return ("user/fresh.m4a", true)
+            },
+            abandonStaleRecord: { _ in
+                abandonCalls += 1
             }
         )
 
         #expect(plan.didMint)
         #expect(plan.objectPath == "user/fresh.m4a")
         #expect(mintCalls == 1)
+        #expect(abandonCalls == 1)
         #expect(store.record(for: id)?.objectPath == "user/fresh.m4a")
         #expect(store.record(for: id)?.uploadURL == nil)
     }
@@ -129,11 +142,13 @@ struct ResumableUploadPathResolverTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UploadResumeStore(defaults: defaults, key: "resolver")
         let id = UUID()
+        let ownerId = UUID()
 
         _ = try await ResumableUploadPathResolver.plan(
             sermonLocalId: id,
             localFile: file.url,
             fileLength: file.length,
+            ownerUserId: ownerId,
             resumeStore: store,
             mint: { ("user/new.m4a", true) }
         )
@@ -153,11 +168,13 @@ struct ResumableUploadPathResolverTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UploadResumeStore(defaults: defaults, key: "resolver")
         let id = UUID()
+        let ownerId = UUID()
 
         let plan = try await ResumableUploadPathResolver.plan(
             sermonLocalId: id,
             localFile: file.url,
             fileLength: file.length,
+            ownerUserId: ownerId,
             resumeStore: store,
             mint: { ("user/race.m4a", true) },
             mayPersistNewRecord: { false }
@@ -166,6 +183,47 @@ struct ResumableUploadPathResolverTests {
         #expect(plan.didMint)
         #expect(plan.objectPath == "user/race.m4a")
         #expect(store.record(for: id) == nil)
+    }
+
+    @Test func differentOwnerRecordIsDroppedWithoutAbandon() async throws {
+        let file = try makeTempAudioFile(named: "owner")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "resolver")
+        let id = UUID()
+        let otherOwner = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: id,
+                objectPath: "user/other.m4a",
+                uploadURL: URL(string: "https://example.com/other"),
+                uploadLength: file.length,
+                filePath: file.url.path,
+                fileModificationTime: file.mtime,
+                taskIdentifier: 1,
+                ownerUserId: otherOwner,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        var abandonCalls = 0
+        let currentOwner = UUID()
+        _ = try await ResumableUploadPathResolver.plan(
+            sermonLocalId: id,
+            localFile: file.url,
+            fileLength: file.length,
+            ownerUserId: currentOwner,
+            resumeStore: store,
+            mint: { ("user/new-owner.m4a", true) },
+            abandonStaleRecord: { _ in abandonCalls += 1 }
+        )
+
+        #expect(abandonCalls == 0)
+        #expect(store.record(for: id)?.ownerUserId == currentOwner)
     }
 
     @Test func staleFileRequiresCancelNotAdopt() throws {
