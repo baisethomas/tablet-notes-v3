@@ -264,4 +264,30 @@ struct UploadManagerFlagOffTests {
         #expect(store.record(for: sermonId)?.chunkFilePath == nil)
         #expect(store.record(for: sermonId)?.taskIdentifier == nil)
     }
+
+    @Test func clearPersistedResumeRecordsEmptiesStore() async {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "sign-out-clear")
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: UUID(),
+                objectPath: "user/a.m4a",
+                uploadURL: URL(string: "https://example.com/a")!,
+                uploadLength: 1,
+                filePath: "/tmp/a.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 1,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+        let manager = UploadManager(
+            resumeStore: store,
+            createBackgroundSession: false
+        )
+        await manager.clearPersistedResumeRecords()
+        #expect(store.allRecords().isEmpty)
+    }
 }

@@ -276,7 +276,7 @@ final class SupabaseAuthService: AuthServiceProtocol, ObservableObject {
         
         do {
             try await supabase.auth.signOut()
-            UploadManager.shared.clearPersistedResumeRecords()
+            await UploadManager.shared.clearPersistedResumeRecords()
 
             // Update local state
             self.currentUser = nil

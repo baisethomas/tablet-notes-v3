@@ -81,7 +81,7 @@ protocol SermonAudioUploading: AnyObject {
     var acceptsResumableAdmission: Bool { get }
 
     /// Drop all persisted TUS resume state (sign-out / account switch).
-    func clearPersistedResumeRecords()
+    func clearPersistedResumeRecords() async
 
     /// Cancel client work and delete a stale partial object before reminting.
     func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws
@@ -138,8 +138,62 @@ final class UploadManager: NSObject, SermonAudioUploading {
         featureFlags.resumableUploads && !resumableAdmissionClosed
     }
 
-    func clearPersistedResumeRecords() {
+    func clearPersistedResumeRecords() async {
+        await cancelAllResumableBackgroundWorkForSignOut()
         resumeStore.removeAll()
+    }
+
+    private func cancelAllResumableBackgroundWorkForSignOut() async {
+        prepareBackgroundSessionIfNeeded()
+        let records = resumeStore.allRecords()
+        let sermonIds = Set(records.map(\.sermonLocalId))
+        flagOffEpoch &+= 1
+
+        for record in records {
+            if let taskId = record.taskIdentifier {
+                patchGate.cancelWait(taskId: taskId)
+            }
+        }
+        for taskId in chunkFilesByTaskId.keys {
+            patchGate.cancelWait(taskId: taskId)
+        }
+
+        let uploadTasks = await backgroundSession.tasks.1
+        for task in uploadTasks {
+            guard let desc = task.taskDescription,
+                  let id = UUID(uuidString: desc),
+                  sermonIds.contains(id) else { continue }
+            patchGate.cancelWait(taskId: task.taskIdentifier)
+            switch task.state {
+            case .running, .suspended:
+                task.cancel()
+            default:
+                break
+            }
+        }
+
+        for operation in inFlightUploads.values {
+            operation.cancel()
+        }
+
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.flagOffCancelTimeoutNanoseconds))
+        while ContinuousClock.now < deadline {
+            let remaining = await backgroundSession.tasks.1.filter { task in
+                guard let desc = task.taskDescription,
+                      let id = UUID(uuidString: desc),
+                      sermonIds.contains(id) else { return false }
+                switch task.state {
+                case .running, .suspended, .canceling:
+                    return true
+                default:
+                    return false
+                }
+            }
+            if remaining.isEmpty && !inFlightSermonIds().contains(where: sermonIds.contains) {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
     }
 
     func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws {
@@ -623,13 +677,21 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
     }
 
+    private func rehydrateChunkMapping(for task: URLSessionTask, sermonLocalId: UUID) {
+        if chunkFilesByTaskId[task.taskIdentifier] != nil { return }
+        if let record = resumeStore.record(for: sermonLocalId),
+           let path = record.chunkFilePath {
+            chunkFilesByTaskId[task.taskIdentifier] = URL(fileURLWithPath: path)
+        }
+    }
+
     private func awaitActiveUploadTaskIfAny(sermonLocalId: UUID) async throws {
         let tasks = await backgroundSession.tasks.1
         guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }),
-              Self.shouldAwaitBackgroundUploadTask(state: task.state),
-              chunkFilesByTaskId[task.taskIdentifier] != nil else {
+              Self.shouldAwaitBackgroundUploadTask(state: task.state) else {
             return
         }
+        rehydrateChunkMapping(for: task, sermonLocalId: sermonLocalId)
         do {
             _ = try await waitForPatchCompletion(
                 taskId: task.taskIdentifier,
@@ -644,7 +706,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
     }
 
-    private func drainUploadTask(_ task: URLSessionUploadTask) async throws {
+    private func drainUploadTask(_ task: URLSessionTask) async throws {
         let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.flagOffCancelTimeoutNanoseconds))
         while ContinuousClock.now < deadline {
             let tasks = await backgroundSession.tasks.1
@@ -1021,11 +1083,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
         try validateRecordOwnership(record)
 
-        let tasks = await backgroundSession.tasks.1
-        if let active = tasks.first(where: { $0.taskDescription == record.sermonLocalId.uuidString }),
-           active.state == .running || active.state == .suspended,
-           chunkFilesByTaskId[active.taskIdentifier] != nil {
-            onPatchTaskScheduled?()
+        if try await adoptPersistedBackgroundTaskIfAny(
+            record: record,
+            localURL: localURL,
+            uploadURL: uploadURL
+        ) {
             return
         }
 
@@ -1052,6 +1114,70 @@ final class UploadManager: NSObject, SermonAudioUploading {
             fileLength: fileLength,
             upsert: record.upsert
         )
+    }
+
+    /// Wait for a relaunch-persisted background PATCH instead of scheduling a duplicate.
+    private func adoptPersistedBackgroundTaskIfAny(
+        record: UploadResumeRecord,
+        localURL: URL,
+        uploadURL: URL
+    ) async throws -> Bool {
+        let tasks = await backgroundSession.tasks.1
+        guard let active = tasks.first(where: { $0.taskDescription == record.sermonLocalId.uuidString }),
+              Self.shouldAwaitBackgroundUploadTask(state: active.state) else {
+            return false
+        }
+
+        rehydrateChunkMapping(for: active, sermonLocalId: record.sermonLocalId)
+        if var updated = resumeStore.record(for: record.sermonLocalId) {
+            updated.taskIdentifier = active.taskIdentifier
+            resumeStore.save(updated)
+        }
+
+        await withCheckedContinuation { (adopted: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                do {
+                    _ = try await self.patchGate.wait(
+                        taskId: active.taskIdentifier,
+                        timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
+                        timedOutError: UploadManagerError.timedOut,
+                        beforeWaiting: {
+                            if active.state == .suspended {
+                                active.resume()
+                            }
+                            adopted.resume()
+                            self.onPatchTaskScheduled?()
+                        }
+                    )
+                    let fileLength = record.uploadLength
+                    let offset = try await self.headOffset(
+                        uploadURL: uploadURL,
+                        fileLength: fileLength,
+                        sermonLocalId: record.sermonLocalId
+                    )
+                    if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
+                        self.resumeStore.remove(sermonLocalId: record.sermonLocalId)
+                        return
+                    }
+                    try await self.patchUntilComplete(
+                        localFile: localURL,
+                        sermonLocalId: record.sermonLocalId,
+                        objectPath: record.objectPath,
+                        uploadURL: uploadURL,
+                        startOffset: offset,
+                        fileLength: fileLength,
+                        upsert: record.upsert
+                    )
+                } catch {
+                    if (error as? UploadManagerError) == .timedOut {
+                        active.cancel()
+                        try? await self.drainUploadTask(active)
+                    }
+                    print("[UploadManager] Adopted background task failed: \(error.localizedDescription)")
+                }
+            }
+        }
+        return true
     }
 
     /// Mirrors `urlSessionDidFinishEvents` for tests — schedule work, then ack iOS.
