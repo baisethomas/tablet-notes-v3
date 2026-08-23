@@ -11,6 +11,7 @@ enum UploadManagerError: LocalizedError, Equatable {
     case incomplete(offset: Int64, length: Int64)
     case invalidOffset(offset: Int64, length: Int64)
     case duplicatePatchWait
+    case resumableCancelled
     case timedOut
     case flagOffCancelTimedOut
     case notConfigured
@@ -33,6 +34,8 @@ enum UploadManagerError: LocalizedError, Equatable {
             return "Server returned an invalid upload offset (\(offset)/\(length))."
         case .duplicatePatchWait:
             return "An upload chunk is already waiting for completion."
+        case .resumableCancelled:
+            return "Resumable upload was cancelled."
         case .timedOut:
             return "Upload timed out waiting for the system transfer."
         case .flagOffCancelTimedOut:
@@ -86,7 +89,24 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var chunkFilesByTaskId: [Int: URL] = [:]
     /// Coalesce concurrent sync attempts for the same sermon into one upload op.
     private var inFlightUploads: [UUID: Task<Void, Error>] = [:]
+    /// Incremented when resumable uploads are disabled; in-flight ops observe this.
+    private var flagOffEpoch: UInt64 = 0
     private var prepared = false
+
+    /// Which sermon IDs flag-off must tear down (flagged records ∪ active ops).
+    static func sermonIdsAffectedByFlagOff(
+        flaggedRecords: [UploadResumeRecord],
+        inFlightSermonIds: some Sequence<UUID>
+    ) -> Set<UUID> {
+        Set(flaggedRecords.map(\.sermonLocalId)).union(inFlightSermonIds)
+    }
+
+    private func throwIfResumableCancelled(epoch: UInt64) throws {
+        if epoch != flagOffEpoch {
+            throw UploadManagerError.resumableCancelled
+        }
+        try Task.checkCancellation()
+    }
 
     /// Test seam — inject store / token / URLs without touching the real session.
     init(
@@ -148,7 +168,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 localFile: localFile,
                 sermonLocalId: sermonLocalId,
                 objectPath: objectPath,
-                upsert: upsert
+                upsert: upsert,
+                flagEpoch: self.flagOffEpoch
             )
         }
         if let raced = inFlightUploads[sermonLocalId] {
@@ -164,12 +185,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
         localFile: URL,
         sermonLocalId: UUID,
         objectPath: String,
-        upsert: Bool
+        upsert: Bool,
+        flagEpoch: UInt64
     ) async throws {
 
         let fileLength = try fileByteLength(at: localFile)
         guard fileLength >= 0 else { throw UploadManagerError.fileMissing }
         let modificationTime = try fileModificationTime(at: localFile)
+        try throwIfResumableCancelled(epoch: flagEpoch)
 
         // Path authority must survive any await (mint → create gap, relaunch).
         if resumeStore.record(for: sermonLocalId) == nil {
@@ -201,6 +224,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         } else {
             try await cancelAndDrainUploadTasks(for: sermonLocalId)
         }
+        try throwIfResumableCancelled(epoch: flagEpoch)
 
         if let existing = resumeStore.record(for: sermonLocalId),
            existing.objectPath == objectPath {
@@ -260,6 +284,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             contentType: "audio/m4a",
             upsert: upsert
         )
+        try throwIfResumableCancelled(epoch: flagEpoch)
         record.uploadURL = uploadURL
         resumeStore.save(record)
 
@@ -278,10 +303,22 @@ final class UploadManager: NSObject, SermonAudioUploading {
         timeoutNanoseconds: UInt64 = UploadManager.flagOffCancelTimeoutNanoseconds
     ) async throws {
         prepareBackgroundSessionIfNeeded()
+        flagOffEpoch &+= 1
+
         let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
         let paths = Set(flagged.map(\.objectPath))
-        let activeSermonIds = Set(inFlightUploads.keys)
-        let sermonIds = Set(flagged.map(\.sermonLocalId)).subtracting(activeSermonIds)
+        let sermonIds = Self.sermonIdsAffectedByFlagOff(
+            flaggedRecords: flagged,
+            inFlightSermonIds: inFlightUploads.keys
+        )
+
+        let operations = Array(inFlightUploads.values)
+        for operation in operations {
+            operation.cancel()
+        }
+        for operation in operations {
+            _ = await operation.result
+        }
 
         let uploadTasks = await backgroundSession.tasks.1
         var cancelledTaskIds: Set<Int> = []
