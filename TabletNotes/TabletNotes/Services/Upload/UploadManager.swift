@@ -95,6 +95,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private let projectURL: URL
     private let anonKey: String
     private let resumeStore: UploadResumeStoring
+    private let featureFlags: FeatureFlags
     private let tokenProvider: () async throws -> String
     private let ephemeralSession: URLSession
 
@@ -136,12 +137,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
         projectURL: URL = URL(string: SupabaseConfig.projectURL)!,
         anonKey: String = SupabaseConfig.anonKey,
         resumeStore: UploadResumeStoring = UploadResumeStore(),
+        featureFlags: FeatureFlags = .shared,
         tokenProvider: (() async throws -> String)? = nil,
         createBackgroundSession: Bool = true
     ) {
         self.projectURL = projectURL
         self.anonKey = anonKey
         self.resumeStore = resumeStore
+        self.featureFlags = featureFlags
         self.tokenProvider = tokenProvider ?? {
             let session = try await SupabaseService.shared.client.auth.session
             return session.accessToken
@@ -702,7 +705,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
         patchGate.finish(taskId: taskId, result: result)
     }
-    private func continueIncompleteBackgroundUploads() async {
+    func continueIncompleteBackgroundUploads() async {
+        guard featureFlags.resumableUploads else {
+            let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
+            for record in flagged {
+                resumeStore.remove(sermonLocalId: record.sermonLocalId)
+            }
+            return
+        }
         let records = resumeStore.allRecords().filter {
             $0.startedUnderFlag && $0.uploadURL != nil
         }

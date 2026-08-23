@@ -67,4 +67,52 @@ struct UploadManagerFlagOffTests {
         )
         #expect(keyA != keyB)
     }
+
+    @Test func backgroundContinuationClearsRecordsWhenFlagOff() async throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flag-off-continue-\(UUID().uuidString).m4a")
+        try Data(repeating: 0xCD, count: 8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let length = Int64(values.fileSize!)
+        let mtime = values.contentModificationDate!.timeIntervalSince1970
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "flag-off-continue")
+        let flags = FeatureFlags(defaults: defaults)
+        #expect(flags.resumableUploads == false)
+
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/\(sermonId.uuidString.lowercased()).m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/abc")!,
+                uploadLength: length,
+                filePath: file.path,
+                fileModificationTime: mtime,
+                taskIdentifier: 42,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        var tokenCalls = 0
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: {
+                tokenCalls += 1
+                return "token"
+            },
+            createBackgroundSession: false
+        )
+
+        await manager.continueIncompleteBackgroundUploads()
+
+        #expect(tokenCalls == 0)
+        #expect(store.allRecords().isEmpty)
+    }
 }

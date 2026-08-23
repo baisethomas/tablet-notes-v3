@@ -19,6 +19,7 @@ final class PatchCompletionGate {
     private var waiters: [Int: Waiter] = [:]
     private var earlyResults: [Int: Result<HTTPURLResponse, Error>] = [:]
     private var timedOutIds: Set<Int> = []
+    private var cancelledIds: Set<Int> = []
     private var nextGeneration: UInt64 = 0
 
     func wait(
@@ -30,6 +31,7 @@ final class PatchCompletionGate {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
                 timedOutIds.remove(taskId)
+                cancelledIds.remove(taskId)
 
                 if waiters[taskId] != nil {
                     cont.resume(throwing: UploadManagerError.duplicatePatchWait)
@@ -77,6 +79,7 @@ final class PatchCompletionGate {
     }
 
     private func cancelWaiter(taskId: Int) {
+        cancelledIds.insert(taskId)
         if let waiter = waiters.removeValue(forKey: taskId) {
             waiter.timeoutTask.cancel()
             waiter.continuation.resume(throwing: CancellationError())
@@ -85,6 +88,9 @@ final class PatchCompletionGate {
 
     func finish(taskId: Int, result: Result<HTTPURLResponse, Error>) {
         if timedOutIds.remove(taskId) != nil {
+            return
+        }
+        if cancelledIds.remove(taskId) != nil {
             return
         }
         if let waiter = waiters.removeValue(forKey: taskId) {

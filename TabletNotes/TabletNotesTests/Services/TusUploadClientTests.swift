@@ -268,6 +268,30 @@ struct PatchCompletionGateTests {
         }
     }
 
+    @Test func discardsLateCompletionAfterCancel() async {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        gate.cancelWait(taskId: 99)
+        gate.finish(taskId: 99, result: .success(response))
+        do {
+            _ = try await gate.wait(
+                taskId: 99,
+                timeoutNanoseconds: 50_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+            Issue.record("expected timeout")
+        } catch is UploadManagerError {
+            // expected — late finish must not stash an early result
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
+
     @Test func newWaitAfterTimeoutAcceptsFinishOnceTimedOutStateCleared() async throws {
         let gate = PatchCompletionGate()
         let response = HTTPURLResponse(
