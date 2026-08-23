@@ -291,6 +291,34 @@ struct UploadManagerFlagOffTests {
         #expect(store.allRecords().isEmpty)
     }
 
+    @Test func signOutRetainsResumeRecordsWhenDrainIncomplete() async {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "sign-out-retain")
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/a.m4a",
+                uploadURL: URL(string: "https://example.com/a")!,
+                uploadLength: 1,
+                filePath: "/tmp/a.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 99,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+        let manager = UploadManager(
+            resumeStore: store,
+            createBackgroundSession: false
+        )
+        manager.signOutDrainSucceededOverride = false
+        await manager.clearPersistedResumeRecords()
+        #expect(store.record(for: sermonId) != nil)
+    }
+
     @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!

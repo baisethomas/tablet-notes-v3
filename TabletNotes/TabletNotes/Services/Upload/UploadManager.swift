@@ -139,11 +139,23 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     func clearPersistedResumeRecords() async {
-        await cancelAllResumableBackgroundWorkForSignOut()
+        let drained = await cancelAllResumableBackgroundWorkForSignOut()
+        guard drained else {
+            // Keep sermon/task mappings so a later launch or background-session
+            // event can finish cancelling still-running prior-account uploads.
+            print("[UploadManager] Sign-out drain incomplete — retaining resume records for recovery")
+            return
+        }
         resumeStore.removeAll()
     }
 
-    private func cancelAllResumableBackgroundWorkForSignOut() async {
+    /// Cancels in-flight resumable work. Returns `true` only when every matching
+    /// background task and in-flight op is confirmed gone.
+    @discardableResult
+    private func cancelAllResumableBackgroundWorkForSignOut() async -> Bool {
+        if let signOutDrainSucceededOverride {
+            return signOutDrainSucceededOverride
+        }
         prepareBackgroundSessionIfNeeded()
         let records = resumeStore.allRecords()
         let sermonIds = Set(records.map(\.sermonLocalId))
@@ -176,6 +188,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
             operation.cancel()
         }
 
+        if sermonIds.isEmpty {
+            return true
+        }
+
         let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.flagOffCancelTimeoutNanoseconds))
         while ContinuousClock.now < deadline {
             let remaining = await backgroundSession.tasks.1.filter { task in
@@ -190,10 +206,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 }
             }
             if remaining.isEmpty && !inFlightSermonIds().contains(where: sermonIds.contains) {
-                return
+                return true
             }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
+        return false
     }
 
     func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws {
@@ -228,6 +245,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     internal var headOffsetOverride: ((URL, Int64, UUID) async throws -> Int64)?
     /// Test seam — fired once `task.resume()` runs for a scheduled relaunch chunk.
     internal var onPatchTaskScheduled: (() -> Void)?
+    /// Test seam — force sign-out drain success/failure without waiting on URLSession.
+    internal var signOutDrainSucceededOverride: Bool?
 
     /// Test seam — inject store / token / URLs without touching the real session.
     init(
