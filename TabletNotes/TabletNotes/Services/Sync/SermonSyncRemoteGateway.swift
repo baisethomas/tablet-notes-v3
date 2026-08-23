@@ -53,7 +53,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 fileLength: Int64(fileSize),
                 ownerUserId: ownerUserId,
                 resumeStore: resumeStore,
-                mint: {
+                mint: { [supabaseService] in
                     let minted = try await supabaseService.getSignedUploadURL(
                         for: audioFileName,
                         contentType: "audio/m4a",

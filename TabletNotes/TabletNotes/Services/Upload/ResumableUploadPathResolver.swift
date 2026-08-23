@@ -2,6 +2,7 @@ import Foundation
 
 /// Decides whether a resumable upload reuses a persisted path or mints a new one.
 /// Extracted so "resume skips mint" is unit-testable without hitting create-sermon.
+@MainActor
 enum ResumableUploadPathResolver {
     struct Plan: Equatable {
         var objectPath: String
@@ -9,9 +10,12 @@ enum ResumableUploadPathResolver {
         var didMint: Bool
     }
 
+    /// Coalesces concurrent `plan` calls for the same sermon across reentrant awaits.
+    private static var inFlightPlans: [UUID: Task<Plan, Error>] = [:]
+
     /// When true, an in-flight background PATCH for this sermon may be adopted.
     /// When false, any live task must be cancelled and drained before uploading.
-    static func shouldAdoptActiveBackgroundTask(
+    nonisolated static func shouldAdoptActiveBackgroundTask(
         record: UploadResumeRecord?,
         objectPath: String,
         localFile: URL,
@@ -31,9 +35,42 @@ enum ResumableUploadPathResolver {
         fileLength: Int64,
         ownerUserId: UUID?,
         resumeStore: UploadResumeStoring,
-        mint: () async throws -> (path: String, upsert: Bool),
+        mint: @escaping () async throws -> (path: String, upsert: Bool),
         mayPersistNewRecord: @escaping () -> Bool = { true },
         abandonStaleRecord: ((UploadResumeRecord) async throws -> Void)? = nil
+    ) async throws -> Plan {
+        if let existing = inFlightPlans[sermonLocalId] {
+            return try await existing.value
+        }
+        let mintWork = mint
+        let mayPersist = mayPersistNewRecord
+        let abandon = abandonStaleRecord
+        let task = Task { @MainActor in
+            defer { inFlightPlans[sermonLocalId] = nil }
+            return try await planUncoalesced(
+                sermonLocalId: sermonLocalId,
+                localFile: localFile,
+                fileLength: fileLength,
+                ownerUserId: ownerUserId,
+                resumeStore: resumeStore,
+                mint: mintWork,
+                mayPersistNewRecord: mayPersist,
+                abandonStaleRecord: abandon
+            )
+        }
+        inFlightPlans[sermonLocalId] = task
+        return try await task.value
+    }
+
+    private static func planUncoalesced(
+        sermonLocalId: UUID,
+        localFile: URL,
+        fileLength: Int64,
+        ownerUserId: UUID?,
+        resumeStore: UploadResumeStoring,
+        mint: () async throws -> (path: String, upsert: Bool),
+        mayPersistNewRecord: () -> Bool,
+        abandonStaleRecord: ((UploadResumeRecord) async throws -> Void)?
     ) async throws -> Plan {
         if let record = resumeStore.record(for: sermonLocalId),
            record.ownerUserId == ownerUserId,

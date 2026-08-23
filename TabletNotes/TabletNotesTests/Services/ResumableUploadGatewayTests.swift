@@ -40,6 +40,54 @@ struct ResumableUploadPathResolverTests {
         #expect(mintCalls == 1)
     }
 
+    @Test func concurrentPlansForSameSermonCoalesceToOneMint() async throws {
+        let file = try makeTempAudioFile(named: "coalesce")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "resolver")
+        let sermonId = UUID()
+        let ownerId = UUID()
+
+        var mintCalls = 0
+        var releaseMint: CheckedContinuation<Void, Never>?
+        let mint: () async throws -> (String, Bool) = {
+            mintCalls += 1
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                releaseMint = cont
+            }
+            return ("user/coalesced.m4a", true)
+        }
+
+        async let first = ResumableUploadPathResolver.plan(
+            sermonLocalId: sermonId,
+            localFile: file.url,
+            fileLength: file.length,
+            ownerUserId: ownerId,
+            resumeStore: store,
+            mint: mint
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        async let second = ResumableUploadPathResolver.plan(
+            sermonLocalId: sermonId,
+            localFile: file.url,
+            fileLength: file.length,
+            ownerUserId: ownerId,
+            resumeStore: store,
+            mint: mint
+        )
+        try await Task.sleep(nanoseconds: 20_000_000)
+        releaseMint?.resume()
+
+        let planA = try await first
+        let planB = try await second
+        #expect(planA.objectPath == "user/coalesced.m4a")
+        #expect(planB.objectPath == "user/coalesced.m4a")
+        #expect(mintCalls == 1)
+    }
+
     @Test func resumeSkipsMintWhenARecordMatchesTheLocalFile() async throws {
         let file = try makeTempAudioFile(named: "resume")
         defer { try? FileManager.default.removeItem(at: file.url) }

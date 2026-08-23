@@ -356,6 +356,48 @@ struct UploadManagerFlagOffTests {
         #expect(store.record(for: sermonId) == nil)
     }
 
+    @Test func unsignedLaunchDrainsBeforeDroppingResumeRecords() async {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "unsigned-drain")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/prior.m4a",
+                uploadURL: URL(string: "https://example.com/prior")!,
+                uploadLength: 8,
+                filePath: "/tmp/prior.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 5,
+                ownerUserId: UUID(),
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            currentUserIdProvider: { nil },
+            createBackgroundSession: false
+        )
+        // Incomplete drain must retain the mapping.
+        manager.signOutDrainSucceededOverride = false
+        await manager.continueIncompleteBackgroundUploads()
+        #expect(store.record(for: sermonId) != nil)
+
+        // Confirmed drain may clear while unsigned-in.
+        manager.signOutDrainSucceededOverride = true
+        await manager.continueIncompleteBackgroundUploads()
+        #expect(store.record(for: sermonId) == nil)
+    }
+
     @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!

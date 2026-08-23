@@ -756,8 +756,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     private func validateRecordOwnership(_ record: UploadResumeRecord) throws {
+        // Do not delete mappings while unsigned-in — cancel/drain first via launch recovery.
         guard let current = currentUserIdProvider() else {
-            resumeStore.remove(sermonLocalId: record.sermonLocalId)
             throw UploadManagerError.notConfigured
         }
         guard record.ownerUserId == current else {
@@ -1146,6 +1146,15 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     func scheduleIncompleteBackgroundUploadContinuations() async {
+        // Finish leftover sign-out drains before any ownership pruning. Without a
+        // signed-in user we must not drop records until matching tasks are gone.
+        if currentUserIdProvider() == nil {
+            let drained = await cancelAllResumableBackgroundWorkForSignOut()
+            if drained {
+                resumeStore.removeAll()
+            }
+            return
+        }
         guard featureFlags.resumableUploads else {
             let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
             for record in flagged {
