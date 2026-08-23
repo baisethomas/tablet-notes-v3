@@ -11,7 +11,32 @@ enum ResumableUploadPathResolver {
     }
 
     /// Coalesces concurrent `plan` calls for the same sermon across reentrant awaits.
-    private static var inFlightPlans: [UUID: Task<Plan, Error>] = [:]
+    private static var inFlightPlans: [PlanCoalescingKey: Task<Plan, Error>] = [:]
+
+    private struct PlanCoalescingKey: Hashable {
+        let sermonLocalId: UUID
+        let ownerUserId: UUID?
+        let filePath: String
+        let fileLength: Int64
+        let fileModificationTime: TimeInterval?
+    }
+
+    private static func coalescingKey(
+        sermonLocalId: UUID,
+        localFile: URL,
+        fileLength: Int64,
+        ownerUserId: UUID?
+    ) throws -> PlanCoalescingKey {
+        let mtime = try localFile.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate?.timeIntervalSince1970
+        return PlanCoalescingKey(
+            sermonLocalId: sermonLocalId,
+            ownerUserId: ownerUserId,
+            filePath: localFile.path,
+            fileLength: fileLength,
+            fileModificationTime: mtime
+        )
+    }
 
     /// When true, an in-flight background PATCH for this sermon may be adopted.
     /// When false, any live task must be cancelled and drained before uploading.
@@ -39,14 +64,20 @@ enum ResumableUploadPathResolver {
         mayPersistNewRecord: @escaping () -> Bool = { true },
         abandonStaleRecord: ((UploadResumeRecord) async throws -> Void)? = nil
     ) async throws -> Plan {
-        if let existing = inFlightPlans[sermonLocalId] {
+        let key = try coalescingKey(
+            sermonLocalId: sermonLocalId,
+            localFile: localFile,
+            fileLength: fileLength,
+            ownerUserId: ownerUserId
+        )
+        if let existing = inFlightPlans[key] {
             return try await existing.value
         }
         let mintWork = mint
         let mayPersist = mayPersistNewRecord
         let abandon = abandonStaleRecord
         let task = Task { @MainActor in
-            defer { inFlightPlans[sermonLocalId] = nil }
+            defer { inFlightPlans[key] = nil }
             return try await planUncoalesced(
                 sermonLocalId: sermonLocalId,
                 localFile: localFile,
@@ -58,7 +89,7 @@ enum ResumableUploadPathResolver {
                 abandonStaleRecord: abandon
             )
         }
-        inFlightPlans[sermonLocalId] = task
+        inFlightPlans[key] = task
         return try await task.value
     }
 

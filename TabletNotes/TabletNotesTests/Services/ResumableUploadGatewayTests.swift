@@ -88,6 +88,89 @@ struct ResumableUploadPathResolverTests {
         #expect(mintCalls == 1)
     }
 
+    @Test func concurrentPlansForSameSermonWithDifferentFileIdentityDoNotCoalesce() async throws {
+        let fileA = try makeTempAudioFile(named: "coalesce-a")
+        let fileB = try makeTempAudioFile(named: "coalesce-b")
+        defer {
+            try? FileManager.default.removeItem(at: fileA.url)
+            try? FileManager.default.removeItem(at: fileB.url)
+        }
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "resolver")
+        let sermonId = UUID()
+        let ownerId = UUID()
+
+        final class MintGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private var waiters: [CheckedContinuation<Void, Never>] = []
+            private(set) var mintCalls = 0
+
+            func nextPathAndWait() async -> String {
+                let path: String = {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    mintCalls += 1
+                    return mintCalls == 1 ? "user/first.m4a" : "user/second.m4a"
+                }()
+                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                    lock.lock()
+                    waiters.append(cont)
+                    lock.unlock()
+                }
+                return path
+            }
+
+            func releaseOne() {
+                lock.lock()
+                let cont = waiters.isEmpty ? nil : waiters.removeFirst()
+                lock.unlock()
+                cont?.resume()
+            }
+
+            var callCount: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return mintCalls
+            }
+        }
+
+        let gate = MintGate()
+        let mint: () async throws -> (String, Bool) = {
+            let path = await gate.nextPathAndWait()
+            return (path, true)
+        }
+
+        async let first = ResumableUploadPathResolver.plan(
+            sermonLocalId: sermonId,
+            localFile: fileA.url,
+            fileLength: fileA.length,
+            ownerUserId: ownerId,
+            resumeStore: store,
+            mint: mint
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        async let second = ResumableUploadPathResolver.plan(
+            sermonLocalId: sermonId,
+            localFile: fileB.url,
+            fileLength: fileB.length,
+            ownerUserId: ownerId,
+            resumeStore: store,
+            mint: mint
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(gate.callCount == 2)
+        gate.releaseOne()
+        gate.releaseOne()
+
+        let planA = try await first
+        let planB = try await second
+        #expect(Set([planA.objectPath, planB.objectPath]) == Set(["user/first.m4a", "user/second.m4a"]))
+        #expect(gate.callCount == 2)
+    }
+
     @Test func resumeSkipsMintWhenARecordMatchesTheLocalFile() async throws {
         let file = try makeTempAudioFile(named: "resume")
         defer { try? FileManager.default.removeItem(at: file.url) }
