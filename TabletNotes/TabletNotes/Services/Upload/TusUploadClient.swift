@@ -142,7 +142,15 @@ enum TusUploadClient {
         let locationPort = location.port ?? 443
         let endpointPort = endpoint.port ?? 443
         guard locationPort == endpointPort else { return false }
-        return location.path.hasPrefix("/storage/v1/upload/resumable")
+        let path = location.path
+        if path == "/storage/v1/upload/resumable" {
+            return true
+        }
+        let prefix = "/storage/v1/upload/resumable/"
+        guard path.hasPrefix(prefix) else { return false }
+        let remainder = path.dropFirst(prefix.count)
+        guard !remainder.isEmpty, !remainder.contains("/") else { return false }
+        return remainder.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_")).contains($0) }
     }
 
     /// HEAD 404/410 → discard resume and restart. Offset outside `0...fileLength` → same.

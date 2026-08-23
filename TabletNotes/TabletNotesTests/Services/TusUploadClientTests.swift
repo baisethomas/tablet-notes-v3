@@ -115,6 +115,14 @@ struct TusUploadClientTests {
         let location = URL(string: "https://example.supabase.co/storage/v1/upload/resumable/abc")!
         #expect(TusUploadClient.isTrustedUploadLocation(location, endpoint: endpoint))
     }
+
+    @Test func isTrustedUploadLocationRejectsPrefixSiblings() {
+        let endpoint = URL(string: "https://example.supabase.co/storage/v1/upload/resumable")!
+        let malicious = URL(string: "https://example.supabase.co/storage/v1/upload/resumable-malicious")!
+        #expect(!TusUploadClient.isTrustedUploadLocation(malicious, endpoint: endpoint))
+        let nested = URL(string: "https://example.supabase.co/storage/v1/upload/resumable/abc/extra")!
+        #expect(!TusUploadClient.isTrustedUploadLocation(nested, endpoint: endpoint))
+    }
 }
 
 @MainActor

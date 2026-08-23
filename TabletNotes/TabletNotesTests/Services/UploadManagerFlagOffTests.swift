@@ -392,6 +392,45 @@ struct UploadManagerFlagOffTests {
         #expect(store.record(for: sermonId) != nil)
     }
 
+    @Test func staleLocalFileOnContinuationIsAbandoned() async throws {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "stale-continue")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let ownerId = UUID()
+        let sermonId = UUID()
+        var deletedPaths: [String] = []
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/stale.m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/stale")!,
+                uploadLength: 8,
+                filePath: "/tmp/missing-\(UUID().uuidString).m4a",
+                fileModificationTime: 1,
+                taskIdentifier: 9,
+                ownerUserId: ownerId,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            currentUserIdProvider: { ownerId },
+            storageObjectDeleter: { path in deletedPaths.append(path) },
+            createBackgroundSession: false
+        )
+        await manager.continueIncompleteBackgroundUploads()
+        #expect(store.record(for: sermonId) == nil)
+        #expect(deletedPaths == ["user/stale.m4a"])
+    }
+
     @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!

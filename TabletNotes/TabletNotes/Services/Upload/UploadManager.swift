@@ -118,6 +118,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var chunkFilesByTaskId: [Int: URL] = [:]
     /// Coalesce concurrent sync attempts for the same sermon into one upload op.
     private var inFlightUploads: [InFlightUploadKey: Task<Void, Error>] = [:]
+    /// Prevent duplicate background continuation schedules for the same sermon.
+    private var backgroundContinuationsInFlight: Set<UUID> = []
     /// Incremented when resumable uploads are disabled; in-flight ops observe this.
     private var flagOffEpoch: UInt64 = 0
     /// While flag-off drain runs, reject newly admitted resumable uploads.
@@ -1176,9 +1178,18 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     private func scheduleUploadContinuation(for record: UploadResumeRecord) async throws {
+        let sermonLocalId = record.sermonLocalId
+        guard backgroundContinuationsInFlight.insert(sermonLocalId).inserted else {
+            return
+        }
+        defer { backgroundContinuationsInFlight.remove(sermonLocalId) }
+
         let localURL = URL(fileURLWithPath: record.filePath)
-        guard record.matchesLocalFile(localURL, length: record.uploadLength),
-              let uploadURL = record.uploadURL else {
+        guard let uploadURL = record.uploadURL else {
+            return
+        }
+        guard record.matchesLocalFile(localURL, length: record.uploadLength) else {
+            try await abandonStaleResumeRecord(record)
             return
         }
         try validateRecordOwnership(record)
@@ -1195,10 +1206,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
         let offset = try await headOffset(
             uploadURL: uploadURL,
             fileLength: fileLength,
-            sermonLocalId: record.sermonLocalId
+            sermonLocalId: sermonLocalId
         )
         if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
-            resumeStore.remove(sermonLocalId: record.sermonLocalId)
+            resumeStore.remove(sermonLocalId: sermonLocalId)
             return
         }
         guard let range = TusUploadClient.nextChunkRange(offset: offset, fileLength: fileLength) else {
@@ -1207,7 +1218,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
         try await schedulePatchChunkAndContinue(
             localFile: localURL,
-            sermonLocalId: record.sermonLocalId,
+            sermonLocalId: sermonLocalId,
             objectPath: record.objectPath,
             uploadURL: uploadURL,
             range: range,
