@@ -46,6 +46,23 @@ enum UploadManagerError: LocalizedError, Equatable {
     }
 }
 
+/// Coalescing identity — must include file bytes and path, not sermon ID alone.
+struct InFlightUploadKey: Hashable, Sendable {
+    let sermonLocalId: UUID
+    let objectPath: String
+    let filePath: String
+    let fileLength: Int64
+    let fileModificationTime: TimeInterval
+
+    init(sermonLocalId: UUID, objectPath: String, localFile: URL, fileLength: Int64, fileModificationTime: TimeInterval) {
+        self.sermonLocalId = sermonLocalId
+        self.objectPath = objectPath
+        self.filePath = localFile.path
+        self.fileLength = fileLength
+        self.fileModificationTime = fileModificationTime
+    }
+}
+
 /// Performs a resumable TUS upload for one sermon audio file.
 @MainActor
 protocol SermonAudioUploading: AnyObject {
@@ -88,7 +105,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
     /// task completes (or is cancelled), never while the system may still read.
     private var chunkFilesByTaskId: [Int: URL] = [:]
     /// Coalesce concurrent sync attempts for the same sermon into one upload op.
-    private var inFlightUploads: [UUID: Task<Void, Error>] = [:]
+    private var inFlightUploads: [InFlightUploadKey: Task<Void, Error>] = [:]
     /// Incremented when resumable uploads are disabled; in-flight ops observe this.
     private var flagOffEpoch: UInt64 = 0
     private var prepared = false
@@ -99,6 +116,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
         inFlightSermonIds: some Sequence<UUID>
     ) -> Set<UUID> {
         Set(flaggedRecords.map(\.sermonLocalId)).union(inFlightSermonIds)
+    }
+
+    private func inFlightSermonIds() -> Set<UUID> {
+        Set(inFlightUploads.keys.map(\.sermonLocalId))
     }
 
     private func throwIfResumableCancelled(epoch: UInt64) throws {
@@ -158,7 +179,17 @@ final class UploadManager: NSObject, SermonAudioUploading {
     ) async throws {
         prepareBackgroundSessionIfNeeded()
 
-        if let existing = inFlightUploads[sermonLocalId] {
+        let fileLength = try fileByteLength(at: localFile)
+        let modificationTime = try fileModificationTime(at: localFile)
+        let key = InFlightUploadKey(
+            sermonLocalId: sermonLocalId,
+            objectPath: objectPath,
+            localFile: localFile,
+            fileLength: fileLength,
+            fileModificationTime: modificationTime
+        )
+
+        if let existing = inFlightUploads[key] {
             try await existing.value
             return
         }
@@ -169,15 +200,17 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 sermonLocalId: sermonLocalId,
                 objectPath: objectPath,
                 upsert: upsert,
-                flagEpoch: self.flagOffEpoch
+                flagEpoch: self.flagOffEpoch,
+                fileLength: fileLength,
+                modificationTime: modificationTime
             )
         }
-        if let raced = inFlightUploads[sermonLocalId] {
+        if let raced = inFlightUploads[key] {
             try await raced.value
             return
         }
-        inFlightUploads[sermonLocalId] = task
-        defer { inFlightUploads.removeValue(forKey: sermonLocalId) }
+        inFlightUploads[key] = task
+        defer { inFlightUploads.removeValue(forKey: key) }
         try await task.value
     }
 
@@ -186,12 +219,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
         sermonLocalId: UUID,
         objectPath: String,
         upsert: Bool,
-        flagEpoch: UInt64
+        flagEpoch: UInt64,
+        fileLength: Int64,
+        modificationTime: TimeInterval
     ) async throws {
-
-        let fileLength = try fileByteLength(at: localFile)
         guard fileLength >= 0 else { throw UploadManagerError.fileMissing }
-        let modificationTime = try fileModificationTime(at: localFile)
         try throwIfResumableCancelled(epoch: flagEpoch)
 
         // Path authority must survive any await (mint → create gap, relaunch).
@@ -309,7 +341,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         let paths = Set(flagged.map(\.objectPath))
         let sermonIds = Self.sermonIdsAffectedByFlagOff(
             flaggedRecords: flagged,
-            inFlightSermonIds: inFlightUploads.keys
+            inFlightSermonIds: inFlightSermonIds()
         )
 
         for record in flagged where sermonIds.contains(record.sermonLocalId) {
@@ -354,7 +386,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     return false
                 }
             }
-            let remainingOps = inFlightUploads.keys.contains(where: sermonIds.contains)
+            let remainingOps = inFlightSermonIds().contains(where: sermonIds.contains)
             if remainingSession.isEmpty && !remainingOps {
                 for id in sermonIds { resumeStore.remove(sermonLocalId: id) }
                 if !paths.isEmpty {
