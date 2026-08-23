@@ -312,6 +312,15 @@ final class UploadManager: NSObject, SermonAudioUploading {
             inFlightSermonIds: inFlightUploads.keys
         )
 
+        for record in flagged where sermonIds.contains(record.sermonLocalId) {
+            if let taskId = record.taskIdentifier {
+                patchGate.cancelWait(taskId: taskId)
+            }
+        }
+        for taskId in chunkFilesByTaskId.keys {
+            patchGate.cancelWait(taskId: taskId)
+        }
+
         let uploadTasks = await backgroundSession.tasks.1
         var cancelledTaskIds: Set<Int> = []
         for task in uploadTasks {
@@ -428,7 +437,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
             anonKey: anonKey,
             upsert: upsert
         )
-        let (_, response) = try await ephemeralSession.data(for: request)
+        let (_, response) = try await withTaskCancellationHandler {
+            try await ephemeralSession.data(for: request)
+        } onCancel: {}
         guard let http = response as? HTTPURLResponse else {
             throw UploadManagerError.createFailed(status: -1)
         }
@@ -451,7 +462,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
             accessToken: token,
             anonKey: anonKey
         )
-        let (_, response) = try await ephemeralSession.data(for: request)
+        let (_, response) = try await withTaskCancellationHandler {
+            try await ephemeralSession.data(for: request)
+        } onCancel: {}
         guard let http = response as? HTTPURLResponse else {
             throw UploadManagerError.headFailed(status: -1)
         }

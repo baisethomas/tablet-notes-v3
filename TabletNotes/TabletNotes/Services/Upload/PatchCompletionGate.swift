@@ -72,6 +72,10 @@ final class PatchCompletionGate {
         }
     }
 
+    func cancelWait(taskId: Int) {
+        cancelWaiter(taskId: taskId)
+    }
+
     private func cancelWaiter(taskId: Int) {
         if let waiter = waiters.removeValue(forKey: taskId) {
             waiter.timeoutTask.cancel()
