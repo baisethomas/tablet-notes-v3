@@ -188,15 +188,23 @@ final class UploadManager: NSObject, SermonAudioUploading {
             )
         }
 
-        // Adopt any live PATCH for this sermon BEFORE HEAD / new PATCH — otherwise
-        // a second sync starts a concurrent writer to the same TUS resource.
-        try await awaitActiveUploadTaskIfAny(sermonLocalId: sermonLocalId)
+        // Adopt a live PATCH only when resuming the same file + TUS resource.
+        // Fresh mints and stale-file remints must tear down old writers first.
+        let existingRecord = resumeStore.record(for: sermonLocalId)
+        if ResumableUploadPathResolver.shouldAdoptActiveBackgroundTask(
+            record: existingRecord,
+            objectPath: objectPath,
+            localFile: localFile,
+            fileLength: fileLength
+        ) {
+            try await awaitActiveUploadTaskIfAny(sermonLocalId: sermonLocalId)
+        } else {
+            try await cancelAndDrainUploadTasks(for: sermonLocalId)
+        }
 
         if let existing = resumeStore.record(for: sermonLocalId),
            existing.objectPath == objectPath {
-            // Never append new-file bytes onto an old TUS resource.
             if !existing.matchesLocalFile(localFile, length: fileLength) {
-                try await cancelAndDrainUploadTasks(for: sermonLocalId)
                 resumeStore.remove(sermonLocalId: sermonLocalId)
             } else if let uploadURL = existing.uploadURL {
                 do {
@@ -220,8 +228,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     )
                     return
                 } catch UploadManagerError.headRestart {
-                    // Record discarded inside headOffset — drain any stale writer
-                    // before minting a fresh TUS resource at this path.
+                    // Record discarded inside headOffset — drain before fresh CREATE.
                     try await cancelAndDrainUploadTasks(for: sermonLocalId)
                 }
             }

@@ -143,4 +143,79 @@ struct ResumableUploadPathResolverTests {
         #expect(saved?.uploadURL == nil)
         #expect(saved?.matchesLocalFile(file.url, length: file.length) == true)
     }
+
+    @Test func staleFileRequiresCancelNotAdopt() throws {
+        let file = try makeTempAudioFile(named: "policy")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let stale = UploadResumeRecord(
+            sermonLocalId: UUID(),
+            objectPath: "user/old.m4a",
+            uploadURL: URL(string: "https://example.com/old"),
+            uploadLength: file.length,
+            filePath: file.url.path,
+            fileModificationTime: file.mtime - 120,
+            taskIdentifier: 1,
+            startedUnderFlag: true,
+            upsert: true
+        )
+        #expect(
+            !ResumableUploadPathResolver.shouldAdoptActiveBackgroundTask(
+                record: stale,
+                objectPath: "user/fresh.m4a",
+                localFile: file.url,
+                fileLength: file.length
+            )
+        )
+    }
+
+    @Test func matchingResumeWithUploadURLMayAdopt() throws {
+        let file = try makeTempAudioFile(named: "adopt")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let matching = UploadResumeRecord(
+            sermonLocalId: UUID(),
+            objectPath: "user/same.m4a",
+            uploadURL: URL(string: "https://example.com/u"),
+            uploadLength: file.length,
+            filePath: file.url.path,
+            fileModificationTime: file.mtime,
+            taskIdentifier: 2,
+            startedUnderFlag: true,
+            upsert: true
+        )
+        #expect(
+            ResumableUploadPathResolver.shouldAdoptActiveBackgroundTask(
+                record: matching,
+                objectPath: "user/same.m4a",
+                localFile: file.url,
+                fileLength: file.length
+            )
+        )
+    }
+
+    @Test func freshMintMustNotAdoptActiveTask() throws {
+        let file = try makeTempAudioFile(named: "fresh")
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let pendingCreate = UploadResumeRecord(
+            sermonLocalId: UUID(),
+            objectPath: "user/new.m4a",
+            uploadURL: nil,
+            uploadLength: file.length,
+            filePath: file.url.path,
+            fileModificationTime: file.mtime,
+            taskIdentifier: nil,
+            startedUnderFlag: true,
+            upsert: true
+        )
+        #expect(
+            !ResumableUploadPathResolver.shouldAdoptActiveBackgroundTask(
+                record: pendingCreate,
+                objectPath: "user/new.m4a",
+                localFile: file.url,
+                fileLength: file.length
+            )
+        )
+    }
 }

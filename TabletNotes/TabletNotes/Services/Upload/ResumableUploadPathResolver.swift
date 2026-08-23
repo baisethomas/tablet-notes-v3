@@ -9,6 +9,22 @@ enum ResumableUploadPathResolver {
         var didMint: Bool
     }
 
+    /// When true, an in-flight background PATCH for this sermon may be adopted.
+    /// When false, any live task must be cancelled and drained before uploading.
+    static func shouldAdoptActiveBackgroundTask(
+        record: UploadResumeRecord?,
+        objectPath: String,
+        localFile: URL,
+        fileLength: Int64
+    ) -> Bool {
+        guard let record,
+              record.objectPath == objectPath,
+              record.uploadURL != nil else {
+            return false
+        }
+        return record.matchesLocalFile(localFile, length: fileLength)
+    }
+
     static func plan(
         sermonLocalId: UUID,
         localFile: URL,
