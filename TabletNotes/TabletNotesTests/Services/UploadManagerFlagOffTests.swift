@@ -290,4 +290,53 @@ struct UploadManagerFlagOffTests {
         await manager.clearPersistedResumeRecords()
         #expect(store.allRecords().isEmpty)
     }
+
+    @Test func successfulFlagOffKeepsAdmissionClosedUntilReopen() async throws {
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "flag-off-admission")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let ownerId = UUID()
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            currentUserIdProvider: { ownerId },
+            createBackgroundSession: false
+        )
+        #expect(manager.acceptsResumableAdmission)
+
+        try await manager.cancelInFlightResumableUploads()
+        // Settings has not committed the flag off yet — admission must stay closed.
+        #expect(flags.resumableUploads)
+        #expect(!manager.acceptsResumableAdmission)
+
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("post-drain-\(UUID().uuidString).m4a")
+        try Data(repeating: 0xAB, count: 8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        do {
+            try await manager.uploadResumable(
+                localFile: file,
+                sermonLocalId: UUID(),
+                objectPath: "user/post-drain.m4a",
+                upsert: true
+            )
+            Issue.record("expected resumableCancelled after drain")
+        } catch let error as UploadManagerError {
+            #expect(error == .resumableCancelled)
+        }
+
+        flags.setEnabled(false, for: .resumableUploads)
+        manager.reopenResumableAdmission()
+        #expect(!manager.acceptsResumableAdmission)
+
+        flags.setEnabled(true, for: .resumableUploads)
+        manager.reopenResumableAdmission()
+        #expect(manager.acceptsResumableAdmission)
+    }
 }

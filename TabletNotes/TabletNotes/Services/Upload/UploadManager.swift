@@ -218,6 +218,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
         if epoch != flagOffEpoch {
             throw UploadManagerError.resumableCancelled
         }
+        guard featureFlags.resumableUploads, !resumableAdmissionClosed else {
+            throw UploadManagerError.resumableCancelled
+        }
         try Task.checkCancellation()
     }
 
@@ -286,7 +289,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         objectPath: String,
         upsert: Bool
     ) async throws {
-        guard !resumableAdmissionClosed else {
+        guard featureFlags.resumableUploads, !resumableAdmissionClosed else {
             throw UploadManagerError.resumableCancelled
         }
         purgeResumeRecordsForOtherUsers()
@@ -455,10 +458,27 @@ final class UploadManager: NSObject, SermonAudioUploading {
         timeoutNanoseconds: UInt64 = UploadManager.flagOffCancelTimeoutNanoseconds
     ) async throws {
         prepareBackgroundSessionIfNeeded()
+        // Stay closed after a successful drain so a mint/path-plan suspended while
+        // the flag was on cannot admit a new TUS task before Settings commits off.
         resumableAdmissionClosed = true
-        defer { resumableAdmissionClosed = false }
         flagOffEpoch &+= 1
 
+        do {
+            try await drainResumableUploadsForFlagOff(timeoutNanoseconds: timeoutNanoseconds)
+        } catch {
+            // Flag stays on when drain fails — reopen so the user can retry or sync.
+            resumableAdmissionClosed = false
+            throw error
+        }
+    }
+
+    /// Call after Settings commits `resumableUploads = true`.
+    func reopenResumableAdmission() {
+        guard featureFlags.resumableUploads else { return }
+        resumableAdmissionClosed = false
+    }
+
+    private func drainResumableUploadsForFlagOff(timeoutNanoseconds: UInt64) async throws {
         let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
         let paths = Set(flagged.map(\.objectPath))
         let sermonIds = Self.sermonIdsAffectedByFlagOff(

@@ -376,21 +376,28 @@ struct SettingsView: View {
                                     get: { resumableUploadsEnabled },
                                     set: { newValue in
                                         Task { @MainActor in
-                                            if !newValue {
-                                                // Confirmed cancel before legacy PUT may touch those paths.
-                                                do {
-                                                    try await UploadManager.shared
-                                                        .cancelInFlightResumableUploads()
-                                                } catch {
-                                                    print("[Settings] Flag-off cancel failed: \(error.localizedDescription)")
-                                                    return
-                                                }
+                                            if newValue {
+                                                FeatureFlags.shared.setEnabled(
+                                                    true,
+                                                    for: .resumableUploads
+                                                )
+                                                UploadManager.shared.reopenResumableAdmission()
+                                                resumableUploadsEnabled = true
+                                                return
                                             }
-                                            resumableUploadsEnabled = newValue
+                                            // Confirmed cancel before legacy PUT may touch those paths.
+                                            do {
+                                                try await UploadManager.shared
+                                                    .cancelInFlightResumableUploads()
+                                            } catch {
+                                                print("[Settings] Flag-off cancel failed: \(error.localizedDescription)")
+                                                return
+                                            }
                                             FeatureFlags.shared.setEnabled(
-                                                newValue,
+                                                false,
                                                 for: .resumableUploads
                                             )
+                                            resumableUploadsEnabled = false
                                         }
                                     }
                                 )
