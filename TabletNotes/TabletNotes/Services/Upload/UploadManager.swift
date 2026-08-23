@@ -108,6 +108,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var inFlightUploads: [InFlightUploadKey: Task<Void, Error>] = [:]
     /// Incremented when resumable uploads are disabled; in-flight ops observe this.
     private var flagOffEpoch: UInt64 = 0
+    /// While flag-off drain runs, reject newly admitted resumable uploads.
+    private var resumableAdmissionClosed = false
     private var prepared = false
 
     /// Which sermon IDs flag-off must tear down (flagged records ∪ active ops).
@@ -177,6 +179,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
         objectPath: String,
         upsert: Bool
     ) async throws {
+        guard !resumableAdmissionClosed else {
+            throw UploadManagerError.resumableCancelled
+        }
         prepareBackgroundSessionIfNeeded()
 
         let fileLength = try fileByteLength(at: localFile)
@@ -335,6 +340,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
         timeoutNanoseconds: UInt64 = UploadManager.flagOffCancelTimeoutNanoseconds
     ) async throws {
         prepareBackgroundSessionIfNeeded()
+        resumableAdmissionClosed = true
+        defer { resumableAdmissionClosed = false }
         flagOffEpoch &+= 1
 
         let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
@@ -695,6 +702,28 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
         patchGate.finish(taskId: taskId, result: result)
     }
+    private func continueIncompleteBackgroundUploads() async {
+        let records = resumeStore.allRecords().filter {
+            $0.startedUnderFlag && $0.uploadURL != nil
+        }
+        for record in records {
+            let localURL = URL(fileURLWithPath: record.filePath)
+            guard record.matchesLocalFile(localURL, length: record.uploadLength) else { continue }
+            do {
+                try await uploadResumableOnce(
+                    localFile: localURL,
+                    sermonLocalId: record.sermonLocalId,
+                    objectPath: record.objectPath,
+                    upsert: record.upsert,
+                    flagEpoch: flagOffEpoch,
+                    fileLength: record.uploadLength,
+                    modificationTime: record.fileModificationTime ?? 0
+                )
+            } catch {
+                print("[UploadManager] Background upload continue failed: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
@@ -724,9 +753,7 @@ extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
-            // Multi-chunk continuation while the app stays terminated is not in
-            // this slice — the resume record is adopted on the next foreground
-            // sync. Call the system completion handler promptly.
+            await self.continueIncompleteBackgroundUploads()
             let handler = self.backgroundCompletionHandler
             self.backgroundCompletionHandler = nil
             handler?()
