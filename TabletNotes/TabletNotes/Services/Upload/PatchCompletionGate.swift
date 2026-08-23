@@ -47,6 +47,9 @@ final class PatchCompletionGate {
 
                 if let early = earlyResults.removeValue(forKey: taskId) {
                     earlyResultOrder.removeAll { $0 == taskId }
+                    // Still run the callback — callers use it to resume URLSession
+                    // tasks / signal adoption, and early completion must not skip it.
+                    beforeWaiting?()
                     switch early {
                     case .success(let response):
                         cont.resume(returning: response)

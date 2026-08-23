@@ -1247,18 +1247,25 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
         await withCheckedContinuation { (adopted: CheckedContinuation<Void, Never>) in
             Task { @MainActor in
+                var didSignal = false
+                let signalAdopted = {
+                    guard !didSignal else { return }
+                    didSignal = true
+                    adopted.resume()
+                    self.onPatchTaskScheduled?()
+                }
+                // Acknowledge adoption before waiting so an early PATCH completion
+                // that skips/races beforeWaiting cannot hang background scheduling.
+                if active.state == .suspended {
+                    active.resume()
+                }
+                signalAdopted()
                 do {
                     _ = try await self.patchGate.wait(
                         taskId: active.taskIdentifier,
                         timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
                         timedOutError: UploadManagerError.timedOut,
-                        beforeWaiting: {
-                            if active.state == .suspended {
-                                active.resume()
-                            }
-                            adopted.resume()
-                            self.onPatchTaskScheduled?()
-                        }
+                        beforeWaiting: signalAdopted
                     )
                     let fileLength = record.uploadLength
                     let offset = try await self.headOffset(

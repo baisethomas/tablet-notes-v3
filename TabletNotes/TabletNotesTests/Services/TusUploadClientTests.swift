@@ -144,6 +144,26 @@ struct PatchCompletionGateTests {
         #expect(got.statusCode == 204)
     }
 
+    @Test func earlyFinishStillInvokesBeforeWaitingCallback() async throws {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: ["Upload-Offset": "10"]
+        )!
+        gate.finish(taskId: 55, result: .success(response))
+        var callbackRan = false
+        let got = try await gate.wait(
+            taskId: 55,
+            timeoutNanoseconds: 1_000_000_000,
+            timedOutError: UploadManagerError.timedOut,
+            beforeWaiting: { callbackRan = true }
+        )
+        #expect(got.statusCode == 204)
+        #expect(callbackRan)
+    }
+
     @Test func timesOutWhenNoDelegateCompletionArrives() async {
         let gate = PatchCompletionGate()
         do {
