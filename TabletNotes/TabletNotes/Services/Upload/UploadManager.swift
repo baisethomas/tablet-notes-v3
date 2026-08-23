@@ -132,6 +132,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
         try Task.checkCancellation()
     }
 
+    /// Test seam — override HEAD offset lookup without network I/O.
+    internal var headOffsetOverride: ((URL, Int64, UUID) async throws -> Int64)?
+    /// Test seam — fired once `task.resume()` runs for a scheduled relaunch chunk.
+    internal var onPatchTaskScheduled: (() -> Void)?
+
     /// Test seam — inject store / token / URLs without touching the real session.
     init(
         projectURL: URL = URL(string: SupabaseConfig.projectURL)!,
@@ -498,6 +503,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
         fileLength: Int64,
         sermonLocalId: UUID
     ) async throws -> Int64 {
+        if let headOffsetOverride {
+            return try await headOffsetOverride(uploadURL, fileLength, sermonLocalId)
+        }
         let token = try await tokenProvider()
         let request = TusUploadClient.makeHeadRequest(
             uploadURL: uploadURL,
@@ -598,24 +606,63 @@ final class UploadManager: NSObject, SermonAudioUploading {
         fileLength: Int64,
         upsert: Bool
     ) async throws -> Int64 {
+        let task = try await preparePatchUploadTask(
+            localFile: localFile,
+            sermonLocalId: sermonLocalId,
+            objectPath: objectPath,
+            uploadURL: uploadURL,
+            range: range,
+            fileLength: fileLength,
+            upsert: upsert
+        )
+        let http: HTTPURLResponse
+        do {
+            http = try await patchGate.wait(
+                taskId: task.taskIdentifier,
+                timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
+                timedOutError: UploadManagerError.timedOut,
+                beforeWaiting: { task.resume() }
+            )
+        } catch {
+            if (error as? UploadManagerError) == .timedOut {
+                task.cancel()
+                try await drainUploadTask(task)
+            }
+            throw error
+        }
+        return try await interpretPatchResponse(
+            http: http,
+            uploadURL: uploadURL,
+            range: range,
+            fileLength: fileLength,
+            sermonLocalId: sermonLocalId
+        )
+    }
+
+    private func preparePatchUploadTask(
+        localFile: URL,
+        sermonLocalId: UUID,
+        objectPath: String,
+        uploadURL: URL,
+        range: Range<Int64>,
+        fileLength: Int64,
+        upsert: Bool
+    ) async throws -> URLSessionUploadTask {
         let token = try await tokenProvider()
         let chunkURL = try writeChunkFile(from: localFile, range: range)
-        // Kept until didComplete / cancel — see chunkFilesByTaskId.
 
         let contentLength = range.upperBound - range.lowerBound
-        var request = TusUploadClient.makePatchRequest(
+        let request = TusUploadClient.makePatchRequest(
             uploadURL: uploadURL,
             offset: range.lowerBound,
             contentLength: contentLength,
             accessToken: token,
             anonKey: anonKey
         )
-        // Background upload task
         let task = backgroundSession.uploadTask(with: request, fromFile: chunkURL)
         task.taskDescription = sermonLocalId.uuidString
         chunkFilesByTaskId[task.taskIdentifier] = chunkURL
 
-        // Persist task id before any await so relaunch can adopt the live task.
         if var existingRecord = resumeStore.record(for: sermonLocalId) {
             existingRecord.taskIdentifier = task.taskIdentifier
             existingRecord.uploadURL = uploadURL
@@ -638,43 +685,99 @@ final class UploadManager: NSObject, SermonAudioUploading {
         record.taskIdentifier = task.taskIdentifier
         record.objectPath = objectPath
         resumeStore.save(record)
+        return task
+    }
 
-        // Register the waiter on this MainActor turn BEFORE resume so a short
-        // final chunk cannot complete into a dropped finishPatch.
-        let http: HTTPURLResponse
-        do {
-            http = try await patchGate.wait(
-                taskId: task.taskIdentifier,
-                timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
-                timedOutError: UploadManagerError.timedOut,
-                beforeWaiting: { task.resume() }
-            )
-        } catch {
-            if (error as? UploadManagerError) == .timedOut {
-                task.cancel()
-                try await drainUploadTask(task)
-            }
-            throw error
-        }
-
+    private func interpretPatchResponse(
+        http: HTTPURLResponse,
+        uploadURL: URL,
+        range: Range<Int64>,
+        fileLength: Int64,
+        sermonLocalId: UUID
+    ) async throws -> Int64 {
         if http.statusCode == 401 {
-            // Refresh and re-HEAD rather than treating as success.
             _ = try await tokenProvider()
-            return try await headOffset(uploadURL: uploadURL, fileLength: fileLength, sermonLocalId: sermonLocalId)
+            return try await headOffset(
+                uploadURL: uploadURL,
+                fileLength: fileLength,
+                sermonLocalId: sermonLocalId
+            )
         }
         if http.statusCode == 409 {
-            return try await headOffset(uploadURL: uploadURL, fileLength: fileLength, sermonLocalId: sermonLocalId)
+            return try await headOffset(
+                uploadURL: uploadURL,
+                fileLength: fileLength,
+                sermonLocalId: sermonLocalId
+            )
         }
         guard http.statusCode == 204,
               let newOffset = TusUploadClient.parseUploadOffset(from: http),
               TusUploadClient.isValidOffset(newOffset, fileLength: fileLength) else {
             throw UploadManagerError.patchFailed(status: http.statusCode)
         }
-        // TUS: successful PATCH advances Upload-Offset to the end of the chunk.
         guard newOffset == range.upperBound else {
             throw UploadManagerError.invalidOffset(offset: newOffset, length: fileLength)
         }
         return newOffset
+    }
+
+    private func schedulePatchChunkAndContinue(
+        localFile: URL,
+        sermonLocalId: UUID,
+        objectPath: String,
+        uploadURL: URL,
+        range: Range<Int64>,
+        fileLength: Int64,
+        upsert: Bool
+    ) async throws {
+        let task = try await preparePatchUploadTask(
+            localFile: localFile,
+            sermonLocalId: sermonLocalId,
+            objectPath: objectPath,
+            uploadURL: uploadURL,
+            range: range,
+            fileLength: fileLength,
+            upsert: upsert
+        )
+
+        await withCheckedContinuation { (scheduled: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                do {
+                    let http = try await self.patchGate.wait(
+                        taskId: task.taskIdentifier,
+                        timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
+                        timedOutError: UploadManagerError.timedOut,
+                        beforeWaiting: {
+                            task.resume()
+                            scheduled.resume()
+                            self.onPatchTaskScheduled?()
+                        }
+                    )
+                    let newOffset = try await self.interpretPatchResponse(
+                        http: http,
+                        uploadURL: uploadURL,
+                        range: range,
+                        fileLength: fileLength,
+                        sermonLocalId: sermonLocalId
+                    )
+                    try await self.patchUntilComplete(
+                        localFile: localFile,
+                        sermonLocalId: sermonLocalId,
+                        objectPath: objectPath,
+                        uploadURL: uploadURL,
+                        startOffset: newOffset,
+                        fileLength: fileLength,
+                        upsert: upsert
+                    )
+                } catch {
+                    if (error as? UploadManagerError) == .timedOut {
+                        task.cancel()
+                        try? await self.drainUploadTask(task)
+                    }
+                    print("[UploadManager] Background chunk continuation failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     private func writeChunkFile(from file: URL, range: Range<Int64>) throws -> URL {
@@ -705,7 +808,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
         patchGate.finish(taskId: taskId, result: result)
     }
-    func continueIncompleteBackgroundUploads() async {
+    func scheduleIncompleteBackgroundUploadContinuations() async {
         guard featureFlags.resumableUploads else {
             let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
             for record in flagged {
@@ -713,23 +816,68 @@ final class UploadManager: NSObject, SermonAudioUploading {
             }
             return
         }
+        prepareBackgroundSessionIfNeeded()
         let records = resumeStore.allRecords().filter {
             $0.startedUnderFlag && $0.uploadURL != nil
         }
         for record in records {
-            let localURL = URL(fileURLWithPath: record.filePath)
-            guard record.matchesLocalFile(localURL, length: record.uploadLength) else { continue }
             do {
-                try await uploadResumable(
-                    localFile: localURL,
-                    sermonLocalId: record.sermonLocalId,
-                    objectPath: record.objectPath,
-                    upsert: record.upsert
-                )
+                try await scheduleUploadContinuation(for: record)
             } catch {
-                print("[UploadManager] Background upload continue failed: \(error.localizedDescription)")
+                print("[UploadManager] Background upload schedule failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    func continueIncompleteBackgroundUploads() async {
+        await scheduleIncompleteBackgroundUploadContinuations()
+    }
+
+    private func scheduleUploadContinuation(for record: UploadResumeRecord) async throws {
+        let localURL = URL(fileURLWithPath: record.filePath)
+        guard record.matchesLocalFile(localURL, length: record.uploadLength),
+              let uploadURL = record.uploadURL else {
+            return
+        }
+
+        let tasks = await backgroundSession.tasks.1
+        if let active = tasks.first(where: { $0.taskDescription == record.sermonLocalId.uuidString }),
+           active.state == .running || active.state == .suspended {
+            onPatchTaskScheduled?()
+            return
+        }
+
+        let fileLength = record.uploadLength
+        let offset = try await headOffset(
+            uploadURL: uploadURL,
+            fileLength: fileLength,
+            sermonLocalId: record.sermonLocalId
+        )
+        if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
+            resumeStore.remove(sermonLocalId: record.sermonLocalId)
+            return
+        }
+        guard let range = TusUploadClient.nextChunkRange(offset: offset, fileLength: fileLength) else {
+            throw UploadManagerError.incomplete(offset: offset, length: fileLength)
+        }
+
+        try await schedulePatchChunkAndContinue(
+            localFile: localURL,
+            sermonLocalId: record.sermonLocalId,
+            objectPath: record.objectPath,
+            uploadURL: uploadURL,
+            range: range,
+            fileLength: fileLength,
+            upsert: record.upsert
+        )
+    }
+
+    /// Mirrors `urlSessionDidFinishEvents` for tests — schedule work, then ack iOS.
+    func finishBackgroundSessionEventsForTesting() async {
+        await scheduleIncompleteBackgroundUploadContinuations()
+        let handler = backgroundCompletionHandler
+        backgroundCompletionHandler = nil
+        handler?()
     }
 }
 
@@ -760,13 +908,10 @@ extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
-            // Call the system handler promptly — do not await a full multi-chunk upload here.
+            await self.scheduleIncompleteBackgroundUploadContinuations()
             let handler = self.backgroundCompletionHandler
             self.backgroundCompletionHandler = nil
             handler?()
-            Task { @MainActor in
-                await self.continueIncompleteBackgroundUploads()
-            }
         }
     }
 }

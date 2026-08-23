@@ -115,4 +115,53 @@ struct UploadManagerFlagOffTests {
         #expect(tokenCalls == 0)
         #expect(store.allRecords().isEmpty)
     }
+
+    @Test func backgroundSessionHandlerRunsAfterNextChunkScheduled() async throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relaunch-schedule-\(UUID().uuidString).m4a")
+        try Data(repeating: 0xAB, count: 64).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let length = Int64(values.fileSize!)
+        let mtime = values.contentModificationDate!.timeIntervalSince1970
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "relaunch-schedule")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/\(sermonId.uuidString.lowercased()).m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/abc")!,
+                uploadLength: length,
+                filePath: file.path,
+                fileModificationTime: mtime,
+                taskIdentifier: 42,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        var order: [String] = []
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            createBackgroundSession: true
+        )
+        manager.headOffsetOverride = { _, _, _ in 0 }
+        manager.onPatchTaskScheduled = { order.append("scheduled") }
+        manager.handleBackgroundSessionEvents(identifier: UploadManager.sessionIdentifier) {
+            order.append("handler")
+        }
+
+        await manager.finishBackgroundSessionEventsForTesting()
+
+        #expect(order == ["scheduled", "handler"])
+    }
 }
