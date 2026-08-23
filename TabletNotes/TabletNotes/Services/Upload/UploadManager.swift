@@ -710,14 +710,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
             let localURL = URL(fileURLWithPath: record.filePath)
             guard record.matchesLocalFile(localURL, length: record.uploadLength) else { continue }
             do {
-                try await uploadResumableOnce(
+                try await uploadResumable(
                     localFile: localURL,
                     sermonLocalId: record.sermonLocalId,
                     objectPath: record.objectPath,
-                    upsert: record.upsert,
-                    flagEpoch: flagOffEpoch,
-                    fileLength: record.uploadLength,
-                    modificationTime: record.fileModificationTime ?? 0
+                    upsert: record.upsert
                 )
             } catch {
                 print("[UploadManager] Background upload continue failed: \(error.localizedDescription)")
