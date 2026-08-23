@@ -385,7 +385,10 @@ final class SyncService: SyncServiceProtocol {
     ) {
         self.authService = authService
         let resolvedLocalRepository = localRepository ?? SermonSyncLocalRepository(modelContext: modelContext)
-        let resolvedRemoteGateway = remoteGateway ?? SermonSyncRemoteGateway(supabaseService: supabaseService)
+        let resolvedRemoteGateway = remoteGateway ?? SermonSyncRemoteGateway(
+            supabaseService: supabaseService,
+            audioUploader: UploadManager.shared
+        )
         self.engine = engine ?? SermonSyncEngine(
             localRepository: resolvedLocalRepository,
             remoteGateway: resolvedRemoteGateway

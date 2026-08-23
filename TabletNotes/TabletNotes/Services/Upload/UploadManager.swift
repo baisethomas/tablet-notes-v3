@@ -81,6 +81,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     /// Temp chunk files keyed by URLSession task id — deleted only after the
     /// task completes (or is cancelled), never while the system may still read.
     private var chunkFilesByTaskId: [Int: URL] = [:]
+    /// Coalesce concurrent sync attempts for the same sermon into one upload op.
+    private var inFlightUploads: [UUID: Task<Void, Error>] = [:]
     private var prepared = false
 
     /// Test seam — inject store / token / URLs without touching the real session.
@@ -132,6 +134,31 @@ final class UploadManager: NSObject, SermonAudioUploading {
         upsert: Bool
     ) async throws {
         prepareBackgroundSessionIfNeeded()
+
+        if let existing = inFlightUploads[sermonLocalId] {
+            try await existing.value
+            return
+        }
+
+        let task = Task { @MainActor in
+            try await self.uploadResumableOnce(
+                localFile: localFile,
+                sermonLocalId: sermonLocalId,
+                objectPath: objectPath,
+                upsert: upsert
+            )
+        }
+        inFlightUploads[sermonLocalId] = task
+        defer { inFlightUploads.removeValue(forKey: sermonLocalId) }
+        try await task.value
+    }
+
+    private func uploadResumableOnce(
+        localFile: URL,
+        sermonLocalId: UUID,
+        objectPath: String,
+        upsert: Bool
+    ) async throws {
 
         let fileLength = try fileByteLength(at: localFile)
         guard fileLength >= 0 else { throw UploadManagerError.fileMissing }
@@ -385,10 +412,30 @@ final class UploadManager: NSObject, SermonAudioUploading {
         guard let task = tasks.first(where: { $0.taskDescription == sermonLocalId.uuidString }) else {
             return
         }
-        _ = try await waitForPatchCompletion(
-            taskId: task.taskIdentifier,
-            timeout: Self.chunkWaitTimeoutNanoseconds
-        )
+        do {
+            _ = try await waitForPatchCompletion(
+                taskId: task.taskIdentifier,
+                timeout: Self.chunkWaitTimeoutNanoseconds
+            )
+        } catch {
+            if (error as? UploadManagerError) == .timedOut {
+                task.cancel()
+                try await drainUploadTask(task)
+            }
+            throw error
+        }
+    }
+
+    private func drainUploadTask(_ task: URLSessionUploadTask) async throws {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.flagOffCancelTimeoutNanoseconds))
+        while ContinuousClock.now < deadline {
+            let tasks = await backgroundSession.tasks.1
+            if !tasks.contains(where: { $0.taskIdentifier == task.taskIdentifier }) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw UploadManagerError.flagOffCancelTimedOut
     }
 
     private func patchUntilComplete(
@@ -481,6 +528,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         } catch {
             if (error as? UploadManagerError) == .timedOut {
                 task.cancel()
+                try await drainUploadTask(task)
             }
             throw error
         }

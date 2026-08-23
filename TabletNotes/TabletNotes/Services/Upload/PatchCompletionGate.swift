@@ -28,6 +28,8 @@ final class PatchCompletionGate {
         beforeWaiting: (() -> Void)? = nil
     ) async throws -> HTTPURLResponse {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<HTTPURLResponse, Error>) in
+            timedOutIds.remove(taskId)
+
             if let early = earlyResults.removeValue(forKey: taskId) {
                 switch early {
                 case .success(let response):

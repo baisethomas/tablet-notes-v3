@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 protocol SermonSyncRemoteGatewayProtocol {
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData]
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult
@@ -9,6 +10,7 @@ protocol SermonSyncRemoteGatewayProtocol {
     func deleteAllRemoteData(for userId: UUID) async throws
 }
 
+@MainActor
 final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let supabaseService: SupabaseServiceProtocol
     private let audioUploader: any SermonAudioUploading

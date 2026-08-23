@@ -220,7 +220,6 @@ struct PatchCompletionGateTests {
         }
         let got = try await waitTask.value
         #expect(got.statusCode == 204)
-        // Timeout task may still wake later; a reused id must accept a new finish.
         try await Task.sleep(nanoseconds: 250_000_000)
         gate.finish(taskId: 12, result: .success(response))
         let reused = try await gate.wait(
@@ -228,6 +227,37 @@ struct PatchCompletionGateTests {
             timeoutNanoseconds: 1_000_000_000,
             timedOutError: UploadManagerError.timedOut
         )
+        #expect(reused.statusCode == 204)
+    }
+
+    @Test func newWaitAfterTimeoutAcceptsFinishOnceTimedOutStateCleared() async throws {
+        let gate = PatchCompletionGate()
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        do {
+            _ = try await gate.wait(
+                taskId: 13,
+                timeoutNanoseconds: 30_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+            Issue.record("expected timeout")
+        } catch is UploadManagerError {
+            // expected
+        }
+        let waitTask = Task { @MainActor in
+            try await gate.wait(
+                taskId: 13,
+                timeoutNanoseconds: 1_000_000_000,
+                timedOutError: UploadManagerError.timedOut
+            )
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        gate.finish(taskId: 13, result: .success(response))
+        let reused = try await waitTask.value
         #expect(reused.statusCode == 204)
     }
 }
