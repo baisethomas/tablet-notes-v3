@@ -144,7 +144,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
            existing.objectPath == objectPath {
             // Never append new-file bytes onto an old TUS resource.
             if !existing.matchesLocalFile(localFile, length: fileLength) {
-                await cancelActiveUploadTasks(for: sermonLocalId)
+                try await cancelAndDrainUploadTasks(for: sermonLocalId)
                 resumeStore.remove(sermonLocalId: sermonLocalId)
             } else if let uploadURL = existing.uploadURL {
                 do {
@@ -168,10 +168,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
                     )
                     return
                 } catch UploadManagerError.headRestart {
-                    // Record discarded inside headOffset — fall through to a fresh create.
+                    // Record discarded inside headOffset — drain any stale writer
+                    // before minting a fresh TUS resource at this path.
+                    try await cancelAndDrainUploadTasks(for: sermonLocalId)
                 }
             }
         }
+
+        try await cancelAndDrainUploadTasks(for: sermonLocalId, cancelRunning: false)
 
         let modificationTime = try fileModificationTime(at: localFile)
         var record = UploadResumeRecord(
@@ -276,16 +280,39 @@ final class UploadManager: NSObject, SermonAudioUploading {
         return date.timeIntervalSince1970
     }
 
-    private func cancelActiveUploadTasks(for sermonLocalId: UUID) async {
-        let uploadTasks = await backgroundSession.tasks.1
-        for task in uploadTasks where task.taskDescription == sermonLocalId.uuidString {
-            switch task.state {
-            case .running, .suspended:
-                task.cancel()
-            default:
-                break
+    private func cancelAndDrainUploadTasks(
+        for sermonLocalId: UUID,
+        timeoutNanoseconds: UInt64 = UploadManager.flagOffCancelTimeoutNanoseconds,
+        cancelRunning: Bool = true
+    ) async throws {
+        let description = sermonLocalId.uuidString
+        if cancelRunning {
+            let uploadTasks = await backgroundSession.tasks.1
+            for task in uploadTasks where task.taskDescription == description {
+                switch task.state {
+                case .running, .suspended:
+                    task.cancel()
+                default:
+                    break
+                }
             }
         }
+
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+        while ContinuousClock.now < deadline {
+            let remaining = await backgroundSession.tasks.1.filter { task in
+                guard task.taskDescription == description else { return false }
+                switch task.state {
+                case .running, .suspended, .canceling:
+                    return true
+                default:
+                    return false
+                }
+            }
+            if remaining.isEmpty { return }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw UploadManagerError.flagOffCancelTimedOut
     }
 
     private func createUpload(
@@ -416,6 +443,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
         let task = backgroundSession.uploadTask(with: request, fromFile: chunkURL)
         task.taskDescription = sermonLocalId.uuidString
         chunkFilesByTaskId[task.taskIdentifier] = chunkURL
+
+        // Persist task id before any await so relaunch can adopt the live task.
+        if var existingRecord = resumeStore.record(for: sermonLocalId) {
+            existingRecord.taskIdentifier = task.taskIdentifier
+            existingRecord.uploadURL = uploadURL
+            existingRecord.objectPath = objectPath
+            resumeStore.save(existingRecord)
+        }
 
         var record = resumeStore.record(for: sermonLocalId) ?? UploadResumeRecord(
             sermonLocalId: sermonLocalId,

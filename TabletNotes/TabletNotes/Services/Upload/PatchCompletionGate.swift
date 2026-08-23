@@ -2,13 +2,16 @@ import Foundation
 
 /// Coordinates URLSession PATCH completion vs. the awaiting coroutine.
 ///
-/// Handles two races Ternary/Codex flagged:
+/// Handles races Ternary/Codex flagged:
 /// 1. Delegate completion before the waiter is registered → stash in `early`.
 /// 2. Timeout must resume the stored continuation (not rely on cancelling an
 ///    unresumed CheckedContinuation inside a task group).
+/// 3. Only one of `finish` or the timeout task may resume a waiter — enforced
+///    via per-wait generation tokens and atomic `removeValue`.
 @MainActor
 final class PatchCompletionGate {
     private struct Waiter {
+        let generation: UInt64
         let continuation: CheckedContinuation<HTTPURLResponse, Error>
         let timeoutTask: Task<Void, Never>
     }
@@ -16,6 +19,7 @@ final class PatchCompletionGate {
     private var waiters: [Int: Waiter] = [:]
     private var earlyResults: [Int: Result<HTTPURLResponse, Error>] = [:]
     private var timedOutIds: Set<Int> = []
+    private var nextGeneration: UInt64 = 0
 
     func wait(
         taskId: Int,
@@ -34,15 +38,23 @@ final class PatchCompletionGate {
                 return
             }
 
+            let generation = nextGeneration
+            nextGeneration &+= 1
             let timeoutTask = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 guard !Task.isCancelled else { return }
-                if let waiter = self.waiters.removeValue(forKey: taskId) {
+                guard self.waiters[taskId]?.generation == generation else { return }
+                if let waiter = self.waiters.removeValue(forKey: taskId),
+                   waiter.generation == generation {
                     self.timedOutIds.insert(taskId)
                     waiter.continuation.resume(throwing: timedOutError)
                 }
             }
-            waiters[taskId] = Waiter(continuation: cont, timeoutTask: timeoutTask)
+            waiters[taskId] = Waiter(
+                generation: generation,
+                continuation: cont,
+                timeoutTask: timeoutTask
+            )
             beforeWaiting?()
         }
     }

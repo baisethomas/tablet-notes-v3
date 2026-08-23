@@ -46,6 +46,8 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         if isResumableUploadsEnabled() {
             let plan = try await ResumableUploadPathResolver.plan(
                 sermonLocalId: data.id,
+                localFile: data.audioFileURL,
+                fileLength: Int64(fileSize),
                 resumeStore: resumeStore,
                 mint: {
                     let minted = try await supabaseService.getSignedUploadURL(
