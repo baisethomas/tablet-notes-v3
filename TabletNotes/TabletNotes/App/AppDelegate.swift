@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UploadManager.shared.prepareBackgroundSessionIfNeeded()
+        Task { @MainActor in
+            await UploadManager.shared.continueIncompleteBackgroundUploads()
+        }
         return true
     }
 

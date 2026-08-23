@@ -171,4 +171,50 @@ struct UploadManagerFlagOffTests {
         #expect(UploadManager.shouldAwaitBackgroundUploadTask(state: .canceling))
         #expect(!UploadManager.shouldAwaitBackgroundUploadTask(state: .completed))
     }
+
+    @Test func launchRecoverySchedulesPersistedUploadWithoutActiveTask() async throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("launch-recovery-\(UUID().uuidString).m4a")
+        try Data(repeating: 0xEF, count: 32).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let length = Int64(values.fileSize!)
+        let mtime = values.contentModificationDate!.timeIntervalSince1970
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "launch-recovery")
+        let flags = FeatureFlags(defaults: defaults)
+        flags.setEnabled(true, for: .resumableUploads)
+
+        let sermonId = UUID()
+        store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "user/\(sermonId.uuidString.lowercased()).m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/abc")!,
+                uploadLength: length,
+                filePath: file.path,
+                fileModificationTime: mtime,
+                taskIdentifier: nil,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        var scheduled = false
+        let manager = UploadManager(
+            resumeStore: store,
+            featureFlags: flags,
+            tokenProvider: { "token" },
+            createBackgroundSession: true
+        )
+        manager.headOffsetOverride = { _, _, _ in 0 }
+        manager.onPatchTaskScheduled = { scheduled = true }
+
+        await manager.continueIncompleteBackgroundUploads()
+
+        #expect(scheduled)
+    }
 }
