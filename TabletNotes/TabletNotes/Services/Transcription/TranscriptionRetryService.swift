@@ -301,7 +301,12 @@ class TranscriptionRetryService: ObservableObject {
             sermon.markPendingSync(metadata: true)
             changed = true
         }
-        while let staleJob = job(for: sermon.id) {
+        for staleJob in openTranscriptionJobs(for: sermon.id, in: context) {
+            // A job running right now is a live runner (a pull can land a
+            // remote transcript mid-flight); let it finish and report through
+            // its own completion. A .running job with no live runner is a
+            // relic of a killed app and is safe to close.
+            if staleJob.status == .running && isProcessingQueue { continue }
             staleJob.markComplete()
             changed = true
         }
@@ -309,6 +314,17 @@ class TranscriptionRetryService: ObservableObject {
             try? context.save()
         }
         return true
+    }
+
+    private func openTranscriptionJobs(for sermonId: UUID, in context: ModelContext) -> [ProcessingJob] {
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).filter {
+            $0.sermonId == sermonId &&
+            $0.kind == .transcription &&
+            $0.status != .complete
+        }
     }
 
     private func startProcessing(job nextJob: ProcessingJob, sermon: Sermon, in context: ModelContext) {

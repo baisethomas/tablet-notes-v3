@@ -281,23 +281,44 @@ class SummaryRetryService: ObservableObject {
 
     /// TAB-94 companion: a sermon whose summary already exists needs no
     /// automatic summary work. When the status string has been walked back to
-    /// "pending"/"processing" (TAB-95) with no job in flight — so there is
-    /// nothing to resume — repair it forward instead of minting a job, which
-    /// re-ran a paid summary over one that already exists. An interrupted
-    /// deliberate regeneration still has its job row and is resumed, not
-    /// repaired; the manual retry paths are untouched.
+    /// "pending"/"processing" (TAB-95), repair it forward instead of minting
+    /// or resuming a job, which re-ran a paid summary over one that already
+    /// exists. Only a job that is running right now (a live deliberate
+    /// regeneration) is spared; any other open job is a relic — most likely
+    /// minted by the pre-TAB-94 sweeps against this same poisoned state — and
+    /// resuming it would re-bill, so it is closed. The manual retry paths are
+    /// untouched.
     @discardableResult
     private func repairSummarizedSermonIfNeeded(_ sermon: Sermon) -> Bool {
         guard sermon.summary != nil,
-              sermon.summaryStatus == "pending" || sermon.summaryStatus == "processing",
-              job(for: sermon.id) == nil else {
+              sermon.summaryStatus == "pending" || sermon.summaryStatus == "processing" else {
             return false
+        }
+
+        let openJobs = openSummaryJobs(for: sermon.id)
+        if openJobs.contains(where: { $0.status == .running && isProcessingQueue }) {
+            return false
+        }
+        for staleJob in openJobs {
+            staleJob.markComplete()
         }
 
         print("[SummaryRetryService] Sermon \(sermon.id) already has a summary; repairing status \(sermon.summaryStatus) -> complete")
         sermon.summaryStatus = "complete"
         sermon.markPendingSync(metadata: true)
         return true
+    }
+
+    private func openSummaryJobs(for sermonId: UUID) -> [ProcessingJob] {
+        guard let context = modelContext else { return [] }
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).filter {
+            $0.sermonId == sermonId &&
+            $0.kind == .summary &&
+            $0.status != .complete
+        }
     }
 
     func retrySummaryIfNeeded(for sermon: Sermon) {

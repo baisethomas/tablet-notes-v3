@@ -198,8 +198,8 @@ struct CompletedSermonReprocessingGuardTests {
     /// The bootstrap sweep saw a poisoned "pending" summary status with no live
     /// job and recreated the job — a paid summary re-run over a summary that
     /// already exists. With no job in flight there is no work to resume; repair
-    /// the status instead. (An interrupted deliberate regeneration still has
-    /// its job row, and that path is untouched.)
+    /// the status instead. (Only a regeneration running right now is spared —
+    /// see summarySweepClosesRelicJobInsteadOfResuming.)
     @MainActor
     @Test func summaryBootstrapSweepRepairsPoisonedStatusWithoutNewJob() async throws {
         let context = try makeModelContext()
@@ -259,6 +259,108 @@ struct CompletedSermonReprocessingGuardTests {
         let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
         #expect(persisted?.summaryStatus == "complete")
         #expect(persisted?.metadataNeedsSync == true)
+    }
+
+    /// Review round 2, finding 1: a sync pull can land a remote transcript
+    /// while a legitimate transcription run is in flight. The sweep must spare
+    /// the live job — closing it mid-run would orphan the runner's completion
+    /// — while still repairing nothing prematurely; the run finishes and
+    /// reports through its own completion.
+    @MainActor
+    @Test func sweepSparesLiveTranscriptionRunWhenPullLandsTranscript() async throws {
+        let context = try makeModelContext()
+        let audioURL = try makeAudioFile(named: "tab94-live-run.m4a")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let sermon = Sermon(
+            title: "Live Run Sermon",
+            audioFileName: audioURL.lastPathComponent,
+            date: Date().addingTimeInterval(-3600),
+            serviceType: "Sunday Service",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "synced",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+        retryService.summaryEnqueuer = { _, _ in }
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.summaryEnqueuer = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var storedCompletion: ((Result<(String, [TranscriptSegment]), Error>) -> Void)?
+        retryService.transcriptionRunner = { _, completion in
+            storedCompletion = completion // hold the run in flight
+        }
+
+        retryService.overrideNetworkAvailability(true)
+        retryService.enqueueTranscription(for: sermon.id)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(storedCompletion != nil)
+
+        // A pull lands the remote transcript mid-run.
+        let pulledTranscript = Transcript(text: "Transcript from pull", needsSync: false)
+        context.insert(pulledTranscript)
+        sermon.transcript = pulledTranscript
+        try context.save()
+
+        retryService.checkForStuckProcessingTranscriptions()
+
+        let liveJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.kind == .transcription })
+        #expect(liveJob?.status == .running)
+
+        storedCompletion?(.success(("Transcript from live run", [])))
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(liveJob?.status == .complete)
+        #expect(sermon.transcriptionStatus == "complete")
+        #expect(sermon.transcript?.text == "Transcript from live run")
+        #expect(!retryService.isProcessingQueue)
+    }
+
+    /// Review round 2, finding 3: a non-running summary job alongside an
+    /// existing summary is a relic — most likely minted by the pre-TAB-94
+    /// sweeps against the same poisoned state this PR fixes — and resuming it
+    /// after an app upgrade would re-bill. The sweep closes it and repairs the
+    /// status instead.
+    @MainActor
+    @Test func summarySweepClosesRelicJobInsteadOfResuming() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "pending")
+        context.insert(sermon)
+        let relicJob = ProcessingJob(sermonId: sermon.id, kind: .summary)
+        context.insert(relicJob)
+        try context.save()
+        TranscriptSnapshotStore.save(
+            transcriptId: sermon.transcript?.id ?? UUID(),
+            text: sermon.transcript?.text ?? "",
+            for: sermon.id
+        )
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+
+        retryService.recoverIncompleteSummaries()
+
+        #expect(relicJob.status == .complete)
+        #expect(sermon.summaryStatus == "complete")
+        #expect(sermon.metadataNeedsSync)
+
+        let freshContext = ModelContext(context.container)
+        let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(persisted?.summaryStatus == "complete")
     }
 
     /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow
