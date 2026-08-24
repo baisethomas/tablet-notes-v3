@@ -132,6 +132,13 @@ struct CompletedSermonReprocessingGuardTests {
         #expect(jobs.filter { $0.status != .complete }.isEmpty)
         #expect(sermon.transcriptionStatus == "complete")
         #expect(sermon.metadataNeedsSync)
+
+        // The repair must be persisted, not pending autosave: a fresh context
+        // sees only saved state.
+        let freshContext = ModelContext(context.container)
+        let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(persisted?.transcriptionStatus == "complete")
+        #expect(persisted?.metadataNeedsSync == true)
     }
 
     /// A deliberate Retry tap on a sermon whose transcript already exists (the
@@ -216,6 +223,13 @@ struct CompletedSermonReprocessingGuardTests {
         #expect(jobs.isEmpty)
         #expect(sermon.summaryStatus == "complete")
         #expect(sermon.metadataNeedsSync)
+
+        // The repair must be persisted, not pending autosave: a fresh context
+        // sees only saved state.
+        let freshContext = ModelContext(context.container)
+        let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(persisted?.summaryStatus == "complete")
+        #expect(persisted?.metadataNeedsSync == true)
     }
 
     /// Same poisoned state, caught by the stuck-processing sweep.
@@ -238,6 +252,13 @@ struct CompletedSermonReprocessingGuardTests {
         let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
         #expect(jobs.isEmpty)
         #expect(sermon.summaryStatus == "complete")
+
+        // The repair must be persisted, not pending autosave: a fresh context
+        // sees only saved state.
+        let freshContext = ModelContext(context.container)
+        let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
+        #expect(persisted?.summaryStatus == "complete")
+        #expect(persisted?.metadataNeedsSync == true)
     }
 
     /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow
