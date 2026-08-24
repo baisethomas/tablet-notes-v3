@@ -1,0 +1,279 @@
+import Foundation
+import SwiftData
+import Testing
+@testable import TabletNotes
+
+/// Regression tests for TAB-94: a sermon that already owns its transcript (or
+/// summary) must never be re-run by the retry queues or sweeps, whatever its
+/// status string says. Sync can walk a completed stage status back to
+/// "processing"/"pending" (TAB-95), and before the guard that poisoned string
+/// was enough to re-bill AssemblyAI for work that had already succeeded.
+struct CompletedSermonReprocessingGuardTests {
+
+    @MainActor
+    private func makeModelContext() throws -> ModelContext {
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            Summary.self,
+            ProcessingJob.self,
+            TranscriptSegment.self,
+            ChatMessage.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        return ModelContext(container)
+    }
+
+    @MainActor
+    private func makeAudioFile(named fileName: String) throws -> URL {
+        let audioDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AudioRecordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let audioURL = audioDirectory.appendingPathComponent(fileName)
+        _ = FileManager.default.createFile(atPath: audioURL.path, contents: Data(repeating: 0x01, count: 4096))
+        return audioURL
+    }
+
+    @MainActor
+    private func makeTranscribedSermon(
+        audioFileName: String,
+        transcriptionStatus: String,
+        date: Date = Date()
+    ) -> Sermon {
+        let transcript = Transcript(text: "Already transcribed text", needsSync: false)
+        return Sermon(
+            title: "Completed Sermon",
+            audioFileName: audioFileName,
+            date: date,
+            serviceType: "Sunday Service",
+            transcript: transcript,
+            notes: [],
+            summary: nil,
+            syncStatus: "synced",
+            transcriptionStatus: transcriptionStatus,
+            summaryStatus: "complete",
+            userId: UUID()
+        )
+    }
+
+    // MARK: - Transcription
+
+    /// The exact incident: a stale/poisoned "processing" status plus a runnable
+    /// job must not reach the transcription runner when the transcript already
+    /// exists. The job is closed and the status repaired forward instead.
+    @MainActor
+    @Test func processQueueClosesJobInsteadOfRerunningTranscribedSermon() async throws {
+        let context = try makeModelContext()
+        let audioURL = try makeAudioFile(named: "tab94-queue.m4a")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let sermon = makeTranscribedSermon(
+            audioFileName: audioURL.lastPathComponent,
+            transcriptionStatus: "processing"
+        )
+        context.insert(sermon)
+        let staleJob = ProcessingJob(sermonId: sermon.id, kind: .transcription)
+        context.insert(staleJob)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.transcriptionRunner = { _, completion in
+            runnerCallCount += 1
+            completion(.success(("Re-transcribed text", [])))
+        }
+
+        // false -> true triggers processQueue(), which picks up the stale job.
+        retryService.overrideNetworkAvailability(true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        #expect(runnerCallCount == 0)
+        #expect(jobs.allSatisfy { $0.status == .complete })
+        #expect(sermon.transcriptionStatus == "complete")
+        #expect(sermon.metadataNeedsSync)
+    }
+
+    /// The stuck-processing sweep used to see the poisoned "processing" status,
+    /// mint a fresh job, and flip the sermon to "pending" — queueing a paid
+    /// re-transcription. It must repair the status instead.
+    @MainActor
+    @Test func stuckSweepRepairsTranscribedSermonInsteadOfRequeueing() async throws {
+        let context = try makeModelContext()
+        let audioURL = try makeAudioFile(named: "tab94-sweep.m4a")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        // Old enough to be past the 15-minute stuck threshold, well inside the
+        // 30-day automatic recovery window.
+        let sermon = makeTranscribedSermon(
+            audioFileName: audioURL.lastPathComponent,
+            transcriptionStatus: "processing",
+            date: Date().addingTimeInterval(-3600)
+        )
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+
+        retryService.checkForStuckProcessingTranscriptions()
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        #expect(jobs.filter { $0.status != .complete }.isEmpty)
+        #expect(sermon.transcriptionStatus == "complete")
+        #expect(sermon.metadataNeedsSync)
+    }
+
+    /// A deliberate Retry tap on a sermon whose transcript already exists (the
+    /// retry affordance is visible precisely because the status is poisoned)
+    /// must keep the completed work rather than re-billing the provider.
+    @MainActor
+    @Test func enqueueTranscriptionRefusesWhenTranscriptExists() async throws {
+        let context = try makeModelContext()
+        let audioURL = try makeAudioFile(named: "tab94-enqueue.m4a")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let sermon = makeTranscribedSermon(
+            audioFileName: audioURL.lastPathComponent,
+            transcriptionStatus: "failed"
+        )
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+
+        let enqueued = retryService.enqueueTranscription(for: sermon.id)
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        #expect(!enqueued)
+        #expect(jobs.filter { $0.status != .complete }.isEmpty)
+        #expect(sermon.transcriptionStatus == "complete")
+    }
+
+    // MARK: - Summary
+
+    @MainActor
+    private func makeSummarizedSermon(summaryStatus: String, updatedAt: Date = Date()) -> Sermon {
+        let transcript = Transcript(text: String(repeating: "Sermon text ", count: 20))
+        let summary = Summary(
+            title: "Existing Summary",
+            text: "The summary that already exists.",
+            type: "Sunday Service",
+            status: "complete"
+        )
+        return Sermon(
+            title: "Summarized Sermon",
+            audioFileName: "tab94-summary.m4a",
+            date: Date().addingTimeInterval(-3600),
+            serviceType: "Sunday Service",
+            transcript: transcript,
+            notes: [],
+            summary: summary,
+            syncStatus: "synced",
+            transcriptionStatus: "complete",
+            summaryStatus: summaryStatus,
+            userId: UUID(),
+            updatedAt: updatedAt
+        )
+    }
+
+    /// The bootstrap sweep saw a poisoned "pending" summary status with no live
+    /// job and recreated the job — a paid summary re-run over a summary that
+    /// already exists. With no job in flight there is no work to resume; repair
+    /// the status instead. (An interrupted deliberate regeneration still has
+    /// its job row, and that path is untouched.)
+    @MainActor
+    @Test func summaryBootstrapSweepRepairsPoisonedStatusWithoutNewJob() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "pending")
+        context.insert(sermon)
+        try context.save()
+        TranscriptSnapshotStore.save(
+            transcriptId: sermon.transcript?.id ?? UUID(),
+            text: sermon.transcript?.text ?? "",
+            for: sermon.id
+        )
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+
+        retryService.recoverIncompleteSummaries()
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        #expect(jobs.isEmpty)
+        #expect(sermon.summaryStatus == "complete")
+        #expect(sermon.metadataNeedsSync)
+    }
+
+    /// Same poisoned state, caught by the stuck-processing sweep.
+    @MainActor
+    @Test func stuckSummarySweepRepairsPoisonedStatusWithoutNewJob() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(
+            summaryStatus: "processing",
+            updatedAt: Date().addingTimeInterval(-3600)
+        )
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+
+        retryService.checkForStuckProcessingSummaries()
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        #expect(jobs.isEmpty)
+        #expect(sermon.summaryStatus == "complete")
+    }
+
+    /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow
+    /// with fresh transcript text) replaces an existing summary today and must
+    /// keep doing so — the guard only stops job-less automatic sweeps.
+    @MainActor
+    @Test func deliberateSummaryRegenerationStillReplacesExistingSummary() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "complete")
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { _, _ in
+            runnerCallCount += 1
+            return SummaryGenerationResult(title: "Regenerated", summary: "A fresh summary.")
+        }
+
+        let started = retryService.retrySummaryNow(
+            for: sermon.id,
+            transcriptText: String(repeating: "Fresh transcript ", count: 20)
+        )
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        #expect(started)
+        #expect(runnerCallCount == 1)
+        #expect(sermon.summary?.text == "A fresh summary.")
+        #expect(sermon.summaryStatus == "complete")
+    }
+}
