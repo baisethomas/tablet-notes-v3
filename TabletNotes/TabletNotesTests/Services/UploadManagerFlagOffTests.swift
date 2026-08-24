@@ -107,6 +107,7 @@ struct UploadManagerFlagOffTests {
                 tokenCalls += 1
                 return "token"
             },
+            currentUserIdProvider: { UUID() },
             createBackgroundSession: false
         )
 
@@ -225,9 +226,10 @@ struct UploadManagerFlagOffTests {
     }
 
     @Test func relaunchFinishPatchRemovesPersistedChunkFile() async throws {
-        let chunk = FileManager.default.temporaryDirectory
-            .appendingPathComponent("tus-chunk-\(UUID().uuidString)")
+        let chunkDir = try UploadManager.uploadChunkDirectory()
+        let chunk = chunkDir.appendingPathComponent("tus-chunk-\(UUID().uuidString)")
         try Data(repeating: 0x11, count: 16).write(to: chunk)
+        defer { try? FileManager.default.removeItem(at: chunk) }
 
         let suite = UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
@@ -263,6 +265,19 @@ struct UploadManagerFlagOffTests {
         #expect(!FileManager.default.fileExists(atPath: chunk.path))
         #expect(store.record(for: sermonId)?.chunkFilePath == nil)
         #expect(store.record(for: sermonId)?.taskIdentifier == nil)
+    }
+
+    @Test func uploadChunkDirectoryLivesUnderApplicationSupport() throws {
+        let dir = try UploadManager.uploadChunkDirectory()
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        #expect(dir.path.hasPrefix(support.path))
+        #expect(dir.lastPathComponent == "upload-chunks")
+        #expect(dir.path != FileManager.default.temporaryDirectory.path)
     }
 
     @Test func clearPersistedResumeRecordsEmptiesStore() async {

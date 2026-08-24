@@ -113,8 +113,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var backgroundSession: URLSession!
     private var backgroundCompletionHandler: (() -> Void)?
     private let patchGate = PatchCompletionGate()
-    /// Temp chunk files keyed by URLSession task id — deleted only after the
-    /// task completes (or is cancelled), never while the system may still read.
+    /// Persistent chunk files keyed by URLSession task id — deleted only after
+    /// the task completes (or is cancelled), never while the system may still read.
+    /// Lives under Application Support (not NSTemporaryDirectory) so background
+    /// URLSession can still read the body after process termination.
     private var chunkFilesByTaskId: [Int: URL] = [:]
     /// Coalesce concurrent sync attempts for the same sermon into one upload op.
     private var inFlightUploads: [InFlightUploadKey: Task<Void, Error>] = [:]
@@ -1011,16 +1013,23 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
         await withCheckedContinuation { (scheduled: CheckedContinuation<Void, Never>) in
             Task { @MainActor in
+                var didSignal = false
+                let signalScheduled = {
+                    guard !didSignal else { return }
+                    didSignal = true
+                    scheduled.resume()
+                    self.onPatchTaskScheduled?()
+                }
+                // Resume the scheduling waiter before entering the gate so an
+                // early throw (e.g. duplicatePatchWait) cannot hang forever.
+                task.resume()
+                signalScheduled()
                 do {
                     let http = try await self.patchGate.wait(
                         taskId: task.taskIdentifier,
                         timeoutNanoseconds: Self.chunkWaitTimeoutNanoseconds,
                         timedOutError: UploadManagerError.timedOut,
-                        beforeWaiting: {
-                            task.resume()
-                            scheduled.resume()
-                            self.onPatchTaskScheduled?()
-                        }
+                        beforeWaiting: signalScheduled
                     )
                     let newOffset = try await self.interpretPatchResponse(
                         http: http,
@@ -1049,6 +1058,24 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
     }
 
+    /// Application Support subdirectory for background-session PATCH bodies.
+    /// Must outlive process death — NSTemporaryDirectory may be purged.
+    static func uploadChunkDirectory() throws -> URL {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let dir = support.appendingPathComponent("upload-chunks", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutable = dir
+        try? mutable.setResourceValues(values)
+        return dir
+    }
+
     private func writeChunkFile(from file: URL, range: Range<Int64>) throws -> URL {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -1057,10 +1084,10 @@ final class UploadManager: NSObject, SermonAudioUploading {
         guard let data = try handle.read(upToCount: count), data.count == count else {
             throw UploadManagerError.fileMissing
         }
-        let temp = FileManager.default.temporaryDirectory
+        let chunkURL = try Self.uploadChunkDirectory()
             .appendingPathComponent("tus-chunk-\(UUID().uuidString)")
-        try data.write(to: temp, options: .atomic)
-        return temp
+        try data.write(to: chunkURL, options: .atomic)
+        return chunkURL
     }
 
     private func waitForPatchCompletion(taskId: Int, timeout: UInt64) async throws -> HTTPURLResponse {
@@ -1128,14 +1155,24 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 return path
             }
         )
-        let tempDir = FileManager.default.temporaryDirectory
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: tempDir,
-            includingPropertiesForKeys: nil
-        ) else { return }
-        for url in entries where url.lastPathComponent.hasPrefix("tus-chunk-") {
-            guard !protectedPaths.contains(url.path) else { continue }
-            try? FileManager.default.removeItem(at: url)
+        let dirsToSweep: [URL] = {
+            var dirs: [URL] = []
+            if let persistent = try? Self.uploadChunkDirectory() {
+                dirs.append(persistent)
+            }
+            // Also sweep legacy NSTemporaryDirectory chunks from earlier builds.
+            dirs.append(FileManager.default.temporaryDirectory)
+            return dirs
+        }()
+        for dir in dirsToSweep {
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: nil
+            ) else { continue }
+            for url in entries where url.lastPathComponent.hasPrefix("tus-chunk-") {
+                guard !protectedPaths.contains(url.path) else { continue }
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 
