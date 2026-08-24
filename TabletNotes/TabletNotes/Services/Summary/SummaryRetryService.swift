@@ -279,7 +279,32 @@ class SummaryRetryService: ObservableObject {
         )
     }
 
+    /// TAB-94 companion: a sermon whose summary already exists needs no
+    /// automatic summary work. When the status string has been walked back to
+    /// "pending"/"processing" (TAB-95) with no job in flight — so there is
+    /// nothing to resume — repair it forward instead of minting a job, which
+    /// re-ran a paid summary over one that already exists. An interrupted
+    /// deliberate regeneration still has its job row and is resumed, not
+    /// repaired; the manual retry paths are untouched.
+    @discardableResult
+    private func repairSummarizedSermonIfNeeded(_ sermon: Sermon) -> Bool {
+        guard sermon.summary != nil,
+              sermon.summaryStatus == "pending" || sermon.summaryStatus == "processing",
+              job(for: sermon.id) == nil else {
+            return false
+        }
+
+        print("[SummaryRetryService] Sermon \(sermon.id) already has a summary; repairing status \(sermon.summaryStatus) -> complete")
+        sermon.summaryStatus = "complete"
+        sermon.markPendingSync(metadata: true)
+        return true
+    }
+
     func retrySummaryIfNeeded(for sermon: Sermon) {
+        if repairSummarizedSermonIfNeeded(sermon) {
+            try? modelContext?.save()
+            return
+        }
         guard shouldAutomaticallyRecoverSummary(for: sermon) else {
             return
         }
@@ -298,6 +323,7 @@ class SummaryRetryService: ObservableObject {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             print("[SummaryRetryService] Recovering incomplete summaries from \(sermons.count) sermons")
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
+                if repairSummarizedSermonIfNeeded(sermon) { continue }
                 guard resolvedTranscriptText(
                     for: sermon,
                     allowRelationshipFallback: false
@@ -340,6 +366,7 @@ class SummaryRetryService: ObservableObject {
         do {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             for sermon in sermons where sermon.summaryStatus == "processing" {
+                if repairSummarizedSermonIfNeeded(sermon) { continue }
                 guard let updatedAt = sermon.updatedAt, updatedAt < timeoutThreshold else { continue }
                 guard isWithinAutomaticRecoveryWindow(for: sermon, job: job(for: sermon.id)) else { continue }
                 if job(for: sermon.id) == nil {
