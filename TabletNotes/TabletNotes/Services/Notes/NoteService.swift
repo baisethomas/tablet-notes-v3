@@ -195,10 +195,12 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         let key = "\(notesKey)_\(sessionId)"
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
         notes.removeAll()
-        // Async on the serial persistence queue: FIFO ordering guarantees any
-        // previously queued write lands before the removal (no resurrection),
-        // and the main thread never blocks on I/O (TAB-96 review round 2).
-        persistenceQueue.async {
+        // Synchronous on the serial persistence queue: FIFO drains any queued
+        // write first (no resurrection), and the removal completes before the
+        // eviction below — so a same-session `shared(for:)` reacquired right
+        // after this call can never load the just-cleared notes (round 3).
+        // Bounded cost: at most one pending single-note encode sits ahead.
+        persistenceQueue.sync {
             UserDefaults.standard.removeObject(forKey: key)
         }
         Self.evictShared(sessionId: sessionId)

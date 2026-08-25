@@ -82,15 +82,35 @@ struct NoteServiceRegressionTests {
         let first = NoteService.shared(for: sessionId)
         first.addNote(text: "Old session note", timestamp: 5)
         first.clearSession()
-        // clearSession's key removal is async (FIFO on the serial queue);
-        // a synchronous empty flush drains the queue so the fresh instance
-        // below deterministically sees an empty store.
-        first.flushPersistedNotes()
 
+        // No flush in between: teardown must be complete when clearSession
+        // returns (review round 3) — an immediate same-session reacquisition
+        // gets a fresh, empty service.
         let second = NoteService.shared(for: sessionId)
         defer { second.clearSession() }
         #expect(first !== second)
         #expect(second.currentNotes.isEmpty)
+    }
+
+    /// Review round 3: teardown and reacquisition are one ordered lifecycle.
+    /// A write races clearSession (queued just before it); the immediate
+    /// reacquisition must still see an empty store — the just-cleared notes
+    /// can neither survive nor resurrect.
+    @MainActor
+    @Test func immediateReacquisitionAfterClearSessionSeesEmptyStore() throws {
+        let sessionId = uniqueSessionId()
+        let first = NoteService.shared(for: sessionId)
+        first.addNote(text: "About to be cleared", timestamp: 42) // enqueues an async write
+        first.clearSession()
+
+        let second = NoteService.shared(for: sessionId)
+        defer { second.clearSession() }
+        #expect(second.currentNotes.isEmpty)
+
+        // And nothing resurrects afterwards: a later fresh load stays empty.
+        second.flushPersistedNotes()
+        let third = NoteService(sessionId: sessionId)
+        #expect(third.currentNotes.isEmpty)
     }
 
     /// The single-note UI's save decision lives in the service now, not in a
