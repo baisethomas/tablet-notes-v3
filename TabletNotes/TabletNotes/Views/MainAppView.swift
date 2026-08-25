@@ -486,11 +486,11 @@ struct MainAppView: View {
         case .recording(let serviceType):
             RecordingView(
                 serviceType: serviceType ?? "Sermon",
-                noteService: NoteService(sessionId: currentRecordingSessionId),
+                noteService: NoteService.shared(for: currentRecordingSessionId),
                 onNext: { sermonId in
                     sermonService.fetchSermons()
                     // Save is confirmed complete (completion handler) — clear session immediately
-                    let noteService = NoteService(sessionId: currentRecordingSessionId)
+                    let noteService = NoteService.shared(for: currentRecordingSessionId)
                     noteService.clearSession()
                     currentRecordingSessionId = UUID().uuidString
                     currentScreen = .sermons
@@ -547,7 +547,7 @@ struct MainAppView: View {
     private func saveCompletedRecording(audioURL: URL, serviceType: String) {
         let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let date = Date()
-        let noteService = NoteService(sessionId: currentRecordingSessionId)
+        let noteService = NoteService.shared(for: currentRecordingSessionId)
         noteService.flushPersistedNotes()
         let notes = noteService.currentNotes
 

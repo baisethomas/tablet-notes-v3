@@ -60,6 +60,7 @@ struct RecordingView: View {
     @State private var isRecordingStarted = false
     @State private var isPaused = false
     @State private var noteText: String = ""
+    @State private var lastKnownRecordingDuration: TimeInterval = 0
     @State private var noteSaveTask: Task<Void, Never>? = nil
     @State private var transcriptAnalysisTask: Task<Void, Never>? = nil
     @State private var transcript: String = ""
@@ -577,12 +578,20 @@ struct RecordingView: View {
     }
 
     private func saveNoteText(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let existingNote = notes.first {
-            noteService.updateNote(id: existingNote.id, newText: trimmed.isEmpty ? " " : trimmed)
-        } else if !trimmed.isEmpty {
-            noteService.addNote(text: trimmed, timestamp: recordingService.recordingDuration)
+        // The create-vs-update decision belongs to the service's own state —
+        // the `notes` @State replica arrives asynchronously and an empty
+        // replica over non-empty text used to mint a duplicate note (TAB-96).
+        // stopRecording() zeroes the duration, and a save still runs after it
+        // (processTranscription), so remember the last live duration: a note
+        // created by that final save must not land at timestamp 0.
+        let duration = recordingService.recordingDuration
+        if duration > 0 {
+            lastKnownRecordingDuration = duration
         }
+        noteService.upsertPrimaryNote(
+            text: text,
+            timestamp: duration > 0 ? duration : lastKnownRecordingDuration
+        )
         noteService.flushPersistedNotes()
     }
 

@@ -12,6 +12,10 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     private let userDefaults = UserDefaults.standard
     private let notesKey = "recordingSessionNotes"
     private let persistenceQueue = DispatchQueue(label: "com.tabletnotes.notes.persistence", qos: .utility)
+    /// True once this instance has performed any real mutation. Gates the
+    /// empty-array persistence write (TAB-96): only an instance that
+    /// deliberately emptied its notes may overwrite a non-empty store.
+    private var hasMutatedNotes = false
 
     private struct PersistedNote: Codable {
         let id: UUID
@@ -115,8 +119,17 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     private func saveNotesToPersistence(synchronously: Bool = false) {
         let key = "\(notesKey)_\(sessionId)"
         let snapshots = notes.map(PersistedNote.init)
+        let deliberatelyEmptied = hasMutatedNotes
 
         let write = { [userDefaults] in
+            // An instance that never mutated anything must not erase a
+            // sibling's persisted work with its empty array — that wipe is
+            // how Sunday's duplicate note was born (TAB-96). A deliberate
+            // deletion sets hasMutatedNotes and still persists the empty.
+            if snapshots.isEmpty, !deliberatelyEmptied, userDefaults.data(forKey: key) != nil {
+                print("[NoteService] Skipping empty flush over a non-empty store for session key \(key)")
+                return
+            }
             if let data = try? JSONEncoder().encode(snapshots) {
                 userDefaults.set(data, forKey: key)
             }
@@ -137,6 +150,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func addNote(text: String, timestamp: TimeInterval) {
+        hasMutatedNotes = true
         let note = Note(text: text, timestamp: timestamp)
         notes.append(note)
         saveNotesToPersistence()
@@ -145,6 +159,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
 
     func updateNote(id: UUID, newText: String) {
         if let idx = notes.firstIndex(where: { $0.id == id }) {
+            hasMutatedNotes = true
             notes[idx].text = newText
             notes = notes
             saveNotesToPersistence()
@@ -155,6 +170,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func deleteNote(id: UUID) {
+        hasMutatedNotes = true
         notes.removeAll { $0.id == id }
         saveNotesToPersistence()
     }
