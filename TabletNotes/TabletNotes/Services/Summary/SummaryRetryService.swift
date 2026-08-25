@@ -23,6 +23,16 @@ class SummaryRetryService: ObservableObject {
     /// killed-app relics open until the queue went idle (TAB-94 round 3).
     private var activeJobId: UUID?
 
+    /// Jobs enqueued by an explicit user request this session (TAB-94 round
+    /// 5). Only these may run against a sermon that already has a summary —
+    /// the queue retires any other such job as a relic instead of re-billing.
+    /// In-memory on purpose: a deliberate regeneration interrupted by process
+    /// death is already treated as a relic on relaunch (the round-2 trade-off),
+    /// so the intent does not need to survive it. Never pruned — job ids are
+    /// unique per row, and a completed job's id can never match a future open
+    /// job, so a stale entry is inert.
+    private var deliberateJobIds: Set<UUID> = []
+
     static let summaryCompletedNotification = Notification.Name("SummaryCompleted")
 
     private var isNetworkAvailable = false
@@ -216,6 +226,12 @@ class SummaryRetryService: ObservableObject {
 
         print("[SummaryRetryService] Enqueuing summary for sermon \(sermonId) with transcript length \(transcriptText.count)")
         upsertJob(for: sermonId, resetAttempts: true)
+        // Every public enqueue is an explicit request (the sweeps call
+        // upsertJob directly); record the intent so the queue lets this job
+        // run even against an existing summary.
+        if let deliberateJob = job(for: sermonId) {
+            deliberateJobIds.insert(deliberateJob.id)
+        }
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
         try? context.save()
@@ -754,6 +770,19 @@ class SummaryRetryService: ObservableObject {
 
             if sermon.summaryStatus == "complete", sermon.summary != nil {
                 print("[SummaryRetryService] Completing stale summary job for sermon \(sermon.id)")
+                job.markComplete()
+                mutatedQueue = true
+                continue
+            }
+
+            // TAB-94 round 5: a runnable job for a sermon that already has a
+            // summary is a relic unless it was explicitly requested this
+            // session — the status string alone can't distinguish a poisoned
+            // "processing"/"pending" (TAB-95) from a live regeneration, and
+            // the sweeps may not have run yet when the queue is kicked
+            // directly (network restored, completion chains).
+            if sermon.summary != nil, !deliberateJobIds.contains(job.id) {
+                print("[SummaryRetryService] Retiring relic summary job for already-summarized sermon \(sermon.id)")
                 job.markComplete()
                 mutatedQueue = true
                 continue

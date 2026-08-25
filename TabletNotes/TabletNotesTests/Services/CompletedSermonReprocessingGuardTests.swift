@@ -562,6 +562,81 @@ struct CompletedSermonReprocessingGuardTests {
         #expect(sermon.summaryStatus == "complete")
     }
 
+    /// Review round 5: the queue itself must not trust the status string. A
+    /// queued relic beside an existing summary and a poisoned "processing"
+    /// status is retired when processQueue is kicked directly (network
+    /// restored, completion chains) — before any sweep has run.
+    @MainActor
+    @Test func processQueueRetiresRelicSummaryJobWithoutSweep() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "processing")
+        context.insert(sermon)
+        let relicJob = ProcessingJob(sermonId: sermon.id, kind: .summary)
+        context.insert(relicJob)
+        try context.save()
+        TranscriptSnapshotStore.save(
+            transcriptId: sermon.transcript?.id ?? UUID(),
+            text: sermon.transcript?.text ?? "",
+            for: sermon.id
+        )
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { _, _ in
+            runnerCallCount += 1
+            return SummaryGenerationResult(title: "Should not run", summary: "Should not run.")
+        }
+
+        // false -> true kicks processQueue directly, with no sweep involved.
+        retryService.overrideNetworkAvailability(true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(runnerCallCount == 0)
+        #expect(relicJob.status == .complete)
+        #expect(sermon.summary?.text == "The summary that already exists.")
+    }
+
+    /// Review round 5, the reviewer's literal scenario: an existing summary
+    /// with summaryStatus == "complete" and a persisted queued job. Pinned:
+    /// the queue retires the job without running it.
+    @MainActor
+    @Test func processQueueRetiresPendingJobForCompleteSummarizedSermon() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "complete")
+        context.insert(sermon)
+        let staleJob = ProcessingJob(sermonId: sermon.id, kind: .summary)
+        context.insert(staleJob)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var runnerCallCount = 0
+        retryService.summaryRunner = { _, _ in
+            runnerCallCount += 1
+            return SummaryGenerationResult(title: "Should not run", summary: "Should not run.")
+        }
+
+        retryService.overrideNetworkAvailability(true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(runnerCallCount == 0)
+        #expect(staleJob.status == .complete)
+    }
+
     /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow
     /// with fresh transcript text) replaces an existing summary today and must
     /// keep doing so — the guard only stops job-less automatic sweeps.
