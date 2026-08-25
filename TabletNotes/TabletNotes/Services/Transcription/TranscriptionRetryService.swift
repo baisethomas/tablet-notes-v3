@@ -17,6 +17,12 @@ class TranscriptionRetryService: ObservableObject {
 
     @Published var isProcessingQueue = false
 
+    /// The job whose runner is executing right now. More precise than
+    /// `isProcessingQueue` for the completed-sermon guard: a queue-wide flag
+    /// would treat every `.running` row as live while any job runs, leaving
+    /// killed-app relics open until the queue went idle (TAB-94 round 3).
+    private var activeJobId: UUID?
+
     static let transcriptionCompletedNotification = Notification.Name("TranscriptionCompleted")
 
     private var isNetworkAvailable = false
@@ -135,6 +141,7 @@ class TranscriptionRetryService: ObservableObject {
             )
 
             for sermon in sermons where shouldAutomaticallyRecoverTranscription(for: sermon) {
+                if completeAlreadyTranscribedSermonIfNeeded(sermon, in: context) { continue }
                 let existingJob = jobs.first(where: {
                     $0.sermonId == sermon.id &&
                     $0.kind == .transcription &&
@@ -178,6 +185,7 @@ class TranscriptionRetryService: ObservableObject {
         do {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             for sermon in sermons where sermon.transcriptionStatus == "processing" {
+                if completeAlreadyTranscribedSermonIfNeeded(sermon, in: context) { continue }
                 guard sermon.audioFileExists else { continue }
 
                 let existingJob = job(for: sermon.id)
@@ -208,6 +216,12 @@ class TranscriptionRetryService: ObservableObject {
         guard let context = modelContext,
               let sermon = fetchSermon(withId: sermonId, in: context) else {
             print("[TranscriptionRetryService] Cannot enqueue transcription; sermon \(sermonId) not found")
+            return false
+        }
+
+        guard !completeAlreadyTranscribedSermonIfNeeded(sermon, in: context) else {
+            // A visible Retry on a transcribed sermon means the status string
+            // was stale; keeping the completed work is the desired outcome.
             return false
         }
 
@@ -270,8 +284,65 @@ class TranscriptionRetryService: ObservableObject {
         startProcessing(job: nextJob, sermon: sermon, in: context)
     }
 
+    /// A sermon that already owns a transcript needs no transcription,
+    /// whatever its status string says — sync can walk the status back to
+    /// "pending"/"processing" (TAB-95), and acting on that string re-billed
+    /// AssemblyAI for work that had already succeeded (TAB-94). Closes any
+    /// lingering job and repairs a re-runnable status forward to "complete"
+    /// so the corrected value also pushes to the server. Server-owned
+    /// terminal statuses are left alone for the server to resolve.
+    /// Returns true when the sermon must not be (re)transcribed.
+    @discardableResult
+    private func completeAlreadyTranscribedSermonIfNeeded(
+        _ sermon: Sermon,
+        in context: ModelContext
+    ) -> Bool {
+        guard sermon.transcript != nil else { return false }
+
+        var changed = false
+        let openJobs = openTranscriptionJobs(for: sermon.id, in: context)
+        // The one job whose runner is live right now (a pull can land a
+        // remote transcript mid-flight) finishes and reports through its own
+        // completion — including the status write. Every other open job,
+        // .running relics of a killed app included, is safe to close.
+        let ownsLiveRun = openJobs.contains { $0.id == activeJobId }
+        let repairableStatuses = ["pending", "processing", "failed"]
+        if !ownsLiveRun, repairableStatuses.contains(sermon.transcriptionStatus) {
+            print("[TranscriptionRetryService] Sermon \(sermon.id) already has a transcript; repairing status \(sermon.transcriptionStatus) -> complete")
+            sermon.transcriptionStatus = "complete"
+            sermon.markPendingSync(metadata: true)
+            changed = true
+        }
+        for staleJob in openJobs where staleJob.id != activeJobId {
+            staleJob.markComplete()
+            changed = true
+        }
+        if changed {
+            try? context.save()
+        }
+        return true
+    }
+
+    private func openTranscriptionJobs(for sermonId: UUID, in context: ModelContext) -> [ProcessingJob] {
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).filter {
+            $0.sermonId == sermonId &&
+            $0.kind == .transcription &&
+            $0.status != .complete
+        }
+    }
+
     private func startProcessing(job nextJob: ProcessingJob, sermon: Sermon, in context: ModelContext) {
+        if completeAlreadyTranscribedSermonIfNeeded(sermon, in: context) {
+            // The job was closed, not run; let the queue advance to real work.
+            processQueue()
+            return
+        }
+
         isProcessingQueue = true
+        activeJobId = nextJob.id
         let assemblyJobId = Self.storedAssemblyJobId(from: nextJob)
         nextJob.markRunning()
         sermon.transcriptionStatus = "processing"
@@ -310,6 +381,7 @@ class TranscriptionRetryService: ObservableObject {
                 guard let self, let context = self.modelContext else { return }
                 guard let refreshedJob = self.fetchJob(withId: jobId, in: context),
                       let refreshedSermon = self.fetchSermon(withId: sermonId, in: context) else {
+                    self.activeJobId = nil
                     self.isProcessingQueue = false
                     return
                 }
@@ -379,6 +451,7 @@ class TranscriptionRetryService: ObservableObject {
                     }
                 }
 
+                self.activeJobId = nil
                 self.isProcessingQueue = false
                 self.processQueue()
             }
