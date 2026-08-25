@@ -13,6 +13,17 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let supabaseService: SupabaseServiceProtocol
     private let apiBaseURL = "https://comfy-daffodil-7ecc55.netlify.app"
 
+    /// `updatedAt` orders sync merges, so it keeps its fractional seconds —
+    /// the default ISO8601 formatter truncates to whole seconds, shifting the
+    /// stored row up to ~1s earlier than the snapshot it represents (TAB-95
+    /// review). Postgres `timestamptz` stores the precision; PostgREST already
+    /// returns it on pull.
+    static let updatedAtFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
     init(supabaseService: SupabaseServiceProtocol) {
         self.supabaseService = supabaseService
     }
@@ -48,7 +59,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             "transcriptionStatus": data.transcriptionStatus,
             "summaryStatus": data.summaryStatus,
             "isArchived": data.isArchived,
-            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
+            "updatedAt": updatedAtFormatter.string(from: data.updatedAt)
         ]
 
         if let notes = data.notes, !notes.isEmpty {
@@ -178,7 +189,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
 
         var payload: [String: Any] = [
             "remoteId": remoteId,
-            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
+            "updatedAt": Self.updatedAtFormatter.string(from: data.updatedAt)
         ]
 
         if data.scopes.metadata {

@@ -144,7 +144,10 @@ struct SyncCompletionRaceTests {
     /// the next pull treats that stale row as newer than local state.
     @MainActor
     @Test func createPayloadCarriesSnapshotUpdatedAt() throws {
-        let snapshotUpdatedAt = Date(timeIntervalSince1970: 1_787_000_000)
+        // Non-zero fractional seconds on purpose: the default ISO8601
+        // formatter silently truncates them, shifting the stored row up to
+        // ~1s earlier than the snapshot (review round 1).
+        let snapshotUpdatedAt = Date(timeIntervalSince1970: 1_787_000_000.625)
         let data = SermonSyncData(
             id: UUID(),
             title: "Payload Sermon",
@@ -171,7 +174,9 @@ struct SyncCompletionRaceTests {
             fileSize: 4096
         )
 
-        #expect(payload["updatedAt"] as? String == ISO8601DateFormatter().string(from: snapshotUpdatedAt))
+        let serialized = payload["updatedAt"] as? String
+        #expect(serialized == SermonSyncRemoteGateway.updatedAtFormatter.string(from: snapshotUpdatedAt))
+        #expect(serialized?.contains(".625") == true) // fractional seconds retained
         // Sanity: extraction kept the load-bearing fields intact.
         #expect(payload["localId"] as? String == data.id.uuidString)
         #expect(payload["audioFilePath"] as? String == "user/payload.m4a")
