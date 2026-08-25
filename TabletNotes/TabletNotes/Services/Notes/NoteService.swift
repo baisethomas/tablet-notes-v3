@@ -60,6 +60,11 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
     }
     
+    /// Production code must obtain instances via `NoteService.shared(for:)` —
+    /// two live instances on one session id race over the same UserDefaults
+    /// key, which is the defect TAB-96 fixed. The initializer stays callable
+    /// for tests (which construct competing instances deliberately to prove
+    /// the guards) and previews.
     init(sessionId: String = UUID().uuidString) {
         self.sessionId = sessionId
         loadNotesFromPersistence()

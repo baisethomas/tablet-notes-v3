@@ -704,6 +704,15 @@ struct RecordingView: View {
     }
 
     private func stopRecording() {
+        // recordingService.stopRecording() zeroes recordingDuration, and a
+        // note save still runs afterwards (processTranscription). Capture the
+        // final duration here — the single funnel every stop path goes
+        // through — so a first note created by that save can never land at
+        // timestamp 0 (TAB-96 review).
+        let finalDuration = recordingService.recordingDuration
+        if finalDuration > 0 {
+            lastKnownRecordingDuration = finalDuration
+        }
         let audioURL = recordingService.stopRecording()
         transcriptionService.stopTranscription()
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
