@@ -60,6 +60,49 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         self.sessionId = sessionId
         loadNotesFromPersistence()
     }
+
+    // MARK: - One instance per session (TAB-96)
+
+    /// Every call site used to allocate `NoteService(sessionId:)` inline —
+    /// MainAppView did it on every render — so a fleet of instances shared
+    /// one UserDefaults key and raced each other (a stale empty one could
+    /// clobber the persisted note, and the view then created a duplicate).
+    /// The registry hands back the same instance for a session; a session
+    /// ends via `clearSession()`, which evicts it.
+    private static let sharedLock = NSLock()
+    private static var sharedInstances: [String: NoteService] = [:]
+
+    static func shared(for sessionId: String) -> NoteService {
+        sharedLock.lock()
+        defer { sharedLock.unlock() }
+        if let existing = sharedInstances[sessionId] {
+            return existing
+        }
+        let service = NoteService(sessionId: sessionId)
+        sharedInstances[sessionId] = service
+        return service
+    }
+
+    private static func evictShared(sessionId: String) {
+        sharedLock.lock()
+        defer { sharedLock.unlock() }
+        sharedInstances.removeValue(forKey: sessionId)
+    }
+
+    /// The recording screen's single-note save: update the primary note in
+    /// place — keeping its creation timestamp — or create it when non-blank
+    /// text first arrives. The decision reads this service's own state, never
+    /// a view-local replica delivered asynchronously, so a repeated save can
+    /// not mint a second row (TAB-96).
+    func upsertPrimaryNote(text: String, timestamp: TimeInterval) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = notes.first {
+            updateNote(id: existing.id, newText: trimmed.isEmpty ? " " : trimmed)
+            return
+        }
+        guard !trimmed.isEmpty else { return }
+        addNote(text: trimmed, timestamp: timestamp)
+    }
     
     private func loadNotesFromPersistence() {
         let key = "\(notesKey)_\(sessionId)"
@@ -120,9 +163,10 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         let key = "\(notesKey)_\(sessionId)"
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
         notes.removeAll()
-        persistenceQueue.async { [userDefaults] in
+        persistenceQueue.sync { [userDefaults] in
             userDefaults.removeObject(forKey: key)
         }
+        Self.evictShared(sessionId: sessionId)
         print("[NoteService] Session cleared. Notes count now: \(notes.count)")
     }
 }
