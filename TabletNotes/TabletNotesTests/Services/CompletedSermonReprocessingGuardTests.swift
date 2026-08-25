@@ -506,6 +506,62 @@ struct CompletedSermonReprocessingGuardTests {
         #expect(liveSermon.summaryStatus == "complete")
     }
 
+    /// Review round 4: a stale sibling job on the SAME sermon as the live
+    /// regeneration is closed by the sweep — the active-job exemption spares
+    /// exactly one job, and never shields its siblings. The live run's status
+    /// is left alone and it finishes normally.
+    @MainActor
+    @Test func summaryGuardClosesStaleSiblingWhileRegenerationIsLive() async throws {
+        let context = try makeModelContext()
+
+        let sermon = makeSummarizedSermon(summaryStatus: "complete")
+        context.insert(sermon)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var resumeRunner: CheckedContinuation<SummaryGenerationResult, Never>?
+        retryService.summaryRunner = { _, _ in
+            await withCheckedContinuation { continuation in
+                resumeRunner = continuation // hold the regeneration in flight
+            }
+        }
+
+        let started = retryService.retrySummaryNow(
+            for: sermon.id,
+            transcriptText: String(repeating: "Fresh text ", count: 20)
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(started)
+        #expect(resumeRunner != nil)
+
+        // A stale sibling appears alongside the live job (e.g. left by an
+        // older build); status is "processing" because the regen is running.
+        let siblingJob = ProcessingJob(sermonId: sermon.id, kind: .summary)
+        context.insert(siblingJob)
+        try context.save()
+
+        retryService.checkForStuckProcessingSummaries()
+
+        let activeJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == sermon.id && $0.id != siblingJob.id })
+        #expect(siblingJob.status == .complete)
+        #expect(activeJob?.status == .running)
+        #expect(sermon.summaryStatus == "processing") // live run owns the status
+
+        resumeRunner?.resume(returning: SummaryGenerationResult(title: "Regen", summary: "Regenerated summary."))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(activeJob?.status == .complete)
+        #expect(sermon.summary?.text == "Regenerated summary.")
+        #expect(sermon.summaryStatus == "complete")
+    }
+
     /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow
     /// with fresh transcript text) replaces an existing summary today and must
     /// keep doing so — the guard only stops job-less automatic sweeps.

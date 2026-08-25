@@ -301,17 +301,28 @@ class SummaryRetryService: ObservableObject {
             return false
         }
 
+        // Relic siblings are closed even while this sermon's own regeneration
+        // is live — only the exact active job is spared, ever.
         let openJobs = openSummaryJobs(for: sermon.id)
-        if openJobs.contains(where: { $0.id == activeJobId }) {
-            return false
-        }
-        for staleJob in openJobs {
+        var closedRelic = false
+        for staleJob in openJobs where staleJob.id != activeJobId {
             staleJob.markComplete()
+            closedRelic = true
+        }
+
+        if openJobs.contains(where: { $0.id == activeJobId }) {
+            // The live regeneration owns this sermon's status; report and
+            // repair nothing, but persist the sibling closures.
+            if closedRelic {
+                try? modelContext?.save()
+            }
+            return false
         }
 
         print("[SummaryRetryService] Sermon \(sermon.id) already has a summary; repairing status \(sermon.summaryStatus) -> complete")
         sermon.summaryStatus = "complete"
         sermon.markPendingSync(metadata: true)
+        try? modelContext?.save()
         return true
     }
 
