@@ -328,6 +328,80 @@ struct CompletedSermonReprocessingGuardTests {
         #expect(!retryService.isProcessingQueue)
     }
 
+    /// Review round 3: the live-job exemption must identify the exact active
+    /// job, not "any job is running". While sermon A's runner is live, a
+    /// `.running` relic on completed sermon B is a killed-app leftover and is
+    /// closed immediately — not preserved until the queue goes idle.
+    @MainActor
+    @Test func sweepClosesRunningRelicWhileUnrelatedRunIsLive() async throws {
+        let context = try makeModelContext()
+        let liveAudioURL = try makeAudioFile(named: "tab94-live-a.m4a")
+        let relicAudioURL = try makeAudioFile(named: "tab94-relic-b.m4a")
+        defer {
+            try? FileManager.default.removeItem(at: liveAudioURL)
+            try? FileManager.default.removeItem(at: relicAudioURL)
+        }
+
+        let liveSermon = Sermon(
+            title: "Live Sermon A",
+            audioFileName: liveAudioURL.lastPathComponent,
+            date: Date(),
+            serviceType: "Sunday Service",
+            transcript: nil,
+            notes: [],
+            summary: nil,
+            syncStatus: "synced",
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        context.insert(liveSermon)
+
+        let completedSermon = makeTranscribedSermon(
+            audioFileName: relicAudioURL.lastPathComponent,
+            transcriptionStatus: "processing",
+            date: Date().addingTimeInterval(-3600)
+        )
+        context.insert(completedSermon)
+        let relicJob = ProcessingJob(sermonId: completedSermon.id, kind: .transcription, status: .running)
+        context.insert(relicJob)
+        try context.save()
+
+        let retryService = TranscriptionRetryService()
+        retryService.setModelContext(context)
+        retryService.summaryEnqueuer = { _, _ in }
+        defer {
+            retryService.transcriptionRunner = nil
+            retryService.summaryEnqueuer = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var storedCompletion: ((Result<(String, [TranscriptSegment]), Error>) -> Void)?
+        retryService.transcriptionRunner = { _, completion in
+            storedCompletion = completion // hold sermon A's run in flight
+        }
+
+        // The relic is .running (not runnable), so the queue picks sermon A's
+        // pending work; enqueue creates A's job and starts it.
+        retryService.overrideNetworkAvailability(true)
+        retryService.enqueueTranscription(for: liveSermon.id)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(storedCompletion != nil)
+
+        retryService.checkForStuckProcessingTranscriptions()
+
+        let jobs = try context.fetch(FetchDescriptor<ProcessingJob>())
+        let liveJob = jobs.first(where: { $0.sermonId == liveSermon.id })
+        #expect(relicJob.status == .complete)
+        #expect(completedSermon.transcriptionStatus == "complete")
+        #expect(liveJob?.status == .running)
+
+        storedCompletion?(.success(("Live transcript", [])))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(liveJob?.status == .complete)
+        #expect(liveSermon.transcript?.text == "Live transcript")
+    }
+
     /// Review round 2, finding 3: a non-running summary job alongside an
     /// existing summary is a relic — most likely minted by the pre-TAB-94
     /// sweeps against the same poisoned state this PR fixes — and resuming it
@@ -361,6 +435,75 @@ struct CompletedSermonReprocessingGuardTests {
         let freshContext = ModelContext(context.container)
         let persisted = try freshContext.fetch(FetchDescriptor<Sermon>()).first(where: { $0.id == sermon.id })
         #expect(persisted?.summaryStatus == "complete")
+    }
+
+    /// Review round 3, summary side: while sermon A's summary runner is live,
+    /// a `.running` relic on summarized sermon B is closed and B repaired —
+    /// the exemption applies only to the exact active job.
+    @MainActor
+    @Test func summarySweepClosesRunningRelicWhileUnrelatedRunIsLive() async throws {
+        let context = try makeModelContext()
+
+        let liveSermon = Sermon(
+            title: "Live Summary Sermon A",
+            audioFileName: "tab94-live-summary-a.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            transcript: Transcript(text: String(repeating: "Live text ", count: 20)),
+            notes: [],
+            summary: nil,
+            syncStatus: "synced",
+            transcriptionStatus: "complete",
+            summaryStatus: "pending",
+            userId: UUID()
+        )
+        context.insert(liveSermon)
+
+        let summarizedSermon = makeSummarizedSermon(
+            summaryStatus: "processing",
+            updatedAt: Date().addingTimeInterval(-3600)
+        )
+        context.insert(summarizedSermon)
+        let relicJob = ProcessingJob(sermonId: summarizedSermon.id, kind: .summary, status: .running)
+        context.insert(relicJob)
+        try context.save()
+
+        let retryService = SummaryRetryService()
+        retryService.setModelContext(context)
+        retryService.overrideNetworkAvailability(true)
+        defer {
+            retryService.summaryRunner = nil
+            retryService.overrideNetworkAvailability(false)
+        }
+
+        var resumeRunner: CheckedContinuation<SummaryGenerationResult, Never>?
+        retryService.summaryRunner = { _, _ in
+            await withCheckedContinuation { continuation in
+                resumeRunner = continuation // hold sermon A's run in flight
+            }
+        }
+
+        let started = retryService.retrySummaryNow(
+            for: liveSermon.id,
+            transcriptText: String(repeating: "Live text ", count: 20)
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(started)
+        #expect(resumeRunner != nil)
+
+        retryService.checkForStuckProcessingSummaries()
+
+        let liveJob = try context.fetch(FetchDescriptor<ProcessingJob>())
+            .first(where: { $0.sermonId == liveSermon.id && $0.kind == .summary })
+        #expect(relicJob.status == .complete)
+        #expect(summarizedSermon.summaryStatus == "complete")
+        #expect(liveJob?.status == .running)
+
+        resumeRunner?.resume(returning: SummaryGenerationResult(title: "Live", summary: "Live summary."))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(liveJob?.status == .complete)
+        #expect(liveSermon.summary?.text == "Live summary.")
+        #expect(liveSermon.summaryStatus == "complete")
     }
 
     /// Guard-overreach protection: a deliberate regeneration (retrySummaryNow

@@ -17,6 +17,12 @@ class TranscriptionRetryService: ObservableObject {
 
     @Published var isProcessingQueue = false
 
+    /// The job whose runner is executing right now. More precise than
+    /// `isProcessingQueue` for the completed-sermon guard: a queue-wide flag
+    /// would treat every `.running` row as live while any job runs, leaving
+    /// killed-app relics open until the queue went idle (TAB-94 round 3).
+    private var activeJobId: UUID?
+
     static let transcriptionCompletedNotification = Notification.Name("TranscriptionCompleted")
 
     private var isNetworkAvailable = false
@@ -302,11 +308,11 @@ class TranscriptionRetryService: ObservableObject {
             changed = true
         }
         for staleJob in openTranscriptionJobs(for: sermon.id, in: context) {
-            // A job running right now is a live runner (a pull can land a
-            // remote transcript mid-flight); let it finish and report through
-            // its own completion. A .running job with no live runner is a
-            // relic of a killed app and is safe to close.
-            if staleJob.status == .running && isProcessingQueue { continue }
+            // The one job whose runner is live right now (a pull can land a
+            // remote transcript mid-flight) finishes and reports through its
+            // own completion. Every other open job — including a .running
+            // relic of a killed app — is safe to close.
+            if staleJob.id == activeJobId { continue }
             staleJob.markComplete()
             changed = true
         }
@@ -335,6 +341,7 @@ class TranscriptionRetryService: ObservableObject {
         }
 
         isProcessingQueue = true
+        activeJobId = nextJob.id
         let assemblyJobId = Self.storedAssemblyJobId(from: nextJob)
         nextJob.markRunning()
         sermon.transcriptionStatus = "processing"
@@ -373,6 +380,7 @@ class TranscriptionRetryService: ObservableObject {
                 guard let self, let context = self.modelContext else { return }
                 guard let refreshedJob = self.fetchJob(withId: jobId, in: context),
                       let refreshedSermon = self.fetchSermon(withId: sermonId, in: context) else {
+                    self.activeJobId = nil
                     self.isProcessingQueue = false
                     return
                 }
@@ -442,6 +450,7 @@ class TranscriptionRetryService: ObservableObject {
                     }
                 }
 
+                self.activeJobId = nil
                 self.isProcessingQueue = false
                 self.processQueue()
             }

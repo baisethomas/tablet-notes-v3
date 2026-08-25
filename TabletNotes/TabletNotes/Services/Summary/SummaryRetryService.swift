@@ -17,6 +17,12 @@ class SummaryRetryService: ObservableObject {
 
     @Published var isProcessingQueue = false
 
+    /// The job whose runner is executing right now. More precise than
+    /// `isProcessingQueue` for the completed-sermon guard: a queue-wide flag
+    /// would treat every `.running` row as live while any job runs, leaving
+    /// killed-app relics open until the queue went idle (TAB-94 round 3).
+    private var activeJobId: UUID?
+
     static let summaryCompletedNotification = Notification.Name("SummaryCompleted")
 
     private var isNetworkAvailable = false
@@ -296,7 +302,7 @@ class SummaryRetryService: ObservableObject {
         }
 
         let openJobs = openSummaryJobs(for: sermon.id)
-        if openJobs.contains(where: { $0.status == .running && isProcessingQueue }) {
+        if openJobs.contains(where: { $0.id == activeJobId }) {
             return false
         }
         for staleJob in openJobs {
@@ -454,6 +460,7 @@ class SummaryRetryService: ObservableObject {
         in context: ModelContext
     ) {
         isProcessingQueue = true
+        activeJobId = nextJob.id
         nextJob.markRunning()
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
@@ -471,6 +478,7 @@ class SummaryRetryService: ObservableObject {
             guard let self else { return }
 
             defer {
+                self.activeJobId = nil
                 self.isProcessingQueue = false
                 self.processQueue()
             }
