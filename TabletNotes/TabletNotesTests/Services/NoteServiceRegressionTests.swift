@@ -82,6 +82,10 @@ struct NoteServiceRegressionTests {
         let first = NoteService.shared(for: sessionId)
         first.addNote(text: "Old session note", timestamp: 5)
         first.clearSession()
+        // clearSession's key removal is async (FIFO on the serial queue);
+        // a synchronous empty flush drains the queue so the fresh instance
+        // below deterministically sees an empty store.
+        first.flushPersistedNotes()
 
         let second = NoteService.shared(for: sessionId)
         defer { second.clearSession() }

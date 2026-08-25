@@ -1285,7 +1285,7 @@ class SermonService {
 
         if sermons.contains(where: { $0.audioFileName == manifest.audioFileName }) || findSermon(withAudioFileName: manifest.audioFileName) != nil {
             recoveryStore.clear()
-            NoteService(sessionId: manifest.sessionId).clearSession()
+            NoteService.shared(for: manifest.sessionId).clearSession()
             return
         }
 
@@ -1297,7 +1297,7 @@ class SermonService {
             return
         }
 
-        let noteService = NoteService(sessionId: manifest.sessionId)
+        let noteService = NoteService.shared(for: manifest.sessionId)
         let recoveredNotes = noteService.currentNotes
 
         let sermon = Sermon(

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 
+@MainActor
 protocol NoteServiceProtocol {
     var notesPublisher: AnyPublisher<[Note], Never> { get }
     func addNote(text: String, timestamp: TimeInterval)
