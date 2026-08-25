@@ -300,19 +300,20 @@ class TranscriptionRetryService: ObservableObject {
         guard sermon.transcript != nil else { return false }
 
         var changed = false
+        let openJobs = openTranscriptionJobs(for: sermon.id, in: context)
+        // The one job whose runner is live right now (a pull can land a
+        // remote transcript mid-flight) finishes and reports through its own
+        // completion — including the status write. Every other open job,
+        // .running relics of a killed app included, is safe to close.
+        let ownsLiveRun = openJobs.contains { $0.id == activeJobId }
         let repairableStatuses = ["pending", "processing", "failed"]
-        if repairableStatuses.contains(sermon.transcriptionStatus) {
+        if !ownsLiveRun, repairableStatuses.contains(sermon.transcriptionStatus) {
             print("[TranscriptionRetryService] Sermon \(sermon.id) already has a transcript; repairing status \(sermon.transcriptionStatus) -> complete")
             sermon.transcriptionStatus = "complete"
             sermon.markPendingSync(metadata: true)
             changed = true
         }
-        for staleJob in openTranscriptionJobs(for: sermon.id, in: context) {
-            // The one job whose runner is live right now (a pull can land a
-            // remote transcript mid-flight) finishes and reports through its
-            // own completion. Every other open job — including a .running
-            // relic of a killed app — is safe to close.
-            if staleJob.id == activeJobId { continue }
+        for staleJob in openJobs where staleJob.id != activeJobId {
             staleJob.markComplete()
             changed = true
         }

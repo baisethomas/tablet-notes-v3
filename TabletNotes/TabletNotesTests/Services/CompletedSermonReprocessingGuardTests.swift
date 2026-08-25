@@ -318,6 +318,8 @@ struct CompletedSermonReprocessingGuardTests {
         let liveJob = try context.fetch(FetchDescriptor<ProcessingJob>())
             .first(where: { $0.sermonId == sermon.id && $0.kind == .transcription })
         #expect(liveJob?.status == .running)
+        // The live run owns its status: no premature "complete" publish.
+        #expect(sermon.transcriptionStatus == "processing")
 
         storedCompletion?(.success(("Transcript from live run", [])))
         try await Task.sleep(nanoseconds: 200_000_000)
