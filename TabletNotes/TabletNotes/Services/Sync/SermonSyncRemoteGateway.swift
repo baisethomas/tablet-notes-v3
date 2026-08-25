@@ -21,34 +21,24 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         try await supabaseService.fetchRemoteSermons(for: userId)
     }
 
-    func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
-        print("[SyncService] Creating remote sermon: \(data.title)")
-
-        let token = try await getAuthToken()
-        let audioFileName = data.audioFileURL.lastPathComponent
-        let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
-
-        // Passing the sermon's local id gives this upload a stable object path,
-        // so a retry replaces its own partial rather than orphaning a ~100MB
-        // object nothing reaps (TAB-73).
-        let upload = try await supabaseService.getSignedUploadURL(
-            for: audioFileName,
-            contentType: "audio/m4a",
-            fileSize: fileSize,
-            sermonLocalId: data.id
-        )
-
-        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl, upsert: upload.upsert)
-
-        let audioFileURL = try supabaseService.client.storage
-            .from("sermon-audio")
-            .getPublicURL(path: upload.path)
-
+    /// Builds the create-sermon request body. Extracted so a test can execute
+    /// it (TAB-95): the payload must carry the snapshot's `updatedAt` — the
+    /// server honors it (`create-sermon.js` falls back to server time only
+    /// when absent), and without it the row is stamped at POST-completion,
+    /// *after* the whole audio upload, so the next pull sees a "newer" row
+    /// carrying the pre-completion statuses and walks local state backwards.
+    static func createSermonPayload(
+        data: SermonSyncData,
+        audioFilePath: String,
+        audioFileUrl: String,
+        audioFileName: String,
+        fileSize: Int
+    ) -> [String: Any] {
         var payload: [String: Any] = [
             "localId": data.id.uuidString,
             "title": data.title,
-            "audioFilePath": upload.path,
-            "audioFileUrl": audioFileURL.absoluteString,
+            "audioFilePath": audioFilePath,
+            "audioFileUrl": audioFileUrl,
             "audioFileName": audioFileName,
             "audioFileSizeBytes": fileSize,
             "duration": 0,
@@ -57,7 +47,8 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             "speaker": data.speaker as Any,
             "transcriptionStatus": data.transcriptionStatus,
             "summaryStatus": data.summaryStatus,
-            "isArchived": data.isArchived
+            "isArchived": data.isArchived,
+            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
         ]
 
         if let notes = data.notes, !notes.isEmpty {
@@ -90,6 +81,40 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 "status": summary.status
             ]
         }
+
+        return payload
+    }
+
+    func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
+        print("[SyncService] Creating remote sermon: \(data.title)")
+
+        let token = try await getAuthToken()
+        let audioFileName = data.audioFileURL.lastPathComponent
+        let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
+
+        // Passing the sermon's local id gives this upload a stable object path,
+        // so a retry replaces its own partial rather than orphaning a ~100MB
+        // object nothing reaps (TAB-73).
+        let upload = try await supabaseService.getSignedUploadURL(
+            for: audioFileName,
+            contentType: "audio/m4a",
+            fileSize: fileSize,
+            sermonLocalId: data.id
+        )
+
+        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl, upsert: upload.upsert)
+
+        let audioFileURL = try supabaseService.client.storage
+            .from("sermon-audio")
+            .getPublicURL(path: upload.path)
+
+        let payload = Self.createSermonPayload(
+            data: data,
+            audioFilePath: upload.path,
+            audioFileUrl: audioFileURL.absoluteString,
+            audioFileName: audioFileName,
+            fileSize: fileSize
+        )
 
         let url = URL(string: "\(apiBaseURL)/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)

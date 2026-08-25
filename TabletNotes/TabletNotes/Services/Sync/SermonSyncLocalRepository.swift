@@ -141,8 +141,14 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             sermon.serviceType = remoteData.serviceType
             sermon.speaker = remoteData.speaker
             sermon.isArchived = remoteData.isArchived
-            sermon.transcriptionStatus = remoteData.transcriptionStatus
-            sermon.summaryStatus = remoteData.summaryStatus
+            sermon.transcriptionStatus = resolvedStageStatus(
+                local: sermon.transcriptionStatus,
+                remote: remoteData.transcriptionStatus
+            )
+            sermon.summaryStatus = resolvedStageStatus(
+                local: sermon.summaryStatus,
+                remote: remoteData.summaryStatus
+            )
         }
         sermon.updatedAt = remoteData.updatedAt
         sermon.lastSyncedAt = Date()
@@ -366,6 +372,22 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             remoteId: remoteData.id,
             updatedAt: sermonUpdatedAt
         )
+    }
+
+    /// Client-side mirror of the server's TAB-90 rule (TAB-95): `complete`,
+    /// `no_speech` and `too_short` never legitimately walk backwards on the
+    /// server — only `failed_permanent` clears, via a deliberate retry
+    /// (TAB-91), which is why it is NOT protected here. A remote non-terminal
+    /// value over a local terminal one is therefore a stale row (its statuses
+    /// frozen before the completion push landed), not a correction.
+    private func resolvedStageStatus(local: String, remote: String) -> String {
+        let protectedTerminals = ["complete", "no_speech", "too_short"]
+        let nonTerminals = ["pending", "processing", "failed"]
+        if protectedTerminals.contains(local), nonTerminals.contains(remote) {
+            print("[SyncService] ⚠️ Keeping local terminal stage status \(local) over stale remote \(remote)")
+            return local
+        }
+        return remote
     }
 
     private func shouldPreserveLocalChildData(for sermon: Sermon, childNeedsSync: Bool) -> Bool {

@@ -137,6 +137,47 @@ struct SyncCompletionRaceTests {
         #expect(sermon.syncStatus == "synced")
     }
 
+    // MARK: - Defect 2: the create payload must carry the snapshot timestamp
+
+    /// Without `updatedAt` in the create body, `create-sermon.js` stamps
+    /// server time at POST-completion — after the entire audio upload — and
+    /// the next pull treats that stale row as newer than local state.
+    @MainActor
+    @Test func createPayloadCarriesSnapshotUpdatedAt() throws {
+        let snapshotUpdatedAt = Date(timeIntervalSince1970: 1_787_000_000)
+        let data = SermonSyncData(
+            id: UUID(),
+            title: "Payload Sermon",
+            audioFileURL: URL(fileURLWithPath: "/tmp/payload.m4a"),
+            date: Date(),
+            serviceType: "Sunday Service",
+            speaker: nil,
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            isArchived: false,
+            userId: UUID(),
+            updatedAt: snapshotUpdatedAt,
+            notes: nil,
+            transcript: nil,
+            summary: nil,
+            scopes: .all
+        )
+
+        let payload = SermonSyncRemoteGateway.createSermonPayload(
+            data: data,
+            audioFilePath: "user/payload.m4a",
+            audioFileUrl: "https://example.com/payload.m4a",
+            audioFileName: "payload.m4a",
+            fileSize: 4096
+        )
+
+        #expect(payload["updatedAt"] as? String == ISO8601DateFormatter().string(from: snapshotUpdatedAt))
+        // Sanity: extraction kept the load-bearing fields intact.
+        #expect(payload["localId"] as? String == data.id.uuidString)
+        #expect(payload["audioFilePath"] as? String == "user/payload.m4a")
+        #expect(payload["transcriptionStatus"] as? String == "pending")
+    }
+
     // MARK: - Defect 3: the pull must not walk a local terminal status back
 
     private func makeRemoteSermon(
