@@ -111,6 +111,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private let ephemeralSession: URLSession
 
     private var backgroundSession: URLSession!
+    /// Test seam: a non-background configuration (e.g. ephemeral with a stub
+    /// URLProtocol) whose session still uses this manager as delegate, so the
+    /// real PATCH loop — delegate completion driving `patchGate.finish` — can
+    /// run under unit tests. Background sessions cannot host URLProtocol.
+    private let backgroundSessionConfigurationOverride: URLSessionConfiguration?
     private var backgroundCompletionHandler: (() -> Void)?
     private let patchGate = PatchCompletionGate()
     /// Persistent chunk files keyed by URLSession task id — deleted only after
@@ -261,7 +266,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
         tokenProvider: (() async throws -> String)? = nil,
         currentUserIdProvider: (() -> UUID?)? = nil,
         storageObjectDeleter: ((String) async throws -> Void)? = nil,
-        createBackgroundSession: Bool = true
+        createBackgroundSession: Bool = true,
+        ephemeralSessionConfiguration: URLSessionConfiguration = .ephemeral,
+        backgroundSessionConfigurationOverride: URLSessionConfiguration? = nil
     ) {
         self.projectURL = projectURL
         self.anonKey = anonKey
@@ -279,7 +286,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 .from(TusUploadClient.bucketName)
                 .remove(paths: [objectPath])
         }
-        self.ephemeralSession = URLSession(configuration: .ephemeral)
+        self.ephemeralSession = URLSession(configuration: ephemeralSessionConfiguration)
+        self.backgroundSessionConfigurationOverride = backgroundSessionConfigurationOverride
         super.init()
         if createBackgroundSession {
             prepareBackgroundSessionIfNeeded()
@@ -288,11 +296,17 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     func prepareBackgroundSessionIfNeeded() {
         guard !prepared else { return }
-        let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
-        config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = true
-        config.waitsForConnectivity = true
-        config.timeoutIntervalForResource = 60 * 60 * 6
+        let config: URLSessionConfiguration
+        if let override = backgroundSessionConfigurationOverride {
+            config = override
+        } else {
+            let background = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
+            background.isDiscretionary = false
+            background.sessionSendsLaunchEvents = true
+            background.waitsForConnectivity = true
+            background.timeoutIntervalForResource = 60 * 60 * 6
+            config = background
+        }
         backgroundSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         prepared = true
     }
@@ -898,7 +912,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         upsert: Bool
     ) async throws -> URLSessionUploadTask {
         let token = try await tokenProvider()
-        let chunkURL = try writeChunkFile(from: localFile, range: range)
+        let chunkURL = try await writeChunkFile(from: localFile, range: range)
 
         let contentLength = range.upperBound - range.lowerBound
         let request = TusUploadClient.makePatchRequest(
@@ -916,7 +930,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             if let oldPath = existingRecord.chunkFilePath,
                oldPath != chunkURL.path,
                !(await isChunkFileInUse(path: oldPath, taskIdentifier: existingRecord.taskIdentifier)) {
-                try? FileManager.default.removeItem(atPath: oldPath)
+                await ChunkFileStore.shared.remove(paths: [oldPath])
             }
             existingRecord.taskIdentifier = task.taskIdentifier
             existingRecord.chunkFilePath = chunkURL.path
@@ -1060,7 +1074,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     /// Application Support subdirectory for background-session PATCH bodies.
     /// Must outlive process death — NSTemporaryDirectory may be purged.
-    static func uploadChunkDirectory() throws -> URL {
+    nonisolated static func uploadChunkDirectory() throws -> URL {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -1076,18 +1090,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
         return dir
     }
 
-    private func writeChunkFile(from file: URL, range: Range<Int64>) throws -> URL {
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        try handle.seek(toOffset: UInt64(range.lowerBound))
-        let count = Int(range.upperBound - range.lowerBound)
-        guard let data = try handle.read(upToCount: count), data.count == count else {
-            throw UploadManagerError.fileMissing
-        }
-        let chunkURL = try Self.uploadChunkDirectory()
-            .appendingPathComponent("tus-chunk-\(UUID().uuidString)")
-        try data.write(to: chunkURL, options: .atomic)
-        return chunkURL
+    /// Chunk body I/O runs on `ChunkFileStore`, off the main actor — a ~6 MB
+    /// synchronous read+write here froze the UI (TAB-73 review).
+    private func writeChunkFile(from file: URL, range: Range<Int64>) async throws -> URL {
+        let directory = try Self.uploadChunkDirectory()
+        return try await ChunkFileStore.shared.writeChunk(from: file, range: range, into: directory)
     }
 
     private func waitForPatchCompletion(taskId: Int, timeout: UInt64) async throws -> HTTPURLResponse {
@@ -1104,8 +1111,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     private func removeChunkFile(forTaskId taskId: Int) {
+        // Bookkeeping stays synchronous on the main actor; the disk removal is
+        // fire-and-forget on ChunkFileStore — deletion is idempotent and the
+        // orphan sweep catches anything a crash strands (TAB-73 review).
         if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
-            try? FileManager.default.removeItem(at: chunkURL)
+            Task { await ChunkFileStore.shared.remove(paths: [chunkURL.path]) }
             clearPersistedChunkReference(forTaskId: taskId)
             return
         }
@@ -1113,7 +1123,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
               let path = record.chunkFilePath else {
             return
         }
-        try? FileManager.default.removeItem(atPath: path)
+        Task { await ChunkFileStore.shared.remove(paths: [path]) }
         record.chunkFilePath = nil
         if record.taskIdentifier == taskId {
             record.taskIdentifier = nil
@@ -1136,15 +1146,17 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 .filter { Self.shouldAwaitBackgroundUploadTask(state: $0.state) }
                 .map(\.taskIdentifier)
         )
+        var orphanedPaths: [String] = []
         for var record in resumeStore.allRecords() {
             guard let path = record.chunkFilePath else { continue }
             let taskActive = record.taskIdentifier.map { activeTaskIds.contains($0) } ?? false
             guard !taskActive else { continue }
-            try? FileManager.default.removeItem(atPath: path)
+            orphanedPaths.append(path)
             record.chunkFilePath = nil
             record.taskIdentifier = nil
             resumeStore.save(record)
         }
+        await ChunkFileStore.shared.remove(paths: orphanedPaths)
         let protectedPaths = Set(
             resumeStore.allRecords().compactMap { record -> String? in
                 guard let path = record.chunkFilePath,
@@ -1164,16 +1176,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
             dirs.append(FileManager.default.temporaryDirectory)
             return dirs
         }()
-        for dir in dirsToSweep {
-            guard let entries = try? FileManager.default.contentsOfDirectory(
-                at: dir,
-                includingPropertiesForKeys: nil
-            ) else { continue }
-            for url in entries where url.lastPathComponent.hasPrefix("tus-chunk-") {
-                guard !protectedPaths.contains(url.path) else { continue }
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
+        await ChunkFileStore.shared.sweep(
+            directories: dirsToSweep,
+            protectedPaths: protectedPaths,
+            prefix: "tus-chunk-"
+        )
     }
 
     /// Test seam — relaunch cleanup when the in-memory chunk map is empty.
