@@ -38,6 +38,30 @@ struct NoteServiceRegressionTests {
         #expect(reloaded.currentNotes.first?.timestamp == 3405)
     }
 
+    /// Review round 4: the stale-write protection covers NON-empty arrays
+    /// too. A sibling that loaded an older snapshot and never mutated it must
+    /// not write that stale copy back over newer data.
+    @MainActor
+    @Test func staleNonEmptyInstanceFlushMustNotOverwriteNewerStore() throws {
+        let sessionId = uniqueSessionId()
+        let writer = NoteService(sessionId: sessionId)
+        defer { writer.clearSession() }
+
+        writer.addNote(text: "v1", timestamp: 100)
+        writer.flushPersistedNotes()
+
+        let staleReader = NoteService(sessionId: sessionId) // loads "v1", never mutates
+        if let note = writer.currentNotes.first {
+            writer.updateNote(id: note.id, newText: "v2 — newer")
+        }
+        writer.flushPersistedNotes()
+
+        staleReader.flushPersistedNotes() // must not write "v1" back
+
+        let reloaded = NoteService(sessionId: sessionId)
+        #expect(reloaded.currentNotes.first?.text == "v2 — newer")
+    }
+
     /// Deliberate emptying still persists: deleting the last note is a real
     /// mutation and the empty array must overwrite the store.
     @MainActor

@@ -12,7 +12,12 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     
     private let userDefaults = UserDefaults.standard
     private let notesKey = "recordingSessionNotes"
-    private let persistenceQueue = DispatchQueue(label: "com.tabletnotes.notes.persistence", qos: .utility)
+    /// One serial queue for ALL instances (TAB-96 round 4): teardown drains
+    /// every pending note write in the process, not just this instance's, so
+    /// the FIFO ordering guarantee holds even when tests or previews hold
+    /// sibling instances of one session.
+    private static let persistenceQueue = DispatchQueue(label: "com.tabletnotes.notes.persistence", qos: .utility)
+    private var persistenceQueue: DispatchQueue { Self.persistenceQueue }
     /// True once this instance has performed any real mutation. Gates the
     /// empty-array persistence write (TAB-96): only an instance that
     /// deliberately emptied its notes may overwrite a non-empty store.
@@ -127,24 +132,21 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
     
     private func saveNotesToPersistence(synchronously: Bool = false) {
+        // An instance that never mutated anything has nothing to persist:
+        // its array is at best identical to the store and at worst a stale
+        // copy of it — writing either back can only erase newer data (an
+        // empty stale write is how Sunday's duplicate note was born, TAB-96;
+        // round 4 generalized the guard to stale NON-empty writes too).
+        guard hasMutatedNotes else { return }
+
         let key = "\(notesKey)_\(sessionId)"
         let snapshots = notes.map(PersistedNote.init)
-        let deliberatelyEmptied = hasMutatedNotes
 
         // UserDefaults is documented thread-safe; resolving .standard inside
         // the @Sendable closure avoids capturing the non-Sendable property.
         let write: @Sendable () -> Void = {
-            let userDefaults = UserDefaults.standard
-            // An instance that never mutated anything must not erase a
-            // sibling's persisted work with its empty array — that wipe is
-            // how Sunday's duplicate note was born (TAB-96). A deliberate
-            // deletion sets hasMutatedNotes and still persists the empty.
-            if snapshots.isEmpty, !deliberatelyEmptied, userDefaults.data(forKey: key) != nil {
-                print("[NoteService] Skipping empty flush over a non-empty store for session key \(key)")
-                return
-            }
             if let data = try? JSONEncoder().encode(snapshots) {
-                userDefaults.set(data, forKey: key)
+                UserDefaults.standard.set(data, forKey: key)
             }
         }
 
