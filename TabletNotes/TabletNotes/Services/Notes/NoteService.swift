@@ -3,6 +3,7 @@ import Combine
 import SwiftData
 import SwiftUI
 
+@MainActor
 class NoteService: NoteServiceProtocol, ObservableObject {
     @Published private var notes: [Note] = []
     var notesPublisher: AnyPublisher<[Note], Never> { $notes.eraseToAnyPublisher() }
@@ -11,9 +12,31 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     
     private let userDefaults = UserDefaults.standard
     private let notesKey = "recordingSessionNotes"
-    private let persistenceQueue = DispatchQueue(label: "com.tabletnotes.notes.persistence", qos: .utility)
+    /// One serial queue for ALL instances (TAB-96 round 4): teardown drains
+    /// every pending note write in the process, not just this instance's, so
+    /// the FIFO ordering guarantee holds even when tests or previews hold
+    /// sibling instances of one session.
+    private static let persistenceQueue = DispatchQueue(label: "com.tabletnotes.notes.persistence", qos: .utility)
+    private var persistenceQueue: DispatchQueue { Self.persistenceQueue }
+    /// True once this instance has performed any real mutation. Gates the
+    /// empty-array persistence write (TAB-96): only an instance that
+    /// deliberately emptied its notes may overwrite a non-empty store.
+    private var hasMutatedNotes = false
+    /// Sessions ended by `clearSession()`. Retirement is a property of the
+    /// SESSION, not the instance (TAB-96 round 6): any holder of any
+    /// instance for a cleared session — the recording view, a delayed save
+    /// task, or a sibling constructed directly in tests/previews — accepts
+    /// no mutations and writes nothing, so a cleared session can never be
+    /// repopulated. A cleared id is never reused in production (a new UUID
+    /// is minted per recording), so the tombstone is permanent; growth is
+    /// bounded by recording sessions per process launch.
+    private static var retiredSessionIds: Set<String> = []
 
-    private struct PersistedNote: Codable {
+    private var isRetired: Bool {
+        Self.retiredSessionIds.contains(sessionId)
+    }
+
+    private struct PersistedNote: Codable, Sendable {
         let id: UUID
         let text: String
         let timestamp: TimeInterval
@@ -56,9 +79,61 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
     }
     
+    /// Production code must obtain instances via `NoteService.shared(for:)` —
+    /// two live instances on one session id race over the same UserDefaults
+    /// key, which is the defect TAB-96 fixed. The initializer stays callable
+    /// for tests (which construct competing instances deliberately to prove
+    /// the guards) and previews.
     init(sessionId: String = UUID().uuidString) {
         self.sessionId = sessionId
         loadNotesFromPersistence()
+    }
+
+    // MARK: - One instance per session (TAB-96)
+
+    /// Every call site used to allocate `NoteService(sessionId:)` inline —
+    /// MainAppView did it on every render — so a fleet of instances shared
+    /// one UserDefaults key and raced each other (a stale empty one could
+    /// clobber the persisted note, and the view then created a duplicate).
+    /// The registry hands back the same instance for a session; a session
+    /// ends via `clearSession()`, which evicts it. MainActor-isolated with
+    /// the class, so no lock is needed and a service can never be created
+    /// off the main actor. Growth is bounded by recording sessions per
+    /// process launch (one live at a time; an abandoned session holds one
+    /// small note array until its id is cleared or the process ends).
+    private static var sharedInstances: [String: NoteService] = [:]
+
+    static func shared(for sessionId: String) -> NoteService {
+        if let existing = sharedInstances[sessionId] {
+            return existing
+        }
+        let service = NoteService(sessionId: sessionId)
+        sharedInstances[sessionId] = service
+        return service
+    }
+
+    private static func evictShared(sessionId: String) {
+        sharedInstances.removeValue(forKey: sessionId)
+    }
+
+    /// The recording screen's single-note save: update the primary note in
+    /// place — keeping its creation timestamp — or create it when non-blank
+    /// text first arrives. The decision reads this service's own state, never
+    /// a view-local replica delivered asynchronously, so a repeated save can
+    /// not mint a second row (TAB-96).
+    ///
+    /// The creation timestamp is deliberately immutable: it marks where in
+    /// the recording the user STARTED the note, and later saves (including
+    /// the post-stop flush) must not move that marker. A genuine timestamp 0
+    /// means the user typed at second zero.
+    func upsertPrimaryNote(text: String, timestamp: TimeInterval) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = notes.first {
+            updateNote(id: existing.id, newText: trimmed.isEmpty ? " " : trimmed)
+            return
+        }
+        guard !trimmed.isEmpty else { return }
+        addNote(text: trimmed, timestamp: timestamp)
     }
     
     private func loadNotesFromPersistence() {
@@ -70,12 +145,21 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
     
     private func saveNotesToPersistence(synchronously: Bool = false) {
+        // An instance that never mutated anything has nothing to persist:
+        // its array is at best identical to the store and at worst a stale
+        // copy of it — writing either back can only erase newer data (an
+        // empty stale write is how Sunday's duplicate note was born, TAB-96;
+        // round 4 generalized the guard to stale NON-empty writes too).
+        guard hasMutatedNotes, !isRetired else { return }
+
         let key = "\(notesKey)_\(sessionId)"
         let snapshots = notes.map(PersistedNote.init)
 
-        let write = { [userDefaults] in
+        // UserDefaults is documented thread-safe; resolving .standard inside
+        // the @Sendable closure avoids capturing the non-Sendable property.
+        let write: @Sendable () -> Void = {
             if let data = try? JSONEncoder().encode(snapshots) {
-                userDefaults.set(data, forKey: key)
+                UserDefaults.standard.set(data, forKey: key)
             }
         }
 
@@ -94,6 +178,8 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func addNote(text: String, timestamp: TimeInterval) {
+        guard !isRetired else { return }
+        hasMutatedNotes = true
         let note = Note(text: text, timestamp: timestamp)
         notes.append(note)
         saveNotesToPersistence()
@@ -101,7 +187,9 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func updateNote(id: UUID, newText: String) {
+        guard !isRetired else { return }
         if let idx = notes.firstIndex(where: { $0.id == id }) {
+            hasMutatedNotes = true
             notes[idx].text = newText
             notes = notes
             saveNotesToPersistence()
@@ -112,6 +200,11 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func deleteNote(id: UUID) {
+        guard !isRetired else { return }
+        // Only an applied deletion counts as a mutation — a miss on a stale
+        // instance must not license it to overwrite the store (TAB-96).
+        guard notes.contains(where: { $0.id == id }) else { return }
+        hasMutatedNotes = true
         notes.removeAll { $0.id == id }
         saveNotesToPersistence()
     }
@@ -119,10 +212,17 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     func clearSession() {
         let key = "\(notesKey)_\(sessionId)"
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
+        Self.retiredSessionIds.insert(sessionId)
         notes.removeAll()
-        persistenceQueue.async { [userDefaults] in
-            userDefaults.removeObject(forKey: key)
+        // Synchronous on the serial persistence queue: FIFO drains any queued
+        // write first (no resurrection), and the removal completes before the
+        // eviction below — so a same-session `shared(for:)` reacquired right
+        // after this call can never load the just-cleared notes (round 3).
+        // Bounded cost: at most one pending single-note encode sits ahead.
+        persistenceQueue.sync {
+            UserDefaults.standard.removeObject(forKey: key)
         }
+        Self.evictShared(sessionId: sessionId)
         print("[NoteService] Session cleared. Notes count now: \(notes.count)")
     }
 }
