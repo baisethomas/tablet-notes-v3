@@ -18,6 +18,17 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let resumeStore: UploadResumeStoring
     private let apiBaseURL = "https://comfy-daffodil-7ecc55.netlify.app"
 
+    /// `updatedAt` orders sync merges, so it keeps its fractional seconds —
+    /// the default ISO8601 formatter truncates to whole seconds, shifting the
+    /// stored row up to ~1s earlier than the snapshot it represents (TAB-95
+    /// review). Postgres `timestamptz` stores the precision; PostgREST already
+    /// returns it on pull.
+    static let updatedAtFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
     init(
         supabaseService: SupabaseServiceProtocol,
         audioUploader: (any SermonAudioUploading)? = nil,
@@ -34,6 +45,70 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
 
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
         try await supabaseService.fetchRemoteSermons(for: userId)
+    }
+
+    /// Builds the create-sermon request body. Extracted so a test can execute
+    /// it (TAB-95): the payload must carry the snapshot's `updatedAt` — the
+    /// server honors it (`create-sermon.js` falls back to server time only
+    /// when absent), and without it the row is stamped at POST-completion,
+    /// *after* the whole audio upload, so the next pull sees a "newer" row
+    /// carrying the pre-completion statuses and walks local state backwards.
+    static func createSermonPayload(
+        data: SermonSyncData,
+        audioFilePath: String,
+        audioFileUrl: String,
+        audioFileName: String,
+        fileSize: Int
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "localId": data.id.uuidString,
+            "title": data.title,
+            "audioFilePath": audioFilePath,
+            "audioFileUrl": audioFileUrl,
+            "audioFileName": audioFileName,
+            "audioFileSizeBytes": fileSize,
+            "duration": 0,
+            "date": ISO8601DateFormatter().string(from: data.date),
+            "serviceType": data.serviceType,
+            "speaker": data.speaker as Any,
+            "transcriptionStatus": data.transcriptionStatus,
+            "summaryStatus": data.summaryStatus,
+            "isArchived": data.isArchived,
+            "updatedAt": updatedAtFormatter.string(from: data.updatedAt)
+        ]
+
+        if let notes = data.notes, !notes.isEmpty {
+            payload["notes"] = notes.map { note in
+                [
+                    "id": note.id.uuidString,
+                    "text": note.text,
+                    // The backend notes.timestamp column is an integer;
+                    // fractional seconds fail the whole note insert (TAB-56).
+                    "timestamp": Int(note.timestamp.rounded())
+                ]
+            }
+        }
+
+        if let transcript = data.transcript {
+            payload["transcript"] = [
+                "id": transcript.id.uuidString,
+                "text": transcript.text,
+                "segments": NSNull(),
+                "status": "complete"
+            ]
+        }
+
+        if let summary = data.summary {
+            payload["summary"] = [
+                "id": summary.id.uuidString,
+                "title": summary.title,
+                "text": summary.text,
+                "type": summary.type,
+                "status": summary.status
+            ]
+        }
+
+        return payload
     }
 
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
@@ -77,7 +152,10 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             )
             objectPath = plan.objectPath
         } else {
-            // Part A: streaming PUT on a foreground session.
+            // Part A: streaming PUT on a foreground session. Passing the
+            // sermon's local id gives this upload a stable object path, so a
+            // retry replaces its own partial rather than orphaning a ~100MB
+            // object nothing reaps (TAB-73).
             let upload = try await supabaseService.getSignedUploadURL(
                 for: audioFileName,
                 contentType: "audio/m4a",
@@ -96,52 +174,13 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             .from("sermon-audio")
             .getPublicURL(path: objectPath)
 
-        var payload: [String: Any] = [
-            "localId": data.id.uuidString,
-            "title": data.title,
-            "audioFilePath": objectPath,
-            "audioFileUrl": audioFileURL.absoluteString,
-            "audioFileName": audioFileName,
-            "audioFileSizeBytes": fileSize,
-            "duration": 0,
-            "date": ISO8601DateFormatter().string(from: data.date),
-            "serviceType": data.serviceType,
-            "speaker": data.speaker as Any,
-            "transcriptionStatus": data.transcriptionStatus,
-            "summaryStatus": data.summaryStatus,
-            "isArchived": data.isArchived
-        ]
-
-        if let notes = data.notes, !notes.isEmpty {
-            payload["notes"] = notes.map { note in
-                [
-                    "id": note.id.uuidString,
-                    "text": note.text,
-                    // The backend notes.timestamp column is an integer;
-                    // fractional seconds fail the whole note insert (TAB-56).
-                    "timestamp": Int(note.timestamp.rounded())
-                ]
-            }
-        }
-
-        if let transcript = data.transcript {
-            payload["transcript"] = [
-                "id": transcript.id.uuidString,
-                "text": transcript.text,
-                "segments": NSNull(),
-                "status": "complete"
-            ]
-        }
-
-        if let summary = data.summary {
-            payload["summary"] = [
-                "id": summary.id.uuidString,
-                "title": summary.title,
-                "text": summary.text,
-                "type": summary.type,
-                "status": summary.status
-            ]
-        }
+        let payload = Self.createSermonPayload(
+            data: data,
+            audioFilePath: objectPath,
+            audioFileUrl: audioFileURL.absoluteString,
+            audioFileName: audioFileName,
+            fileSize: fileSize
+        )
 
         let url = URL(string: "\(apiBaseURL)/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
@@ -205,7 +244,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
 
         var payload: [String: Any] = [
             "remoteId": remoteId,
-            "updatedAt": ISO8601DateFormatter().string(from: data.updatedAt)
+            "updatedAt": Self.updatedAtFormatter.string(from: data.updatedAt)
         ]
 
         if data.scopes.metadata {

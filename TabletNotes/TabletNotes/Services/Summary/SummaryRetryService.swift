@@ -17,6 +17,22 @@ class SummaryRetryService: ObservableObject {
 
     @Published var isProcessingQueue = false
 
+    /// The job whose runner is executing right now. More precise than
+    /// `isProcessingQueue` for the completed-sermon guard: a queue-wide flag
+    /// would treat every `.running` row as live while any job runs, leaving
+    /// killed-app relics open until the queue went idle (TAB-94 round 3).
+    private var activeJobId: UUID?
+
+    /// Jobs enqueued by an explicit user request this session (TAB-94 round
+    /// 5). Only these may run against a sermon that already has a summary —
+    /// the queue retires any other such job as a relic instead of re-billing.
+    /// In-memory on purpose: a deliberate regeneration interrupted by process
+    /// death is already treated as a relic on relaunch (the round-2 trade-off),
+    /// so the intent does not need to survive it. Never pruned — job ids are
+    /// unique per row, and a completed job's id can never match a future open
+    /// job, so a stale entry is inert.
+    private var deliberateJobIds: Set<UUID> = []
+
     static let summaryCompletedNotification = Notification.Name("SummaryCompleted")
 
     private var isNetworkAvailable = false
@@ -210,6 +226,12 @@ class SummaryRetryService: ObservableObject {
 
         print("[SummaryRetryService] Enqueuing summary for sermon \(sermonId) with transcript length \(transcriptText.count)")
         upsertJob(for: sermonId, resetAttempts: true)
+        // Every public enqueue is an explicit request (the sweeps call
+        // upsertJob directly); record the intent so the queue lets this job
+        // run even against an existing summary.
+        if let deliberateJob = job(for: sermonId) {
+            deliberateJobIds.insert(deliberateJob.id)
+        }
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
         try? context.save()
@@ -279,7 +301,64 @@ class SummaryRetryService: ObservableObject {
         )
     }
 
+    /// TAB-94 companion: a sermon whose summary already exists needs no
+    /// automatic summary work. When the status string has been walked back to
+    /// "pending"/"processing" (TAB-95), repair it forward instead of minting
+    /// or resuming a job, which re-ran a paid summary over one that already
+    /// exists. Only a job that is running right now (a live deliberate
+    /// regeneration) is spared; any other open job is a relic — most likely
+    /// minted by the pre-TAB-94 sweeps against this same poisoned state — and
+    /// resuming it would re-bill, so it is closed. The manual retry paths are
+    /// untouched.
+    @discardableResult
+    private func repairSummarizedSermonIfNeeded(_ sermon: Sermon) -> Bool {
+        guard sermon.summary != nil,
+              sermon.summaryStatus == "pending" || sermon.summaryStatus == "processing" else {
+            return false
+        }
+
+        // Relic siblings are closed even while this sermon's own regeneration
+        // is live — only the exact active job is spared, ever.
+        let openJobs = openSummaryJobs(for: sermon.id)
+        var closedRelic = false
+        for staleJob in openJobs where staleJob.id != activeJobId {
+            staleJob.markComplete()
+            closedRelic = true
+        }
+
+        if openJobs.contains(where: { $0.id == activeJobId }) {
+            // The live regeneration owns this sermon's status; report and
+            // repair nothing, but persist the sibling closures.
+            if closedRelic {
+                try? modelContext?.save()
+            }
+            return false
+        }
+
+        print("[SummaryRetryService] Sermon \(sermon.id) already has a summary; repairing status \(sermon.summaryStatus) -> complete")
+        sermon.summaryStatus = "complete"
+        sermon.markPendingSync(metadata: true)
+        try? modelContext?.save()
+        return true
+    }
+
+    private func openSummaryJobs(for sermonId: UUID) -> [ProcessingJob] {
+        guard let context = modelContext else { return [] }
+        let descriptor = FetchDescriptor<ProcessingJob>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).filter {
+            $0.sermonId == sermonId &&
+            $0.kind == .summary &&
+            $0.status != .complete
+        }
+    }
+
     func retrySummaryIfNeeded(for sermon: Sermon) {
+        if repairSummarizedSermonIfNeeded(sermon) {
+            try? modelContext?.save()
+            return
+        }
         guard shouldAutomaticallyRecoverSummary(for: sermon) else {
             return
         }
@@ -298,6 +377,7 @@ class SummaryRetryService: ObservableObject {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             print("[SummaryRetryService] Recovering incomplete summaries from \(sermons.count) sermons")
             for sermon in sermons where sermon.transcriptionStatus == "complete" {
+                if repairSummarizedSermonIfNeeded(sermon) { continue }
                 guard resolvedTranscriptText(
                     for: sermon,
                     allowRelationshipFallback: false
@@ -340,6 +420,7 @@ class SummaryRetryService: ObservableObject {
         do {
             let sermons = try context.fetch(FetchDescriptor<Sermon>())
             for sermon in sermons where sermon.summaryStatus == "processing" {
+                if repairSummarizedSermonIfNeeded(sermon) { continue }
                 guard let updatedAt = sermon.updatedAt, updatedAt < timeoutThreshold else { continue }
                 guard isWithinAutomaticRecoveryWindow(for: sermon, job: job(for: sermon.id)) else { continue }
                 if job(for: sermon.id) == nil {
@@ -406,6 +487,7 @@ class SummaryRetryService: ObservableObject {
         in context: ModelContext
     ) {
         isProcessingQueue = true
+        activeJobId = nextJob.id
         nextJob.markRunning()
         sermon.summaryStatus = "processing"
         sermon.markPendingSync(metadata: true)
@@ -423,6 +505,7 @@ class SummaryRetryService: ObservableObject {
             guard let self else { return }
 
             defer {
+                self.activeJobId = nil
                 self.isProcessingQueue = false
                 self.processQueue()
             }
@@ -687,6 +770,19 @@ class SummaryRetryService: ObservableObject {
 
             if sermon.summaryStatus == "complete", sermon.summary != nil {
                 print("[SummaryRetryService] Completing stale summary job for sermon \(sermon.id)")
+                job.markComplete()
+                mutatedQueue = true
+                continue
+            }
+
+            // TAB-94 round 5: a runnable job for a sermon that already has a
+            // summary is a relic unless it was explicitly requested this
+            // session — the status string alone can't distinguish a poisoned
+            // "processing"/"pending" (TAB-95) from a live regeneration, and
+            // the sweeps may not have run yet when the queue is kicked
+            // directly (network restored, completion chains).
+            if sermon.summary != nil, !deliberateJobIds.contains(job.id) {
+                print("[SummaryRetryService] Retiring relic summary job for already-summarized sermon \(sermon.id)")
                 job.markComplete()
                 mutatedQueue = true
                 continue
