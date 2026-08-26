@@ -16,6 +16,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let audioUploader: any SermonAudioUploading
     private let isResumableUploadsEnabled: () -> Bool
     private let resumeStore: UploadResumeStoring
+    private let authUserIdProvider: (() async throws -> UUID)?
     private let apiBaseURL = "https://comfy-daffodil-7ecc55.netlify.app"
 
     /// `updatedAt` orders sync merges, so it keeps its fractional seconds —
@@ -33,7 +34,8 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         supabaseService: SupabaseServiceProtocol,
         audioUploader: (any SermonAudioUploading)? = nil,
         resumeStore: UploadResumeStoring? = nil,
-        isResumableUploadsEnabled: (() -> Bool)? = nil
+        isResumableUploadsEnabled: (() -> Bool)? = nil,
+        authUserIdProvider: (() async throws -> UUID)? = nil
     ) {
         self.supabaseService = supabaseService
         self.audioUploader = audioUploader ?? UploadManager.shared
@@ -41,6 +43,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         self.isResumableUploadsEnabled = isResumableUploadsEnabled ?? {
             FeatureFlags.shared.resumableUploads
         }
+        self.authUserIdProvider = authUserIdProvider
     }
 
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
@@ -114,7 +117,6 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
         print("[SyncService] Creating remote sermon: \(data.title)")
 
-        let token = try await getAuthToken()
         let audioFileName = data.audioFileURL.lastPathComponent
         let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
 
@@ -181,6 +183,10 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             audioFileName: audioFileName,
             fileSize: fileSize
         )
+
+        // Minted AFTER the upload: the transfer can take minutes, and a token
+        // fetched up front could be stale by the time the POST runs.
+        let token = try await getAuthToken()
 
         let url = URL(string: "\(apiBaseURL)/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
@@ -383,6 +389,9 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     }
 
     private func currentAuthUserId() async throws -> UUID {
+        if let authUserIdProvider {
+            return try await authUserIdProvider()
+        }
         let session = try await supabaseService.client.auth.session
         return session.user.id
     }

@@ -116,6 +116,9 @@ final class UploadManager: NSObject, SermonAudioUploading {
     /// real PATCH loop — delegate completion driving `patchGate.finish` — can
     /// run under unit tests. Background sessions cannot host URLProtocol.
     private let backgroundSessionConfigurationOverride: URLSessionConfiguration?
+    /// How long a background relaunch waits for auth-session restore before
+    /// giving up on scheduling continuations (records are kept either way).
+    private let authRestoreWaitNanoseconds: UInt64
     private var backgroundCompletionHandler: (() -> Void)?
     private let patchGate = PatchCompletionGate()
     /// Persistent chunk files keyed by URLSession task id — deleted only after
@@ -268,7 +271,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
         storageObjectDeleter: ((String) async throws -> Void)? = nil,
         createBackgroundSession: Bool = true,
         ephemeralSessionConfiguration: URLSessionConfiguration = .ephemeral,
-        backgroundSessionConfigurationOverride: URLSessionConfiguration? = nil
+        backgroundSessionConfigurationOverride: URLSessionConfiguration? = nil,
+        authRestoreWaitNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.projectURL = projectURL
         self.anonKey = anonKey
@@ -288,6 +292,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         }
         self.ephemeralSession = URLSession(configuration: ephemeralSessionConfiguration)
         self.backgroundSessionConfigurationOverride = backgroundSessionConfigurationOverride
+        self.authRestoreWaitNanoseconds = authRestoreWaitNanoseconds
         super.init()
         if createBackgroundSession {
             prepareBackgroundSessionIfNeeded()
@@ -363,7 +368,19 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
         inFlightUploads[key] = task
-        defer { inFlightUploads.removeValue(forKey: key) }
+        // The registry entry lives exactly as long as the op does — removal is
+        // chained to the op's completion, NOT to this caller's await. If the
+        // caller is cancelled, the op keeps running (the background transfer
+        // survives regardless) and a retry COALESCES onto it instead of
+        // starting a second PATCH sequence against the same TUS resource
+        // (review round 2). Deliberate teardown goes through the flag-off
+        // epoch / sign-out drain, which cancel the work for every waiter.
+        Task { @MainActor [weak self] in
+            _ = try? await task.value
+            if let self, self.inFlightUploads[key] == task {
+                self.inFlightUploads.removeValue(forKey: key)
+            }
+        }
         try await task.value
     }
 
@@ -1192,8 +1209,18 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     func scheduleIncompleteBackgroundUploadContinuations() async {
-        // Auth may still be restoring on cold launch — a nil user here is not
-        // confirmed sign-out. Sign-out itself drains via clearPersistedResumeRecords().
+        // Auth may still be restoring on a background relaunch — the exact
+        // wake-up background URLSession exists to survive. Wait briefly for
+        // the session restore instead of wasting the system-delivered event
+        // (review round 2). A nil user after the wait is still not confirmed
+        // sign-out (that path drains via clearPersistedResumeRecords()), so
+        // records are kept for the next foreground.
+        if currentUserIdProvider() == nil, authRestoreWaitNanoseconds > 0 {
+            let deadline = ContinuousClock.now + .nanoseconds(Int64(authRestoreWaitNanoseconds))
+            while currentUserIdProvider() == nil, ContinuousClock.now < deadline {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
         guard currentUserIdProvider() != nil else { return }
         guard featureFlags.resumableUploads else {
             let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)

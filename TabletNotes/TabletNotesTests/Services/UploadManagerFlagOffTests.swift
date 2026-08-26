@@ -400,7 +400,8 @@ struct UploadManagerFlagOffTests {
             featureFlags: flags,
             tokenProvider: { "token" },
             currentUserIdProvider: { nil },
-            createBackgroundSession: false
+            createBackgroundSession: false,
+            authRestoreWaitNanoseconds: 0
         )
         await manager.continueIncompleteBackgroundUploads()
         // Cold-launch nil user must not wipe/cancel — auth may still be restoring.

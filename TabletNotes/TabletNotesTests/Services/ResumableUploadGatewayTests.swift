@@ -432,3 +432,164 @@ struct ResumableUploadPathResolverTests {
         )
     }
 }
+
+/// TAB-73 review round 2: the gateway's resumable branch — resolver plan,
+/// uploader hand-off, mint-vs-resume decisions — exercised end to end with a
+/// capturing uploader. The uploader throws a sentinel after recording its
+/// arguments, stopping `createRemoteSermon` before any network call.
+@MainActor
+struct GatewayResumableBranchTests {
+
+    final class CapturingUploader: SermonAudioUploading {
+        struct Sentinel: Error {}
+        var uploadedObjectPaths: [String] = []
+        var uploadedUpserts: [Bool] = []
+        var abandonedRecords: [UploadResumeRecord] = []
+        var acceptsResumableAdmission = true
+
+        func uploadResumable(localFile: URL, sermonLocalId: UUID, objectPath: String, upsert: Bool) async throws {
+            uploadedObjectPaths.append(objectPath)
+            uploadedUpserts.append(upsert)
+            throw Sentinel()
+        }
+
+        func cancelInFlightResumableUploads(timeoutNanoseconds: UInt64) async throws {}
+        func clearPersistedResumeRecords() async {}
+        func abandonStaleResumeRecord(_ record: UploadResumeRecord) async throws {
+            abandonedRecords.append(record)
+        }
+    }
+
+    private struct Harness {
+        let gateway: SermonSyncRemoteGateway
+        let uploader: CapturingUploader
+        let store: UploadResumeStore
+        let ownerId: UUID
+        let file: URL
+        let fileLength: Int64
+        let modificationTime: TimeInterval
+        let cleanup: () -> Void
+    }
+
+    private func makeHarness() throws -> Harness {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gateway-resumable-\(UUID().uuidString).m4a")
+        try Data(repeating: 0xEF, count: 16).write(to: file)
+        let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = UploadResumeStore(defaults: defaults, key: "gateway-branch")
+        let uploader = CapturingUploader()
+        let ownerId = UUID()
+        let gateway = SermonSyncRemoteGateway(
+            supabaseService: MockSupabaseService(),
+            audioUploader: uploader,
+            resumeStore: store,
+            isResumableUploadsEnabled: { true },
+            authUserIdProvider: { ownerId }
+        )
+
+        return Harness(
+            gateway: gateway,
+            uploader: uploader,
+            store: store,
+            ownerId: ownerId,
+            file: file,
+            fileLength: Int64(values.fileSize!),
+            modificationTime: values.contentModificationDate!.timeIntervalSince1970,
+            cleanup: {
+                try? FileManager.default.removeItem(at: file)
+                defaults.removePersistentDomain(forName: suite)
+            }
+        )
+    }
+
+    private func makeSyncData(id: UUID, file: URL) -> SermonSyncData {
+        SermonSyncData(
+            id: id,
+            title: "Gateway Branch Sermon",
+            audioFileURL: file,
+            date: Date(),
+            serviceType: "Sunday Service",
+            speaker: nil,
+            transcriptionStatus: "pending",
+            summaryStatus: "pending",
+            isArchived: false,
+            userId: UUID(),
+            updatedAt: Date(),
+            notes: nil,
+            transcript: nil,
+            summary: nil,
+            scopes: .all
+        )
+    }
+
+    /// A persisted record matching the local file resumes: no mint, and the
+    /// record's own objectPath (not a freshly minted one) reaches the uploader.
+    @Test func matchingResumeRecordSkipsMintAndReusesPath() async throws {
+        let harness = try makeHarness()
+        defer { harness.cleanup() }
+        let sermonId = UUID()
+        let persistedPath = "custom/persisted-resume-path.m4a"
+
+        harness.store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: persistedPath,
+                uploadURL: URL(string: "https://example.com/upload/resumable/xyz")!,
+                uploadLength: harness.fileLength,
+                filePath: harness.file.path,
+                fileModificationTime: harness.modificationTime,
+                taskIdentifier: nil,
+                ownerUserId: harness.ownerId,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        await #expect(throws: CapturingUploader.Sentinel.self) {
+            _ = try await harness.gateway.createRemoteSermon(
+                data: makeSyncData(id: sermonId, file: harness.file)
+            )
+        }
+
+        #expect(harness.uploader.uploadedObjectPaths == [persistedPath])
+        #expect(harness.uploader.abandonedRecords.isEmpty)
+    }
+
+    /// A record for a DIFFERENT file (stale partial) is abandoned first, then
+    /// a fresh path is minted and handed to the uploader, and the store holds
+    /// the minted record.
+    @Test func staleRecordIsAbandonedThenFreshPathMinted() async throws {
+        let harness = try makeHarness()
+        defer { harness.cleanup() }
+        let sermonId = UUID()
+
+        harness.store.save(
+            UploadResumeRecord(
+                sermonLocalId: sermonId,
+                objectPath: "custom/stale-path.m4a",
+                uploadURL: URL(string: "https://example.com/upload/resumable/old")!,
+                uploadLength: 999, // does not match the real file
+                filePath: "/tmp/some-other-file.m4a",
+                fileModificationTime: 1,
+                taskIdentifier: nil,
+                ownerUserId: harness.ownerId,
+                startedUnderFlag: true,
+                upsert: true
+            )
+        )
+
+        await #expect(throws: CapturingUploader.Sentinel.self) {
+            _ = try await harness.gateway.createRemoteSermon(
+                data: makeSyncData(id: sermonId, file: harness.file)
+            )
+        }
+
+        let mintedPath = "mock-user/\(sermonId.uuidString.lowercased()).m4a"
+        #expect(harness.uploader.abandonedRecords.map(\.objectPath) == ["custom/stale-path.m4a"])
+        #expect(harness.uploader.uploadedObjectPaths == [mintedPath])
+        #expect(harness.store.record(for: sermonId)?.objectPath == mintedPath)
+    }
+}
