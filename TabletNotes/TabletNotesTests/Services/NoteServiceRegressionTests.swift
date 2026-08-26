@@ -137,6 +137,28 @@ struct NoteServiceRegressionTests {
         #expect(third.currentNotes.isEmpty)
     }
 
+    /// Review round 5: holders of an evicted instance (the recording view, a
+    /// delayed save task) may still call into it after clearSession. A
+    /// retired instance accepts no mutations and writes nothing — a cleared
+    /// session can never be repopulated.
+    @MainActor
+    @Test func retiredInstanceCannotRepopulateClearedSession() throws {
+        let sessionId = uniqueSessionId()
+        let old = NoteService.shared(for: sessionId)
+        old.upsertPrimaryNote(text: "Live note", timestamp: 10)
+        old.clearSession()
+
+        // A stale view/task fires a save against the retained old instance.
+        old.upsertPrimaryNote(text: "Zombie write", timestamp: 20)
+        old.flushPersistedNotes()
+
+        let fresh = NoteService.shared(for: sessionId)
+        defer { fresh.clearSession() }
+        #expect(old.currentNotes.isEmpty)
+        #expect(fresh.currentNotes.isEmpty)
+        #expect(fresh !== old)
+    }
+
     /// The single-note UI's save decision lives in the service now, not in a
     /// view-local replica: repeated saves update the one note in place —
     /// keeping its original timestamp — and never mint a second row.

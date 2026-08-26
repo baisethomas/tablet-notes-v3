@@ -22,6 +22,11 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     /// empty-array persistence write (TAB-96): only an instance that
     /// deliberately emptied its notes may overwrite a non-empty store.
     private var hasMutatedNotes = false
+    /// Set by `clearSession()`. Holders of the evicted instance (the
+    /// recording view, a delayed save task) may still call into it after
+    /// teardown; a retired instance accepts no mutations and writes nothing,
+    /// so a cleared session can never be repopulated (TAB-96 round 5).
+    private var isRetired = false
 
     private struct PersistedNote: Codable, Sendable {
         let id: UUID
@@ -137,7 +142,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         // copy of it — writing either back can only erase newer data (an
         // empty stale write is how Sunday's duplicate note was born, TAB-96;
         // round 4 generalized the guard to stale NON-empty writes too).
-        guard hasMutatedNotes else { return }
+        guard hasMutatedNotes, !isRetired else { return }
 
         let key = "\(notesKey)_\(sessionId)"
         let snapshots = notes.map(PersistedNote.init)
@@ -165,6 +170,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func addNote(text: String, timestamp: TimeInterval) {
+        guard !isRetired else { return }
         hasMutatedNotes = true
         let note = Note(text: text, timestamp: timestamp)
         notes.append(note)
@@ -173,6 +179,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func updateNote(id: UUID, newText: String) {
+        guard !isRetired else { return }
         if let idx = notes.firstIndex(where: { $0.id == id }) {
             hasMutatedNotes = true
             notes[idx].text = newText
@@ -185,6 +192,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     }
 
     func deleteNote(id: UUID) {
+        guard !isRetired else { return }
         // Only an applied deletion counts as a mutation — a miss on a stale
         // instance must not license it to overwrite the store (TAB-96).
         guard notes.contains(where: { $0.id == id }) else { return }
@@ -196,6 +204,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     func clearSession() {
         let key = "\(notesKey)_\(sessionId)"
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
+        isRetired = true
         notes.removeAll()
         // Synchronous on the serial persistence queue: FIFO drains any queued
         // write first (no resurrection), and the removal completes before the
