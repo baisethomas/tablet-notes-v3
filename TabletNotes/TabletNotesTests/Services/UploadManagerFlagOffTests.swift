@@ -260,7 +260,7 @@ struct UploadManagerFlagOffTests {
             tokenProvider: { "token" },
             createBackgroundSession: false
         )
-        manager.finishPatchForTesting(taskId: 77)
+        await manager.finishPatchForTesting(taskId: 77)
 
         #expect(!FileManager.default.fileExists(atPath: chunk.path))
         #expect(store.record(for: sermonId)?.chunkFilePath == nil)

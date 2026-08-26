@@ -1105,17 +1105,17 @@ final class UploadManager: NSObject, SermonAudioUploading {
         )
     }
 
-    private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) {
-        removeChunkFile(forTaskId: taskId)
+    private func finishPatch(taskId: Int, result: Result<HTTPURLResponse, Error>) async {
+        await removeChunkFile(forTaskId: taskId)
         patchGate.finish(taskId: taskId, result: result)
     }
 
-    private func removeChunkFile(forTaskId taskId: Int) {
-        // Bookkeeping stays synchronous on the main actor; the disk removal is
-        // fire-and-forget on ChunkFileStore — deletion is idempotent and the
-        // orphan sweep catches anything a crash strands (TAB-73 review).
+    private func removeChunkFile(forTaskId taskId: Int) async {
+        // Bookkeeping stays on the main actor; the unlink runs on
+        // ChunkFileStore and is awaited so cleanup is deterministic — the
+        // chunk file is gone before the patch gate resolves (TAB-73 review).
         if let chunkURL = chunkFilesByTaskId.removeValue(forKey: taskId) {
-            Task { await ChunkFileStore.shared.remove(paths: [chunkURL.path]) }
+            await ChunkFileStore.shared.remove(paths: [chunkURL.path])
             clearPersistedChunkReference(forTaskId: taskId)
             return
         }
@@ -1123,7 +1123,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
               let path = record.chunkFilePath else {
             return
         }
-        Task { await ChunkFileStore.shared.remove(paths: [path]) }
+        await ChunkFileStore.shared.remove(paths: [path])
         record.chunkFilePath = nil
         if record.taskIdentifier == taskId {
             record.taskIdentifier = nil
@@ -1184,8 +1184,8 @@ final class UploadManager: NSObject, SermonAudioUploading {
     }
 
     /// Test seam — relaunch cleanup when the in-memory chunk map is empty.
-    internal func finishPatchForTesting(taskId: Int) {
-        finishPatch(
+    internal func finishPatchForTesting(taskId: Int) async {
+        await finishPatch(
             taskId: taskId,
             result: .failure(UploadManagerError.patchFailed(status: -1))
         )
@@ -1361,18 +1361,18 @@ extension UploadManager: URLSessionTaskDelegate, URLSessionDataDelegate {
         let response = task.response as? HTTPURLResponse
         Task { @MainActor in
             if let error {
-                self.finishPatch(taskId: taskId, result: .failure(error))
+                await self.finishPatch(taskId: taskId, result: .failure(error))
                 return
             }
             guard let response else {
-                self.finishPatch(
+                await self.finishPatch(
                     taskId: taskId,
                     result: .failure(UploadManagerError.patchFailed(status: -1))
                 )
                 return
             }
             // Caller applies the strict success predicate (204 + offset).
-            self.finishPatch(taskId: taskId, result: .success(response))
+            await self.finishPatch(taskId: taskId, result: .success(response))
         }
     }
 
