@@ -22,11 +22,19 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     /// empty-array persistence write (TAB-96): only an instance that
     /// deliberately emptied its notes may overwrite a non-empty store.
     private var hasMutatedNotes = false
-    /// Set by `clearSession()`. Holders of the evicted instance (the
-    /// recording view, a delayed save task) may still call into it after
-    /// teardown; a retired instance accepts no mutations and writes nothing,
-    /// so a cleared session can never be repopulated (TAB-96 round 5).
-    private var isRetired = false
+    /// Sessions ended by `clearSession()`. Retirement is a property of the
+    /// SESSION, not the instance (TAB-96 round 6): any holder of any
+    /// instance for a cleared session — the recording view, a delayed save
+    /// task, or a sibling constructed directly in tests/previews — accepts
+    /// no mutations and writes nothing, so a cleared session can never be
+    /// repopulated. A cleared id is never reused in production (a new UUID
+    /// is minted per recording), so the tombstone is permanent; growth is
+    /// bounded by recording sessions per process launch.
+    private static var retiredSessionIds: Set<String> = []
+
+    private var isRetired: Bool {
+        Self.retiredSessionIds.contains(sessionId)
+    }
 
     private struct PersistedNote: Codable, Sendable {
         let id: UUID
@@ -204,7 +212,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     func clearSession() {
         let key = "\(notesKey)_\(sessionId)"
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
-        isRetired = true
+        Self.retiredSessionIds.insert(sessionId)
         notes.removeAll()
         // Synchronous on the serial persistence queue: FIFO drains any queued
         // write first (no resurrection), and the removal completes before the

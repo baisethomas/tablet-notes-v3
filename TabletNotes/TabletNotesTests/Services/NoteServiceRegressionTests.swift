@@ -159,6 +159,30 @@ struct NoteServiceRegressionTests {
         #expect(fresh !== old)
     }
 
+    /// Review round 6: retirement is per-SESSION, not per-instance. Clearing
+    /// through one instance also silences any sibling constructed directly
+    /// (the test/preview route) — a sibling's mutation or flush after the
+    /// clear cannot recreate the session key.
+    @MainActor
+    @Test func siblingInstanceCannotRepopulateSessionClearedByAnother() throws {
+        let sessionId = uniqueSessionId()
+        let primary = NoteService.shared(for: sessionId)
+        primary.upsertPrimaryNote(text: "Live note", timestamp: 10)
+        primary.flushPersistedNotes()
+
+        let sibling = NoteService(sessionId: sessionId) // direct construction
+        sibling.upsertPrimaryNote(text: "Sibling edit", timestamp: 15) // sibling has mutated
+
+        primary.clearSession()
+
+        // The sibling fires after teardown — mutation and flush must be inert.
+        sibling.upsertPrimaryNote(text: "Sibling zombie write", timestamp: 20)
+        sibling.flushPersistedNotes()
+
+        let fresh = NoteService(sessionId: sessionId)
+        #expect(fresh.currentNotes.isEmpty)
+    }
+
     /// The single-note UI's save decision lives in the service now, not in a
     /// view-local replica: repeated saves update the one note in place —
     /// keeping its original timestamp — and never mint a second row.
