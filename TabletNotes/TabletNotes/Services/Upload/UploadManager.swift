@@ -130,6 +130,12 @@ final class UploadManager: NSObject, SermonAudioUploading {
     private var inFlightUploads: [InFlightUploadKey: Task<Void, Error>] = [:]
     /// Prevent duplicate background continuation schedules for the same sermon.
     private var backgroundContinuationsInFlight: Set<UUID> = []
+    /// FIFO tail per sermon (TAB-73 review round 3): a sermon has one resume
+    /// record and one TUS resource, so every operation that can mutate them —
+    /// a push op for ANY file identity, a background continuation — runs
+    /// strictly after the previous one. Without this, a relaunch continuation
+    /// resuming the old file could interleave with a push of a replaced file.
+    private var perSermonOperationTail: [UUID: Task<Void, Never>] = [:]
     /// Incremented when resumable uploads are disabled; in-flight ops observe this.
     private var flagOffEpoch: UInt64 = 0
     /// While flag-off drain runs, reject newly admitted resumable uploads.
@@ -352,13 +358,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
 
-        let task = Task { @MainActor in
+        let flagEpoch = flagOffEpoch
+        let task = serializedPerSermonOperation(sermonLocalId) {
             try await self.uploadResumableOnce(
                 localFile: localFile,
                 sermonLocalId: sermonLocalId,
                 objectPath: objectPath,
                 upsert: upsert,
-                flagEpoch: self.flagOffEpoch,
+                flagEpoch: flagEpoch,
                 fileLength: fileLength,
                 modificationTime: modificationTime
             )
@@ -382,6 +389,31 @@ final class UploadManager: NSObject, SermonAudioUploading {
             }
         }
         try await task.value
+    }
+
+    /// Enqueues `body` behind every previously admitted operation for the
+    /// same sermon (FIFO) and returns its task. The chain is not cancelled by
+    /// caller cancellation — see the coalescing comment in uploadResumable.
+    private func serializedPerSermonOperation(
+        _ sermonLocalId: UUID,
+        _ body: @escaping @MainActor () async throws -> Void
+    ) -> Task<Void, Error> {
+        let predecessor = perSermonOperationTail[sermonLocalId]
+        let work = Task { @MainActor in
+            await predecessor?.value
+            try await body()
+        }
+        let tail = Task { @MainActor in
+            _ = try? await work.value
+        }
+        perSermonOperationTail[sermonLocalId] = tail
+        Task { @MainActor [weak self] in
+            await tail.value
+            if let self, self.perSermonOperationTail[sermonLocalId] == tail {
+                self.perSermonOperationTail.removeValue(forKey: sermonLocalId)
+            }
+        }
+        return work
     }
 
     private func uploadResumableOnce(
@@ -1254,6 +1286,16 @@ final class UploadManager: NSObject, SermonAudioUploading {
             return
         }
         defer { backgroundContinuationsInFlight.remove(sermonLocalId) }
+        // Serialize against push operations for this sermon: a continuation
+        // resuming the persisted file must not interleave with an upload of a
+        // replaced one (round 3).
+        try await serializedPerSermonOperation(sermonLocalId) {
+            try await self.continueUploadUnserialized(for: record)
+        }.value
+    }
+
+    private func continueUploadUnserialized(for record: UploadResumeRecord) async throws {
+        let sermonLocalId = record.sermonLocalId
 
         let localURL = URL(fileURLWithPath: record.filePath)
         guard let uploadURL = record.uploadURL else {

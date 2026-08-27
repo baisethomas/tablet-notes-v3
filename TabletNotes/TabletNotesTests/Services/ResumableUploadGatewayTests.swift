@@ -88,7 +88,7 @@ struct ResumableUploadPathResolverTests {
         #expect(mintCalls == 1)
     }
 
-    @Test func concurrentPlansForSameSermonWithDifferentFileIdentityDoNotCoalesce() async throws {
+    @Test func planForReplacedFileIdentityRunsAfterTheFirstPlan() async throws {
         let fileA = try makeTempAudioFile(named: "coalesce-a")
         let fileB = try makeTempAudioFile(named: "coalesce-b")
         defer {
@@ -161,14 +161,26 @@ struct ResumableUploadPathResolverTests {
             mint: mint
         )
         try await Task.sleep(nanoseconds: 50_000_000)
-        #expect(gate.callCount == 2)
+        // Round 3: the replaced-file plan WAITS — only the first mint may be
+        // in flight while the first plan is unresolved.
+        #expect(gate.callCount == 1)
         gate.releaseOne()
-        gate.releaseOne()
-
         let planA = try await first
-        let planB = try await second
-        #expect(Set([planA.objectPath, planB.objectPath]) == Set(["user/first.m4a", "user/second.m4a"]))
+
+        // Only now may the second plan mint; release it once it arrives.
+        var spins = 0
+        while gate.callCount < 2, spins < 10_000 {
+            spins += 1
+            await Task.yield()
+        }
         #expect(gate.callCount == 2)
+        gate.releaseOne()
+        let planB = try await second
+
+        #expect(planA.objectPath == "user/first.m4a")
+        #expect(planB.objectPath == "user/second.m4a")
+        // The single resume record belongs to the LAST plan, never a mix.
+        #expect(store.record(for: sermonId)?.objectPath == "user/second.m4a")
     }
 
     @Test func resumeSkipsMintWhenARecordMatchesTheLocalFile() async throws {
@@ -591,5 +603,86 @@ struct GatewayResumableBranchTests {
         #expect(harness.uploader.abandonedRecords.map(\.objectPath) == ["custom/stale-path.m4a"])
         #expect(harness.uploader.uploadedObjectPaths == [mintedPath])
         #expect(harness.store.record(for: sermonId)?.objectPath == mintedPath)
+    }
+}
+
+/// TAB-73 review round 3: plans for the SAME sermon serialize even when the
+/// file identity differs — the sermon has one resume record, and two
+/// interleaved plans would both mint and both overwrite it.
+@MainActor
+struct ResumableUploadPlanSerializationTests {
+
+    @Test func planForReplacedFileWaitsForInFlightPlan() async throws {
+        let dir = FileManager.default.temporaryDirectory
+        let fileA = dir.appendingPathComponent("plan-serial-a-\(UUID().uuidString).m4a")
+        let fileB = dir.appendingPathComponent("plan-serial-b-\(UUID().uuidString).m4a")
+        try Data(repeating: 0x01, count: 8).write(to: fileA)
+        try Data(repeating: 0x02, count: 16).write(to: fileB)
+        defer {
+            try? FileManager.default.removeItem(at: fileA)
+            try? FileManager.default.removeItem(at: fileB)
+        }
+
+        let suite = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UploadResumeStore(defaults: defaults, key: "plan-serial")
+
+        let sermonId = UUID()
+        let ownerId = UUID()
+        var events: [String] = []
+        var releaseMintA: CheckedContinuation<Void, Never>?
+
+        let planA = Task { @MainActor in
+            try await ResumableUploadPathResolver.plan(
+                sermonLocalId: sermonId,
+                localFile: fileA,
+                fileLength: 8,
+                ownerUserId: ownerId,
+                resumeStore: store,
+                mint: {
+                    events.append("mintA-start")
+                    await withCheckedContinuation { releaseMintA = $0 }
+                    events.append("mintA-end")
+                    return ("minted/a.m4a", true)
+                }
+            )
+        }
+
+        var spins = 0
+        while releaseMintA == nil, spins < 10_000 {
+            spins += 1
+            await Task.yield()
+        }
+        #expect(releaseMintA != nil)
+
+        // The file was "replaced": same sermon, different identity.
+        let planB = Task { @MainActor in
+            try await ResumableUploadPathResolver.plan(
+                sermonLocalId: sermonId,
+                localFile: fileB,
+                fileLength: 16,
+                ownerUserId: ownerId,
+                resumeStore: store,
+                mint: {
+                    events.append("mintB")
+                    return ("minted/b.m4a", true)
+                }
+            )
+        }
+
+        for _ in 0..<50 { await Task.yield() }
+        // B must not have started while A's plan is still in flight.
+        #expect(!events.contains("mintB"))
+
+        releaseMintA?.resume()
+        _ = try await planA.value
+        let planBResult = try await planB.value
+
+        #expect(events == ["mintA-start", "mintA-end", "mintB"])
+        #expect(planBResult.objectPath == "minted/b.m4a")
+        // The record belongs to the LAST plan — never a mix of the two.
+        #expect(store.record(for: sermonId)?.objectPath == "minted/b.m4a")
+        #expect(store.record(for: sermonId)?.uploadLength == 16)
     }
 }

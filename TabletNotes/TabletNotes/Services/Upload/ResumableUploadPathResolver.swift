@@ -10,8 +10,13 @@ enum ResumableUploadPathResolver {
         var didMint: Bool
     }
 
-    /// Coalesces concurrent `plan` calls for the same sermon across reentrant awaits.
-    private static var inFlightPlans: [PlanCoalescingKey: Task<Plan, Error>] = [:]
+    /// Coalesces concurrent `plan` calls for the same sermon across reentrant
+    /// awaits — and SERIALIZES them when the file identity differs (TAB-73
+    /// review round 3): the sermon has exactly one resume record, so a plan
+    /// for a replaced file must wait for the in-flight plan rather than
+    /// interleave with it (both would mint, and both would overwrite the
+    /// record). Keyed by sermon id; the stored key decides join-vs-wait.
+    private static var inFlightPlans: [UUID: (key: PlanCoalescingKey, task: Task<Plan, Error>)] = [:]
 
     private struct PlanCoalescingKey: Hashable {
         let sermonLocalId: UUID
@@ -70,14 +75,24 @@ enum ResumableUploadPathResolver {
             fileLength: fileLength,
             ownerUserId: ownerUserId
         )
-        if let existing = inFlightPlans[key] {
-            return try await existing.value
+        // Identical identity joins the in-flight plan; a DIFFERENT identity
+        // (file replaced mid-flight) waits for it to finish, then re-checks —
+        // FIFO per sermon, so two plans never interleave on the one record.
+        while let existing = inFlightPlans[sermonLocalId] {
+            if existing.key == key {
+                return try await existing.task.value
+            }
+            _ = try? await existing.task.value
         }
         let mintWork = mint
         let mayPersist = mayPersistNewRecord
         let abandon = abandonStaleRecord
         let task = Task { @MainActor in
-            defer { inFlightPlans[key] = nil }
+            defer {
+                if inFlightPlans[sermonLocalId]?.key == key {
+                    inFlightPlans[sermonLocalId] = nil
+                }
+            }
             return try await planUncoalesced(
                 sermonLocalId: sermonLocalId,
                 localFile: localFile,
@@ -89,7 +104,7 @@ enum ResumableUploadPathResolver {
                 abandonStaleRecord: abandon
             )
         }
-        inFlightPlans[key] = task
+        inFlightPlans[sermonLocalId] = (key, task)
         return try await task.value
     }
 
