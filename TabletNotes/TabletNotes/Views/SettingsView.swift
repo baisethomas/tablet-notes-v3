@@ -12,6 +12,11 @@ struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
     @State private var durableProcessingEnabled = FeatureFlags.shared.durableProcessingPipeline
+    @State private var resumableUploadsEnabled = FeatureFlags.shared.resumableUploads
+    /// True while a flag-off drain runs (bounded ~30s): the toggle is disabled
+    /// so it can't be re-toggled mid-drain, and stays visually "on" until the
+    /// drain confirms (review round 4 UX note).
+    @State private var isDrainingResumableUploads = false
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -362,6 +367,49 @@ struct SettingsView: View {
                                     }
                                 )
                             )
+
+                            SettingsDivider()
+
+                            // TAB-73 Part B: TUS on a background URLSession. Ships
+                            // dark until airplane-mode / kill-app proof on device.
+                            SettingsToggle(
+                                icon: "arrow.triangle.2.circlepath",
+                                title: "Resumable Uploads (Beta)",
+                                subtitle: "Resume large uploads after backgrounding or a dropped connection",
+                                isOn: Binding(
+                                    get: { resumableUploadsEnabled },
+                                    set: { newValue in
+                                        guard !isDrainingResumableUploads else { return }
+                                        Task { @MainActor in
+                                            if newValue {
+                                                FeatureFlags.shared.setEnabled(
+                                                    true,
+                                                    for: .resumableUploads
+                                                )
+                                                UploadManager.shared.reopenResumableAdmission()
+                                                resumableUploadsEnabled = true
+                                                return
+                                            }
+                                            // Confirmed cancel before legacy PUT may touch those paths.
+                                            isDrainingResumableUploads = true
+                                            defer { isDrainingResumableUploads = false }
+                                            do {
+                                                try await UploadManager.shared
+                                                    .cancelInFlightResumableUploads()
+                                            } catch {
+                                                print("[Settings] Flag-off cancel failed: \(error.localizedDescription)")
+                                                return
+                                            }
+                                            FeatureFlags.shared.setEnabled(
+                                                false,
+                                                for: .resumableUploads
+                                            )
+                                            resumableUploadsEnabled = false
+                                        }
+                                    }
+                                )
+                            )
+                            .disabled(isDrainingResumableUploads)
 
                             SettingsDivider()
 

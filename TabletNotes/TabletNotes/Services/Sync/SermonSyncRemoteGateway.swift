@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 protocol SermonSyncRemoteGatewayProtocol {
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData]
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult
@@ -9,8 +10,13 @@ protocol SermonSyncRemoteGatewayProtocol {
     func deleteAllRemoteData(for userId: UUID) async throws
 }
 
+@MainActor
 final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     private let supabaseService: SupabaseServiceProtocol
+    private let audioUploader: any SermonAudioUploading
+    private let isResumableUploadsEnabled: () -> Bool
+    private let resumeStore: UploadResumeStoring
+    private let authUserIdProvider: (() async throws -> UUID)?
     private let apiBaseURL = "https://comfy-daffodil-7ecc55.netlify.app"
 
     /// `updatedAt` orders sync merges, so it keeps its fractional seconds —
@@ -24,8 +30,20 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         return formatter
     }()
 
-    init(supabaseService: SupabaseServiceProtocol) {
+    init(
+        supabaseService: SupabaseServiceProtocol,
+        audioUploader: (any SermonAudioUploading)? = nil,
+        resumeStore: UploadResumeStoring? = nil,
+        isResumableUploadsEnabled: (() -> Bool)? = nil,
+        authUserIdProvider: (() async throws -> UUID)? = nil
+    ) {
         self.supabaseService = supabaseService
+        self.audioUploader = audioUploader ?? UploadManager.shared
+        self.resumeStore = resumeStore ?? UploadResumeStore()
+        self.isResumableUploadsEnabled = isResumableUploadsEnabled ?? {
+            FeatureFlags.shared.resumableUploads
+        }
+        self.authUserIdProvider = authUserIdProvider
     }
 
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
@@ -99,33 +117,76 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
         print("[SyncService] Creating remote sermon: \(data.title)")
 
-        let token = try await getAuthToken()
         let audioFileName = data.audioFileURL.lastPathComponent
         let fileSize = try FileManager.default.attributesOfItem(atPath: data.audioFileURL.path)[.size] as? Int ?? 0
 
-        // Passing the sermon's local id gives this upload a stable object path,
-        // so a retry replaces its own partial rather than orphaning a ~100MB
-        // object nothing reaps (TAB-73).
-        let upload = try await supabaseService.getSignedUploadURL(
-            for: audioFileName,
-            contentType: "audio/m4a",
-            fileSize: fileSize,
-            sermonLocalId: data.id
-        )
+        let objectPath: String
 
-        try await supabaseService.uploadAudioFile(at: data.audioFileURL, to: upload.uploadUrl, upsert: upload.upsert)
+        if isResumableUploadsEnabled() {
+            let ownerUserId = try await currentAuthUserId()
+            let plan = try await ResumableUploadPathResolver.plan(
+                sermonLocalId: data.id,
+                localFile: data.audioFileURL,
+                fileLength: Int64(fileSize),
+                ownerUserId: ownerUserId,
+                resumeStore: resumeStore,
+                mint: { [supabaseService] in
+                    let minted = try await supabaseService.getSignedUploadURL(
+                        for: audioFileName,
+                        contentType: "audio/m4a",
+                        fileSize: fileSize,
+                        sermonLocalId: data.id
+                    )
+                    return (minted.path, minted.upsert)
+                },
+                mayPersistNewRecord: { [audioUploader] in
+                    audioUploader.acceptsResumableAdmission
+                },
+                abandonStaleRecord: { [audioUploader] record in
+                    try await audioUploader.abandonStaleResumeRecord(record)
+                }
+            )
+            try await audioUploader.uploadResumable(
+                localFile: data.audioFileURL,
+                sermonLocalId: data.id,
+                objectPath: plan.objectPath,
+                upsert: plan.upsert
+            )
+            objectPath = plan.objectPath
+        } else {
+            // Part A: streaming PUT on a foreground session. Passing the
+            // sermon's local id gives this upload a stable object path, so a
+            // retry replaces its own partial rather than orphaning a ~100MB
+            // object nothing reaps (TAB-73).
+            let upload = try await supabaseService.getSignedUploadURL(
+                for: audioFileName,
+                contentType: "audio/m4a",
+                fileSize: fileSize,
+                sermonLocalId: data.id
+            )
+            try await supabaseService.uploadAudioFile(
+                at: data.audioFileURL,
+                to: upload.uploadUrl,
+                upsert: upload.upsert
+            )
+            objectPath = upload.path
+        }
 
         let audioFileURL = try supabaseService.client.storage
             .from("sermon-audio")
-            .getPublicURL(path: upload.path)
+            .getPublicURL(path: objectPath)
 
         let payload = Self.createSermonPayload(
             data: data,
-            audioFilePath: upload.path,
+            audioFilePath: objectPath,
             audioFileUrl: audioFileURL.absoluteString,
             audioFileName: audioFileName,
             fileSize: fileSize
         )
+
+        // Minted AFTER the upload: the transfer can take minutes, and a token
+        // fetched up front could be stale by the time the POST runs.
+        let token = try await getAuthToken()
 
         let url = URL(string: "\(apiBaseURL)/.netlify/functions/create-sermon")!
         var request = URLRequest(url: url)
@@ -325,5 +386,13 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
                 throw SyncError.authenticationFailed
             }
         }
+    }
+
+    private func currentAuthUserId() async throws -> UUID {
+        if let authUserIdProvider {
+            return try await authUserIdProvider()
+        }
+        let session = try await supabaseService.client.auth.session
+        return session.user.id
     }
 }
