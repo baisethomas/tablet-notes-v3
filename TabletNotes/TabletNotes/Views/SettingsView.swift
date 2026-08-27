@@ -13,6 +13,10 @@ struct SettingsView: View {
     @State private var deleteAccountError: String?
     @State private var durableProcessingEnabled = FeatureFlags.shared.durableProcessingPipeline
     @State private var resumableUploadsEnabled = FeatureFlags.shared.resumableUploads
+    /// True while a flag-off drain runs (bounded ~30s): the toggle is disabled
+    /// so it can't be re-toggled mid-drain, and stays visually "on" until the
+    /// drain confirms (review round 4 UX note).
+    @State private var isDrainingResumableUploads = false
     
     var onNext: (() -> Void)?
     var onShowOnboarding: (() -> Void)?
@@ -375,6 +379,7 @@ struct SettingsView: View {
                                 isOn: Binding(
                                     get: { resumableUploadsEnabled },
                                     set: { newValue in
+                                        guard !isDrainingResumableUploads else { return }
                                         Task { @MainActor in
                                             if newValue {
                                                 FeatureFlags.shared.setEnabled(
@@ -386,6 +391,8 @@ struct SettingsView: View {
                                                 return
                                             }
                                             // Confirmed cancel before legacy PUT may touch those paths.
+                                            isDrainingResumableUploads = true
+                                            defer { isDrainingResumableUploads = false }
                                             do {
                                                 try await UploadManager.shared
                                                     .cancelInFlightResumableUploads()
@@ -402,6 +409,7 @@ struct SettingsView: View {
                                     }
                                 )
                             )
+                            .disabled(isDrainingResumableUploads)
 
                             SettingsDivider()
 

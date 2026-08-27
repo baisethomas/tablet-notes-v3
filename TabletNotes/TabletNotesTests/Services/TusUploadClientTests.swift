@@ -116,6 +116,18 @@ struct TusUploadClientTests {
         #expect(TusUploadClient.isTrustedUploadLocation(location, endpoint: endpoint))
     }
 
+    @Test func isTrustedUploadLocationRejectsEncodedTraversal() {
+        let endpoint = URL(string: "https://stub.supabase.co/storage/v1/upload/resumable")!
+        // URL.path percent-decodes, so an encoded slash becomes a real one and
+        // fails the separator check; even undecoded, '%' and '.' fail the
+        // alphanumeric/dash/underscore charset. Pin both rejections (TAB-73
+        // review round 4).
+        let encoded = URL(string: "https://stub.supabase.co/storage/v1/upload/resumable/..%2F..%2Fbuckets%2Fpublic%2Ffoo")!
+        #expect(!TusUploadClient.isTrustedUploadLocation(encoded, endpoint: endpoint))
+        let dotted = URL(string: "https://stub.supabase.co/storage/v1/upload/resumable/..")!
+        #expect(!TusUploadClient.isTrustedUploadLocation(dotted, endpoint: endpoint))
+    }
+
     @Test func isTrustedUploadLocationRejectsPrefixSiblings() {
         let endpoint = URL(string: "https://example.supabase.co/storage/v1/upload/resumable")!
         let malicious = URL(string: "https://example.supabase.co/storage/v1/upload/resumable-malicious")!
