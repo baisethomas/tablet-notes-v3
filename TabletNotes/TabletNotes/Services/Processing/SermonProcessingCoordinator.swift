@@ -155,6 +155,15 @@ final class SermonProcessingCoordinator {
             // No stuck-job scanning, no queue pumping: the server's reaper owns
             // both. All the client does on foreground is (re)ask for jobs that
             // never got requested — an idempotent, cheap sweep.
+            //
+            // The status-only repair still runs here (TAB-97): skipping the
+            // legacy sweeps also skipped the TAB-94 repair that walks a
+            // poisoned status forward when the transcript/summary already
+            // exists, leaving such sermons "preparing" forever on both device
+            // and server. Repairing before the dispatch task means a poisoned
+            // "pending" that is actually transcribed can never be dispatched.
+            TranscriptionRetryService.shared.repairAlreadyTranscribedStatuses()
+            SummaryRetryService.shared.repairAlreadySummarizedStatuses()
             Task { await self.dispatchPendingDurableJobs() }
             return
         }
