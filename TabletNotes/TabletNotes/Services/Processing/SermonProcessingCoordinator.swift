@@ -162,6 +162,10 @@ final class SermonProcessingCoordinator {
             // exists, leaving such sermons "preparing" forever on both device
             // and server. Repairing before the dispatch task means a poisoned
             // "pending" that is actually transcribed can never be dispatched.
+            //
+            // Like every sweep call in this file, these rely on configure()
+            // having set the shared services' model context to this
+            // coordinator's — configure() is the only place either is set.
             TranscriptionRetryService.shared.repairAlreadyTranscribedStatuses()
             SummaryRetryService.shared.repairAlreadySummarizedStatuses()
             Task { await self.dispatchPendingDurableJobs() }
