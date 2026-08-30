@@ -350,7 +350,18 @@ class SummaryRetryService: ObservableObject {
     /// minted, no summary re-run, no network touched.
     func repairAlreadySummarizedStatuses() {
         guard let context = modelContext else { return }
-        let sermons = (try? context.fetch(FetchDescriptor<Sermon>())) ?? []
+        // Only repair candidates are fetched: after one pass their statuses
+        // are terminal, so the steady-state fetch on every foreground refresh
+        // returns nothing. The summary-exists half of the check lives in
+        // repairSummarizedSermonIfNeeded — optional-relationship predicates
+        // are unreliable in SwiftData (see dispatchPendingDurableJobs).
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { sermon in
+                sermon.summaryStatus == "pending" ||
+                sermon.summaryStatus == "processing"
+            }
+        )
+        let sermons = (try? context.fetch(descriptor)) ?? []
         for sermon in sermons {
             repairSummarizedSermonIfNeeded(sermon)
         }

@@ -333,7 +333,19 @@ class TranscriptionRetryService: ObservableObject {
     /// that repair: no jobs minted, nothing submitted, no network touched.
     func repairAlreadyTranscribedStatuses() {
         guard let context = modelContext else { return }
-        let sermons = (try? context.fetch(FetchDescriptor<Sermon>())) ?? []
+        // Only repair candidates are fetched: after one pass their statuses
+        // are terminal, so the steady-state fetch on every foreground refresh
+        // returns nothing. The transcript-exists half of the check stays in
+        // memory — optional-relationship predicates are unreliable in
+        // SwiftData (see dispatchPendingDurableJobs).
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { sermon in
+                sermon.transcriptionStatus == "pending" ||
+                sermon.transcriptionStatus == "processing" ||
+                sermon.transcriptionStatus == "failed"
+            }
+        )
+        let sermons = (try? context.fetch(descriptor)) ?? []
         for sermon in sermons where sermon.transcript != nil {
             completeAlreadyTranscribedSermonIfNeeded(sermon, in: context)
         }
