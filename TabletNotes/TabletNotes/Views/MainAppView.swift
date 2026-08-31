@@ -37,6 +37,9 @@ struct MainAppView: View {
     @StateObject private var trialPromptManager = TrialPromptManager.shared
     private let authManager = AuthenticationManager.shared
     @State private var showTrialPrompt = false
+    /// Consume-once handoff to SettingsView: the trial modal's Subscribe
+    /// button opens Settings WITH the subscription sheet (TAB-106).
+    @State private var pendingSubscriptionPrompt = false
     @State private var syncService: SyncService
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
     @State private var recordingSaveErrorMessage: String? = nil
@@ -247,6 +250,10 @@ struct MainAppView: View {
                             withAnimation {
                                 showTrialPrompt = false
                             }
+                            // Land on Settings WITH the subscription sheet
+                            // open — routing to the bare page left the user
+                            // hunting for a paywall (TAB-106).
+                            pendingSubscriptionPrompt = true
                             currentScreen = .settings
                         }
                     )
@@ -521,6 +528,7 @@ struct MainAppView: View {
             )
         case .settings:
             SettingsView(
+                openSubscriptionOnAppear: $pendingSubscriptionPrompt,
                 onNext: {
                     currentScreen = .home
                 },
