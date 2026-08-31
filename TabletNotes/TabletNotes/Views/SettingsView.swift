@@ -7,6 +7,19 @@ struct SettingsView: View {
     @State private var showingResetAlert = false
     @State private var showingAbout = false
     @State private var showingSubscriptionPrompt = false
+    /// Consume-once request to open the subscription sheet — set by the
+    /// trial-expired modal's Subscribe button (TAB-106), which used to drop
+    /// the user on this plain page with no paywall in sight. Consumed on
+    /// appear AND on change: the modal can fire while Settings is already
+    /// the active screen.
+    var openSubscriptionOnAppear: Binding<Bool> = .constant(false)
+
+    private func consumePendingSubscriptionPrompt() {
+        if openSubscriptionOnAppear.wrappedValue {
+            openSubscriptionOnAppear.wrappedValue = false
+            showingSubscriptionPrompt = true
+        }
+    }
     @State private var showingDeleteAccountAlert = false
     @State private var showingDataExportSheet = false
     @State private var isDeletingAccount = false
@@ -455,6 +468,16 @@ struct SettingsView: View {
         .sheet(isPresented: $showingSubscriptionPrompt) {
             SubscriptionPromptView()
         }
+        .onAppear {
+            consumePendingSubscriptionPrompt()
+        }
+        // The trial modal can fire while Settings is already the active
+        // screen (the prompt triggers on foreground, not on navigation), in
+        // which case onAppear never re-runs — consume the request whenever
+        // the flag flips too (Ternary round 1).
+        .onChange(of: openSubscriptionOnAppear.wrappedValue) {
+            consumePendingSubscriptionPrompt()
+        }
         .sheet(isPresented: $showingDataExportSheet) {
             DataExportView()
         }
@@ -760,11 +783,31 @@ struct SubscriptionPromptView: View {
                     } else if !subscriptionService.availableProducts.isEmpty {
                         SubscriptionPlansView(subscriptionService: subscriptionService)
                     } else {
+                        // No products came back from the App Store. The old
+                        // fallback showed static pricing cards with no
+                        // purchase wiring — a paywall-shaped dead end the
+                        // user could not "complete" (TAB-106). Say what is
+                        // wrong and offer a retry; keep the cards below as
+                        // pricing reference only.
                         VStack(spacing: 16) {
-                            Text("Choose Your Plan")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                            
+                            VStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.title2)
+                                    .foregroundColor(.orange)
+                                Text("Purchases are unavailable right now")
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                Text("The App Store didn't return any subscription options. Check your connection and try again.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Button("Try Again") {
+                                    Task { await subscriptionService.loadProducts() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(Color.SV.primary)
+                            }
+
                             VStack(spacing: 12) {
                                 StaticPricingCard(plan: .premiumMonthly)
                                 StaticPricingCard(plan: .premiumAnnual, isRecommended: true)
