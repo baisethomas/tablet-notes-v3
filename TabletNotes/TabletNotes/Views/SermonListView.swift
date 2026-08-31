@@ -66,9 +66,9 @@ struct EmptyStateView: View {
 /// than vanishing.
 @MainActor
 func sermonRowStatusBadge(transcriptionStatus: String, summaryStatus: String) -> (String, Color)? {
-    if transcriptionStatus == SermonStageStatus.complete.rawValue,
-       summaryStatus == SermonStageStatus.complete.rawValue
-        || summaryStatus == SermonStageStatus.tooShort.rawValue {
+    if transcriptionStatus == SermonStageStatus.complete.rawValue
+        && (summaryStatus == SermonStageStatus.complete.rawValue
+            || summaryStatus == SermonStageStatus.tooShort.rawValue) {
         return nil
     }
     return sermonStatusText(

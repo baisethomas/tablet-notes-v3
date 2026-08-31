@@ -152,6 +152,14 @@ struct SermonRowStatusBadgeTests {
     func tooShortStaysUnannotated() {
         #expect(sermonRowStatusBadge(transcriptionStatus: "complete", summaryStatus: "too_short") == nil)
     }
+
+    @Test("too_short only goes chipless when transcription actually completed")
+    func tooShortWithFailedTranscriptionIsStillLabeled() {
+        // The success-family exemption requires the completed transcription;
+        // an inconsistent failed/too_short combination must stay visible.
+        #expect(sermonRowStatusBadge(transcriptionStatus: "failed", summaryStatus: "too_short")?.0 == "Failed")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "pending", summaryStatus: "too_short") != nil)
+    }
 }
 
 // TAB-54: two recordings created moments apart must not share a fallback
