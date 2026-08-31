@@ -48,8 +48,16 @@ grant insert (
     updated_at
 ) on public.profiles to authenticated;
 
+-- `id` and `created_at` appear in the UPDATE grant because the client's
+-- profile save is a PostgREST UPSERT: its ON CONFLICT (id) DO UPDATE sets
+-- EVERY payload column (id and created_at included), and the conflict-update
+-- requires UPDATE privilege on each SET column — without them, a plain name
+-- edit fails 42501 (caught in TAB-108 PR review). They are inert in
+-- practice: profiles_update_policy's WITH CHECK (auth.uid() = id) means a
+-- user can only "change" id to their own uid, and created_at drift is
+-- limited to their own row.
 grant update (
-    email, name, profile_image_url, is_email_verified,
+    id, email, name, profile_image_url, created_at, is_email_verified,
     monthly_recording_count, monthly_recording_minutes,
     current_storage_used_gb, monthly_export_count, last_usage_reset_date,
     updated_at
