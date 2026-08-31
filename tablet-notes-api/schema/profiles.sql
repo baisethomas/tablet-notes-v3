@@ -40,81 +40,21 @@ create table public.profiles (
 
 create index idx_profiles_email on public.profiles using btree (email);
 
--- RLS: enabled, with a policy set accumulated across several generations of
--- manual SQL-editor work. Reproduced verbatim in TEXT — near-duplicates
--- included — because this file records what prod is, not what it should be.
--- The two policies below that are commented out are preserved for review
--- but NOT executable — applying this file cannot recreate prod's ANON-key
--- paths (arbitrary-id inserts; the 5-minute PII read window). Be clear
--- about what remains, though: even without them, the own-row INSERT/UPDATE
--- policies plus unrestricted column grants mean an AUTHENTICATED user can
--- write their own subscription_* columns — in this file AND in prod today.
--- That is prod's actual (broken) entitlement model, reproduced faithfully;
--- the fix (service-role-only entitlement columns + client coordination) is
--- TAB-108, an owner-run migration. A policy diff against prod will show
--- the two commented policies present in prod — expected until TAB-108.
+-- RLS: enabled. Policy set cleaned by the TAB-108 migration
+-- (20260831210000, applied to prod 2026-08-31) — the accumulated
+-- near-duplicates and the three dangerous policies (anon-key WITH CHECK
+-- (true) insert, the 5-minute read-any-profile window, and the cross-user
+-- authenticated insert) were dropped. What remains is one canonical own-row
+-- policy per command. History of the removed policies lives in that
+-- migration file and in this file's git history.
 alter table public.profiles enable row level security;
-
--- SELECT (three near-duplicates + one permissive variant)
-create policy "Users can view own profile"
-    on public.profiles for select
-    using (auth.uid() = id);
-
-create policy "Users can view their own profile"
-    on public.profiles for select
-    using (auth.uid() = id);
 
 create policy "profiles_select_policy"
     on public.profiles for select
     using (auth.uid() = id);
 
--- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
--- EXECUTABLE (Ternary round 2): any request may read ANY profile (email,
--- name, subscription metadata) for 5 minutes after that profile's creation.
--- This exists in prod today (TAB-108 tracks its removal); reproducing it
--- runnably would let an accidental apply create the PII-exposure window in
--- a new environment. Verbatim text, commented:
---
---   create policy "Allow profile reads with restrictions"
---       on public.profiles for select
---       using ((auth.uid() = id) or (created_at > (now() - interval '5 minutes')));
-
--- INSERT (three variants; two dangerous ones commented below —
--- profiles_insert_policy is the sole executable, own-row-only representative)
--- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
--- EXECUTABLE (Ternary round 2): WITH CHECK (true) lets any request, anon
--- key included, insert a profile row with arbitrary column values for any
--- id in auth.users — a premium self-provisioning path (entitlements derive
--- from subscription_status='active'). Exists in prod today (TAB-108 tracks
--- its removal); must not be re-creatable by an accidental apply. Verbatim
--- text, commented:
---
---   create policy "Allow profile writes"
---       on public.profiles for insert
---       with check (true);
-
--- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
--- EXECUTABLE (Ternary round 4): the auth.role() = 'authenticated' branch is
--- a tautology for any signed-in caller, so this permits inserting a profile
--- row for ANY id — cross-user, same danger class as the commented anon-key
--- policies above. Exists in prod today (TAB-108). Verbatim text, commented:
---
---   create policy "Users can insert their own profile"
---       on public.profiles for insert
---       with check ((auth.uid() = id) or (auth.role() = 'authenticated'));
-
 create policy "profiles_insert_policy"
     on public.profiles for insert
-    with check (auth.uid() = id);
-
--- UPDATE (three near-duplicates; one lacks WITH CHECK)
-create policy "Allow profile updates for own records"
-    on public.profiles for update
-    using (auth.uid() = id);
-
-create policy "Users can update their own profile"
-    on public.profiles for update
-    using (auth.uid() = id)
     with check (auth.uid() = id);
 
 create policy "profiles_update_policy"
@@ -122,7 +62,26 @@ create policy "profiles_update_policy"
     using (auth.uid() = id)
     with check (auth.uid() = id);
 
--- DELETE
 create policy "Users can delete their own profile"
     on public.profiles for delete
     using (auth.uid() = id);
+
+-- Column privileges (TAB-108): RLS gates rows, not columns. Entitlement
+-- columns are service-role-only — verify-purchase.js (service role) is the
+-- sole writer, deriving them from the verified StoreKit transaction. anon
+-- and authenticated hold NO write on any subscription_* column, so a
+-- signed-in user cannot forge premium by writing their own row.
+--
+--   revoke insert, update on public.profiles from anon, authenticated;
+--   grant insert (id, email, name, profile_image_url, created_at,
+--                 is_email_verified, monthly_recording_count,
+--                 monthly_recording_minutes, current_storage_used_gb,
+--                 monthly_export_count, last_usage_reset_date, updated_at)
+--     on public.profiles to authenticated;
+--   grant update (id, email, name, profile_image_url, created_at,
+--                 is_email_verified, monthly_recording_count,
+--                 monthly_recording_minutes, current_storage_used_gb,
+--                 monthly_export_count, last_usage_reset_date, updated_at)
+--     on public.profiles to authenticated;
+--
+-- (anon retains SELECT for the auth flow but no write path.)
