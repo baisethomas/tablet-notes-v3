@@ -43,13 +43,16 @@ create index idx_profiles_email on public.profiles using btree (email);
 -- RLS: enabled, with a policy set accumulated across several generations of
 -- manual SQL-editor work. Reproduced verbatim in TEXT — near-duplicates
 -- included — because this file records what prod is, not what it should be.
--- The two dangerous policies below are preserved inside comment blocks so
--- they are reviewable but NOT executable: applying this file must not be
--- able to recreate prod's privilege-escalation / PII-exposure paths in a
--- fresh environment. Cleanup is tracked separately (TAB-108) and is an
--- owner-run migration. NOTE: consequently, a policy diff against prod will
--- show these two present in prod and commented here — expected until
--- TAB-108 removes them from prod.
+-- The two policies below that are commented out are preserved for review
+-- but NOT executable — applying this file cannot recreate prod's ANON-key
+-- paths (arbitrary-id inserts; the 5-minute PII read window). Be clear
+-- about what remains, though: even without them, the own-row INSERT/UPDATE
+-- policies plus unrestricted column grants mean an AUTHENTICATED user can
+-- write their own subscription_* columns — in this file AND in prod today.
+-- That is prod's actual (broken) entitlement model, reproduced faithfully;
+-- the fix (service-role-only entitlement columns + client coordination) is
+-- TAB-108, an owner-run migration. A policy diff against prod will show
+-- the two commented policies present in prod — expected until TAB-108.
 alter table public.profiles enable row level security;
 
 -- SELECT (three near-duplicates + one permissive variant)

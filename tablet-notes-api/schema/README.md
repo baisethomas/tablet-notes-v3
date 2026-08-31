@@ -86,8 +86,17 @@ so the stricter duplicates are decorative):
   with the anon key.
 
 These files reproduce prod's state so it is reviewable — that is the
-opposite of a recommendation. The two dangerous policies are preserved as
+opposite of a recommendation. The two anon-key policies are preserved as
 verbatim text inside comment blocks in `profiles.sql`, so an accidental
 apply cannot recreate them (a policy diff against prod will therefore show
-them present in prod and commented here — expected until TAB-108 removes
-them from prod). Policy changes are owner-run migrations.
+them present in prod and commented here — expected until TAB-108).
+
+**The deeper hole (verified at the grants level, 8/31): even without those
+two policies, any AUTHENTICATED user can write their own `subscription_*`
+columns** — the own-row INSERT/UPDATE policies pass any column change, and
+`anon`/`authenticated` hold full column privileges. A signed-in user can
+PATCH themselves to `premium/active` in prod today, and entitlements derive
+from exactly those columns. That model is reproduced faithfully here
+because it is what prod is; the fix (service-role-only entitlement columns,
+coordinated with the client's `saveUserProfile` writes) is TAB-108, now
+Urgent. Policy changes are owner-run migrations.
