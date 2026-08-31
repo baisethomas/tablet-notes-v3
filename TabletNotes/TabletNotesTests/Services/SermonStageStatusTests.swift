@@ -166,12 +166,16 @@ struct SermonFallbackTitleTests {
         #expect(Sermon.fallbackTitle(for: base) != Sermon.fallbackTitle(for: oneSecondLater))
     }
 
-    @Test("the title keeps the recognizable prefix and the date")
+    @Test("the title keeps the recognizable prefix and carries real content")
     func titleShapeIsStable() {
+        // Hermetic across locales: no assumptions about how the current
+        // locale composes a combined date+time string — only the stable
+        // prefix and that the date/time portion actually varies with the
+        // date (a day apart must differ even if seconds happen to match).
         let date = Date(timeIntervalSince1970: 1_756_500_000)
         let title = Sermon.fallbackTitle(for: date)
         #expect(title.hasPrefix("Sermon on "))
-        let expectedDate = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
-        #expect(title.contains(expectedDate))
+        #expect(title.count > "Sermon on ".count)
+        #expect(title != Sermon.fallbackTitle(for: date.addingTimeInterval(86_400)))
     }
 }

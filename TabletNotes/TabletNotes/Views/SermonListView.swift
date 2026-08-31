@@ -55,19 +55,26 @@ struct EmptyStateView: View {
 
 /// The row's status label, or nil when the sermon needs no annotation.
 ///
-/// Reuses `sermonStatusText` so the list and the home screen can never
-/// disagree about what a status means. "Ready" is the normal state and gets
-/// no chip — the chip exists so unprocessed/failed recordings stop
-/// masquerading as ordinary content (TAB-54), not to decorate every row.
-/// too_short and no_speech map to "Ready"-adjacent labels deliberately
-/// pinned in TAB-85/92; they are shown as-is when non-Ready.
+/// The no-chip decision is made on the raw status values, not the rendered
+/// label, so a future status that happens to render as "Ready" cannot be
+/// silently suppressed. Exactly the success family goes chipless:
+/// complete/complete, and complete/too_short — the latter pinned Ready in
+/// TAB-92 (the recording is done and usable; the summary was refused, not
+/// lost). Everything else shows `sermonStatusText`'s label verbatim, so the
+/// list and the home screen share one source of truth for what a status
+/// means — an unknown combination shows its (visible, odd) label rather
+/// than vanishing.
 @MainActor
 func sermonRowStatusBadge(transcriptionStatus: String, summaryStatus: String) -> (String, Color)? {
-    let (text, color) = sermonStatusText(
+    if transcriptionStatus == SermonStageStatus.complete.rawValue,
+       summaryStatus == SermonStageStatus.complete.rawValue
+        || summaryStatus == SermonStageStatus.tooShort.rawValue {
+        return nil
+    }
+    return sermonStatusText(
         transcriptionStatus: transcriptionStatus,
         summaryStatus: summaryStatus
     )
-    return text == "Ready" ? nil : (text, color)
 }
 
 struct SermonRowView: View {
