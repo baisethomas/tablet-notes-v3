@@ -321,15 +321,13 @@ class SupabaseService: SupabaseServiceProtocol {
         let accessToken = try await getAuthToken()
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
-        // Create update payload
+        // Usage metrics only — deliberately NO subscription_* fields (TAB-108).
+        // Entitlements are server-derived from the verified StoreKit
+        // transaction (verify-purchase.js); a client-claimed entitlement in
+        // this payload is an attack surface, and if this endpoint is ever
+        // implemented server-side it must never accept one.
         let updateData: [String: Any] = [
             "id": user.id.uuidString,
-            "subscription_tier": user.subscriptionTier,
-            "subscription_status": user.subscriptionStatus,
-            "subscription_expiry": user.subscriptionExpiry?.ISO8601Format() ?? NSNull(),
-            "subscription_product_id": user.subscriptionProductId ?? NSNull(),
-            "subscription_purchase_date": user.subscriptionPurchaseDate?.ISO8601Format() ?? NSNull(),
-            "subscription_renewal_date": user.subscriptionRenewalDate?.ISO8601Format() ?? NSNull(),
             "monthly_recording_count": user.monthlyRecordingCount,
             "monthly_recording_minutes": user.monthlyRecordingMinutes,
             "current_storage_used_gb": user.currentStorageUsedGB,

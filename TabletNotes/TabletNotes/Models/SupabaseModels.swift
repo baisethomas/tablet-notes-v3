@@ -79,6 +79,10 @@ struct SupabaseUserNotificationSettings: Codable {
 }
 
 // MARK: - Supabase Insert/Update Models
+// Deliberately carries NO subscription_* columns (TAB-108): entitlements are
+// server-derived from the verified StoreKit transaction (verify-purchase.js,
+// TAB-47). A client-written entitlement is at best redundant and at worst the
+// premium-forging path; the server-side column revoke also rejects them.
 struct SupabaseProfileInsert: Codable {
     let id: String
     let email: String
@@ -86,9 +90,7 @@ struct SupabaseProfileInsert: Codable {
     let profileImageUrl: String?
     let createdAt: String
     let isEmailVerified: Bool
-    let subscriptionTier: String
-    let subscriptionExpiry: String?
-    
+
     enum CodingKeys: String, CodingKey {
         case id
         case email
@@ -96,8 +98,6 @@ struct SupabaseProfileInsert: Codable {
         case profileImageUrl = "profile_image_url"
         case createdAt = "created_at"
         case isEmailVerified = "is_email_verified"
-        case subscriptionTier = "subscription_tier"
-        case subscriptionExpiry = "subscription_expiry"
     }
 }
 
@@ -106,16 +106,14 @@ extension User {
     // Convert to Supabase-compatible insert model
     func toSupabaseInsert() -> SupabaseProfileInsert {
         let formatter = ISO8601DateFormatter()
-        
+
         return SupabaseProfileInsert(
             id: id.uuidString,
             email: email,
             name: name,
             profileImageUrl: profileImageURL,
             createdAt: formatter.string(from: createdAt),
-            isEmailVerified: isEmailVerified,
-            subscriptionTier: subscriptionTier,
-            subscriptionExpiry: subscriptionExpiry.map { formatter.string(from: $0) }
+            isEmailVerified: isEmailVerified
         )
     }
 }
