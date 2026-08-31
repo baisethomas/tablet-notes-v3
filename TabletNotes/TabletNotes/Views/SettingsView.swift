@@ -746,6 +746,13 @@ struct SubscriptionPromptView: View {
         authManager: AuthenticationManager.shared,
         supabaseService: SupabaseService()
     )
+    /// One optional drives one sheet: the two legal documents can never
+    /// race each other's presentation flags (Ternary round 1).
+    private enum LegalDocument: String, Identifiable {
+        case privacy, terms
+        var id: String { rawValue }
+    }
+    @State private var presentedLegalDocument: LegalDocument?
     
     var body: some View {
         NavigationView {
@@ -832,8 +839,38 @@ struct SubscriptionPromptView: View {
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)
-                    
+
+                    // Legal footer (TAB-107): Guideline 3.1.2 requires the
+                    // auto-renewal disclosure plus Terms and Privacy links on
+                    // the subscription purchase UI. Shown in every state of
+                    // the sheet, products loaded or not.
+                    VStack(spacing: 8) {
+                        Text("Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in your App Store account settings.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        HStack(spacing: 16) {
+                            Button("Privacy Policy") {
+                                presentedLegalDocument = .privacy
+                            }
+                            Button("Terms of Use") {
+                                presentedLegalDocument = .terms
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundColor(Color.SV.primary)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+
                     Spacer()
+                }
+            }
+            .sheet(item: $presentedLegalDocument) { document in
+                switch document {
+                case .privacy: PrivacyPolicyView()
+                case .terms: TermsOfServiceView()
                 }
             }
             .navigationTitle("Upgrade")
