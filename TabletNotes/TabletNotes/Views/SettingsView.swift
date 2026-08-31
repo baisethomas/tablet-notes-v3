@@ -746,6 +746,8 @@ struct SubscriptionPromptView: View {
         authManager: AuthenticationManager.shared,
         supabaseService: SupabaseService()
     )
+    @State private var showingPrivacyPolicy = false
+    @State private var showingTermsOfService = false
     
     var body: some View {
         NavigationView {
@@ -832,9 +834,39 @@ struct SubscriptionPromptView: View {
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)
-                    
+
+                    // Legal footer (TAB-107): Guideline 3.1.2 requires the
+                    // auto-renewal disclosure plus Terms and Privacy links on
+                    // the subscription purchase UI. Shown in every state of
+                    // the sheet, products loaded or not.
+                    VStack(spacing: 8) {
+                        Text("Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in your App Store account settings.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        HStack(spacing: 16) {
+                            Button("Privacy Policy") {
+                                showingPrivacyPolicy = true
+                            }
+                            Button("Terms of Use") {
+                                showingTermsOfService = true
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundColor(Color.SV.primary)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+
                     Spacer()
                 }
+            }
+            .sheet(isPresented: $showingPrivacyPolicy) {
+                PrivacyPolicyView()
+            }
+            .sheet(isPresented: $showingTermsOfService) {
+                TermsOfServiceView()
             }
             .navigationTitle("Upgrade")
             .navigationBarTitleDisplayMode(.inline)
