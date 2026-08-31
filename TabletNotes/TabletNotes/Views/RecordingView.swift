@@ -306,7 +306,7 @@ struct RecordingView: View {
                 Spacer()
                 if let url = audioFileURL {
                     Button("Retry") {
-                        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+                        let title = Sermon.fallbackTitle()
                         processTranscription(title: title, date: Date(), url: url)
                     }
                     .font(.system(size: 12, weight: .semibold))
@@ -719,7 +719,7 @@ struct RecordingView: View {
             isPaused = false
             isRecordingStarted = false
         }
-        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        let title = Sermon.fallbackTitle()
         if let url = audioURL {
             processTranscription(title: title, date: Date(), url: url)
         }

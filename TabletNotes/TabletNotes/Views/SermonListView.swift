@@ -53,6 +53,30 @@ struct EmptyStateView: View {
 
 // MARK: - Sermon Row
 
+/// The row's status label, or nil when the sermon needs no annotation.
+///
+/// The no-chip decision is made on the raw status values, not the rendered
+/// label, so a future status that happens to render as "Ready" cannot be
+/// silently suppressed. Exactly the success family goes chipless:
+/// complete/complete, and complete/too_short — the latter pinned Ready in
+/// TAB-92 (the recording is done and usable; the summary was refused, not
+/// lost). Everything else shows `sermonStatusText`'s label verbatim, so the
+/// list and the home screen share one source of truth for what a status
+/// means — an unknown combination shows its (visible, odd) label rather
+/// than vanishing.
+@MainActor
+func sermonRowStatusBadge(transcriptionStatus: String, summaryStatus: String) -> (String, Color)? {
+    if transcriptionStatus == SermonStageStatus.complete.rawValue
+        && (summaryStatus == SermonStageStatus.complete.rawValue
+            || summaryStatus == SermonStageStatus.tooShort.rawValue) {
+        return nil
+    }
+    return sermonStatusText(
+        transcriptionStatus: transcriptionStatus,
+        summaryStatus: summaryStatus
+    )
+}
+
 struct SermonRowView: View {
     let sermon: Sermon
     let onTap: () -> Void
@@ -60,9 +84,25 @@ struct SermonRowView: View {
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(sermon.date.formatted(.dateTime.month(.abbreviated).day()))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.SV.onSurface.opacity(0.45))
+                HStack(spacing: 6) {
+                    // Time of day disambiguates rows that share a generic
+                    // fallback title (TAB-54) — distinct recordings looked
+                    // like duplicates with only month+day showing.
+                    Text(sermon.date.formatted(.dateTime.month(.abbreviated).day()))
+                        + Text("  ·  ")
+                        + Text(sermon.date.formatted(.dateTime.hour().minute()))
+
+                    if let badge = sermonRowStatusBadge(
+                        transcriptionStatus: sermon.transcriptionStatus,
+                        summaryStatus: sermon.summaryStatus
+                    ) {
+                        Text(badge.0)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(badge.1)
+                    }
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
 
                 Text(sermon.title)
                     .font(.system(size: 22, weight: .bold, design: .serif))
