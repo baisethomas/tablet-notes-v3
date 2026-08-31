@@ -16,6 +16,35 @@ struct SermonSyncData {
     let transcript: TranscriptSyncPayload?
     let summary: SummarySyncPayload?
     let scopes: SermonSyncScopes
+    /// Epochs at snapshot time (TAB-98). Defaulted so payload-shape tests
+    /// that construct SermonSyncData directly need no epoch bookkeeping.
+    var epochs: SermonScopeEpochs = .zero
+}
+
+/// The per-scope write epochs a push snapshot was built from (TAB-98). The
+/// ack compares these against the sermon's current epochs and clears only
+/// the scopes that did not change while the push was in flight.
+struct SermonScopeEpochs: Equatable {
+    let metadata: Int
+    let notes: Int
+    let transcript: Int
+    let summary: Int
+
+    static let zero = SermonScopeEpochs(metadata: 0, notes: 0, transcript: 0, summary: 0)
+
+    init(metadata: Int, notes: Int, transcript: Int, summary: Int) {
+        self.metadata = metadata
+        self.notes = notes
+        self.transcript = transcript
+        self.summary = summary
+    }
+
+    init(of sermon: Sermon) {
+        self.metadata = sermon.metadataSyncEpoch
+        self.notes = sermon.notesSyncEpoch
+        self.transcript = sermon.transcriptSyncEpoch
+        self.summary = sermon.summarySyncEpoch
+    }
 }
 
 struct SermonSyncScopes: Equatable {

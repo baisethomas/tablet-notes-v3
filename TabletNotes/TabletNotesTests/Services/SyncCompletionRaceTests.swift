@@ -306,3 +306,125 @@ struct SyncCompletionRaceTests {
         #expect(sermon.transcriptionStatus == "processing")
     }
 }
+
+/// Regression tests for TAB-98: the ack's staleness protection must key on
+/// per-scope write epochs, not `updatedAt`. The witnessed incident (the
+/// TAB-97 repair's write stranded on-device, 2026-08-31): `updatedAt` is
+/// re-stamped by every scope write AND overwritten with remote values by the
+/// pull, so overlapping sync cycles can walk it backward past the snapshot
+/// anchor — the timestamp guard goes blind and the ack clears flags for data
+/// that never left the device.
+struct SyncScopeEpochRaceTests {
+
+    @MainActor
+    private func makeModelContext() throws -> ModelContext {
+        let schema = Schema([
+            Sermon.self,
+            Note.self,
+            Transcript.self,
+            Summary.self,
+            ProcessingJob.self,
+            TranscriptSegment.self,
+            ChatMessage.self,
+            User.self,
+            UserNotificationSettings.self
+        ])
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        return ModelContext(container)
+    }
+
+    final class MutatingCreateGateway: SermonSyncRemoteGatewayProtocol {
+        var onCreate: (() -> Void)?
+
+        func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] { [] }
+
+        func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
+            onCreate?()
+            return RemoteSermonCreateResult(remoteId: "remote-created", syncedScopes: .all)
+        }
+
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {}
+        func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL { url }
+        func deleteRemoteSermon(remoteId: String) async throws {}
+        func deleteAllRemoteData(for userId: UUID) async throws {}
+    }
+
+    @MainActor
+    private func makeDirtySermon(in modelContext: ModelContext) throws -> Sermon {
+        let sermon = Sermon(
+            title: "Epoch Sermon",
+            audioFileName: "epoch.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "processing",
+            summaryStatus: "pending",
+            userId: UUID(),
+            updatedAt: Date(),
+            needsSync: true,
+            metadataNeedsSync: true
+        )
+        modelContext.insert(sermon)
+        try modelContext.save()
+        return sermon
+    }
+
+    /// The witnessed hole: a scope write lands mid-push, and then the pull
+    /// (running in an overlapping cycle) overwrites `updatedAt` with a stale
+    /// remote value — older than the push snapshot's anchor. A timestamp
+    /// guard sees "nothing changed" and acks the write away; the epoch guard
+    /// must not.
+    @MainActor
+    @Test func ackKeepsAMidPushWriteWhoseTimestampWasWalkedBack() async throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = try makeDirtySermon(in: modelContext)
+
+        let gateway = MutatingCreateGateway()
+        gateway.onCreate = {
+            // The racing local write (the TAB-97 repair in the incident).
+            sermon.summaryStatus = "complete"
+            sermon.markPendingSync(metadata: true, updatedAt: Date().addingTimeInterval(1))
+            // The overlapping cycle's pull stomps updatedAt with the stale
+            // remote row's value — exactly what updateLocalSermon does
+            // (`sermon.updatedAt = remoteData.updatedAt`) regardless of
+            // dirty flags.
+            sermon.updatedAt = Date().addingTimeInterval(-3_600)
+            try? modelContext.save()
+        }
+
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: gateway)
+        _ = try await engine.sync(userId: UUID())
+
+        #expect(sermon.remoteId == "remote-created")
+        #expect(sermon.metadataNeedsSync)
+        #expect(sermon.needsSync)
+    }
+
+    /// Per-scope precision: a mid-push write to ONE scope keeps only that
+    /// scope dirty; the scopes the push actually delivered, unchanged since
+    /// the snapshot, are acked as synced. (TAB-95's all-or-nothing guard
+    /// kept everything and re-pushed data that had already landed.)
+    @MainActor
+    @Test func ackClearsDeliveredScopesAndKeepsOnlyTheRacedOne() async throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = try makeDirtySermon(in: modelContext)
+
+        let gateway = MutatingCreateGateway()
+        gateway.onCreate = {
+            // Only the notes scope is written mid-push.
+            sermon.markPendingSync(notes: true, updatedAt: Date().addingTimeInterval(1))
+            try? modelContext.save()
+        }
+
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: gateway)
+        _ = try await engine.sync(userId: UUID())
+
+        #expect(sermon.remoteId == "remote-created")
+        #expect(!sermon.metadataNeedsSync)
+        #expect(sermon.notesNeedSync)
+        #expect(sermon.needsSync)
+    }
+}

@@ -5,7 +5,7 @@ import SwiftData
 protocol SermonSyncLocalRepositoryProtocol: AnyObject {
     func sermonsNeedingSync() throws -> [Sermon]
     func syncData(for sermon: Sermon) -> SermonSyncData
-    func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws
+    func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes, snapshotEpochs: SermonScopeEpochs?) throws
     func findSermon(remoteId: String) throws -> Sermon?
     func refreshSermon(id: UUID) throws -> Sermon?
     func markAudioDownloaded(fileName: String, for sermonId: UUID) throws
@@ -75,7 +75,8 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             notes: scopes.notes ? notesSnapshot : nil,
             transcript: scopes.transcript ? transcriptSnapshot : nil,
             summary: scopes.summary ? summarySnapshot : nil,
-            scopes: scopes
+            scopes: scopes,
+            epochs: SermonScopeEpochs(of: sermon)
         )
     }
 
@@ -83,7 +84,8 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         _ sermon: Sermon,
         remoteId: String? = nil,
         syncedAt: Date = Date(),
-        scopes: SermonSyncScopes
+        scopes: SermonSyncScopes,
+        snapshotEpochs: SermonScopeEpochs? = nil
     ) throws {
         guard !sermon.isDeleted else {
             print("[SyncService] ⚠️ Skipping markSermonSynced for deleted sermon \(sermon.id)")
@@ -94,16 +96,35 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             sermon.remoteId = remoteId
         }
 
-        sermon.lastSyncedAt = syncedAt
-        sermon.syncStatus = "synced"
-        sermon.clearPendingSync(
-            metadata: scopes.metadata,
-            notes: scopes.notes,
-            transcript: scopes.transcript,
-            summary: scopes.summary
+        // A scope is acked only if nothing wrote to it after the pushed
+        // snapshot was taken (TAB-98). The epoch, not updatedAt, is the
+        // write signal: updatedAt is re-stamped by every scope write and
+        // overwritten with remote values by the pull, so overlapping sync
+        // cycles can walk it backward past any timestamp anchor — which is
+        // how the TAB-97 repair's complete/complete was acked away without
+        // ever reaching the server. A nil snapshot (bookkeeping-only calls)
+        // keeps today's unconditional behavior.
+        let clearable = SermonSyncScopes(
+            metadata: scopes.metadata && (snapshotEpochs.map { sermon.metadataSyncEpoch == $0.metadata } ?? true),
+            notes: scopes.notes && (snapshotEpochs.map { sermon.notesSyncEpoch == $0.notes } ?? true),
+            transcript: scopes.transcript && (snapshotEpochs.map { sermon.transcriptSyncEpoch == $0.transcript } ?? true),
+            summary: scopes.summary && (snapshotEpochs.map { sermon.summarySyncEpoch == $0.summary } ?? true)
         )
-        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt, scopes: scopes)
+        if clearable != scopes {
+            print("[SyncService] ⚠️ Sermon \(sermon.id) changed during push; keeping raced scope(s) dirty for the next sync")
+        }
+
+        sermon.lastSyncedAt = syncedAt
+        sermon.clearPendingSync(
+            metadata: clearable.metadata,
+            notes: clearable.notes,
+            transcript: clearable.transcript,
+            summary: clearable.summary
+        )
+        markChildEntitiesSynced(for: sermon, syncedAt: syncedAt, scopes: clearable)
         sermon.refreshPendingSyncState()
+        // Honest status: a sermon with a raced scope still has work pending.
+        sermon.syncStatus = sermon.needsSync ? "pending" : "synced"
         try modelContext.save()
     }
 
