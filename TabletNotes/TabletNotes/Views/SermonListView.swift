@@ -53,6 +53,23 @@ struct EmptyStateView: View {
 
 // MARK: - Sermon Row
 
+/// The row's status label, or nil when the sermon needs no annotation.
+///
+/// Reuses `sermonStatusText` so the list and the home screen can never
+/// disagree about what a status means. "Ready" is the normal state and gets
+/// no chip — the chip exists so unprocessed/failed recordings stop
+/// masquerading as ordinary content (TAB-54), not to decorate every row.
+/// too_short and no_speech map to "Ready"-adjacent labels deliberately
+/// pinned in TAB-85/92; they are shown as-is when non-Ready.
+@MainActor
+func sermonRowStatusBadge(transcriptionStatus: String, summaryStatus: String) -> (String, Color)? {
+    let (text, color) = sermonStatusText(
+        transcriptionStatus: transcriptionStatus,
+        summaryStatus: summaryStatus
+    )
+    return text == "Ready" ? nil : (text, color)
+}
+
 struct SermonRowView: View {
     let sermon: Sermon
     let onTap: () -> Void
@@ -60,9 +77,25 @@ struct SermonRowView: View {
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(sermon.date.formatted(.dateTime.month(.abbreviated).day()))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.SV.onSurface.opacity(0.45))
+                HStack(spacing: 6) {
+                    // Time of day disambiguates rows that share a generic
+                    // fallback title (TAB-54) — distinct recordings looked
+                    // like duplicates with only month+day showing.
+                    Text(sermon.date.formatted(.dateTime.month(.abbreviated).day()))
+                        + Text("  ·  ")
+                        + Text(sermon.date.formatted(.dateTime.hour().minute()))
+
+                    if let badge = sermonRowStatusBadge(
+                        transcriptionStatus: sermon.transcriptionStatus,
+                        summaryStatus: sermon.summaryStatus
+                    ) {
+                        Text(badge.0)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(badge.1)
+                    }
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(Color.SV.onSurface.opacity(0.45))
 
                 Text(sermon.title)
                     .font(.system(size: 22, weight: .bold, design: .serif))

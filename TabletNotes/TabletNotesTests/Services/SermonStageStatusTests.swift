@@ -126,3 +126,52 @@ struct SermonStatusTextTests {
         #expect(sermonStatusText(transcriptionStatus: "complete", summaryStatus: "pending").0 == "Processing...")
     }
 }
+
+// TAB-54: unprocessed/failed recordings must be visibly annotated in the
+// sermon list, and ordinary rows must not be.
+@Suite("Sermon row status badge")
+@MainActor
+struct SermonRowStatusBadgeTests {
+
+    @Test("a fully processed sermon gets no badge")
+    func readyRowsAreUnannotated() {
+        #expect(sermonRowStatusBadge(transcriptionStatus: "complete", summaryStatus: "complete") == nil)
+    }
+
+    @Test("in-flight and failed recordings are labeled")
+    func nonTerminalAndFailedRowsGetBadges() {
+        #expect(sermonRowStatusBadge(transcriptionStatus: "pending", summaryStatus: "pending")?.0 == "Transcribing...")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "processing", summaryStatus: "pending")?.0 == "Processing...")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "complete", summaryStatus: "pending")?.0 == "Processing...")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "failed", summaryStatus: "pending")?.0 == "Failed")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "failed_permanent", summaryStatus: "pending")?.0 == "Couldn't process")
+        #expect(sermonRowStatusBadge(transcriptionStatus: "no_speech", summaryStatus: "no_speech")?.0 == "No speech detected")
+    }
+
+    @Test("too_short is Ready by the pinned TAB-92 decision, so no badge")
+    func tooShortStaysUnannotated() {
+        #expect(sermonRowStatusBadge(transcriptionStatus: "complete", summaryStatus: "too_short") == nil)
+    }
+}
+
+// TAB-54: two recordings created moments apart must not share a fallback
+// title — identical titles read as duplicate rows.
+@Suite("Sermon fallback title")
+struct SermonFallbackTitleTests {
+
+    @Test("recordings one second apart get distinct titles")
+    func sameMinuteRecordingsDoNotCollide() {
+        let base = Date(timeIntervalSince1970: 1_756_500_000)
+        let oneSecondLater = base.addingTimeInterval(1)
+        #expect(Sermon.fallbackTitle(for: base) != Sermon.fallbackTitle(for: oneSecondLater))
+    }
+
+    @Test("the title keeps the recognizable prefix and the date")
+    func titleShapeIsStable() {
+        let date = Date(timeIntervalSince1970: 1_756_500_000)
+        let title = Sermon.fallbackTitle(for: date)
+        #expect(title.hasPrefix("Sermon on "))
+        let expectedDate = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
+        #expect(title.contains(expectedDate))
+    }
+}

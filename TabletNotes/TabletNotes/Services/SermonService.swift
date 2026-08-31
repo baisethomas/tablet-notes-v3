@@ -1571,13 +1571,13 @@ class SermonService {
     private func generateTitleFromFilename(_ filename: String, date: Date) -> String {
         // Extract UUID from filename if possible, otherwise use date
         if filename.hasPrefix("sermon_") {
-            return "Sermon on " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+            return Sermon.fallbackTitle(for: date)
         }
         return "Sermon"
     }
 
     private func generateInterruptedRecordingTitle(from date: Date) -> String {
-        "Sermon on " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+        Sermon.fallbackTitle(for: date)
     }
 
     private func findSermon(withAudioFileName audioFileName: String) -> Sermon? {

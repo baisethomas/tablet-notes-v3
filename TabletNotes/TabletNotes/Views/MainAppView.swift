@@ -545,7 +545,7 @@ struct MainAppView: View {
     }
 
     private func saveCompletedRecording(audioURL: URL, serviceType: String) {
-        let title = "Sermon on " + DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
+        let title = Sermon.fallbackTitle()
         let date = Date()
         let noteService = NoteService.shared(for: currentRecordingSessionId)
         noteService.flushPersistedNotes()
