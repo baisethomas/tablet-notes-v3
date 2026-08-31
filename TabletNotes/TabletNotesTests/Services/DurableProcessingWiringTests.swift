@@ -18,13 +18,38 @@ struct DurableProcessingWiringTests {
         return (FeatureFlags(defaults: defaults), defaults)
     }
 
-    @Test func flagsDefaultToOff() {
+    @Test func durableProcessingDefaultsToOn() {
+        // TAB-103 step 1: the durable pipeline is prod-verified (TAB-72
+        // closing ledger) and becomes the shipped default. An untouched
+        // flag now means ON for this key.
         let suite = UUID().uuidString
         let (flags, defaults) = isolatedFlags(suite)
         defer { defaults.removePersistentDomain(forName: suite) }
 
+        #expect(flags.durableProcessingPipeline == true)
+        #expect(flags.isEnabled(.durableProcessingPipeline) == true)
+    }
+
+    @Test func stillDarkFlagsDefaultToOff() {
+        // Flags without a deliberate rollout decision keep shipping dark.
+        let suite = UUID().uuidString
+        let (flags, defaults) = isolatedFlags(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        #expect(flags.resumableUploads == false)
+        #expect(flags.isEnabled(.resumableUploads) == false)
+    }
+
+    @Test func explicitOffSurvivesTheDefaultFlip() {
+        // A user who toggled the pipeline OFF in Settings made a choice; the
+        // shipped default must never override a stored value in either
+        // direction — that is the whole rollback story.
+        let suite = UUID().uuidString
+        let (flags, defaults) = isolatedFlags(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        flags.setEnabled(false, for: .durableProcessingPipeline)
         #expect(flags.durableProcessingPipeline == false)
-        #expect(flags.isEnabled(.durableProcessingPipeline) == false)
     }
 
     @Test func flagRoundTripsThroughItsStore() {
