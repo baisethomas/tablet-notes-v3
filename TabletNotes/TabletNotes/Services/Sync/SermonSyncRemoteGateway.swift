@@ -123,6 +123,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         let objectPath: String
 
         if isResumableUploadsEnabled() {
+            print("[SyncService] Resumable upload path taken for sermon \(data.id)")
             let ownerUserId = try await currentAuthUserId()
             let plan = try await ResumableUploadPathResolver.plan(
                 sermonLocalId: data.id,
