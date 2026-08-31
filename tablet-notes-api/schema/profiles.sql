@@ -79,7 +79,8 @@ create policy "profiles_select_policy"
 --       on public.profiles for select
 --       using ((auth.uid() = id) or (created_at > (now() - interval '5 minutes')));
 
--- INSERT (three variants)
+-- INSERT (three variants; two dangerous ones commented below —
+-- profiles_insert_policy is the sole executable, own-row-only representative)
 -- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
 -- EXECUTABLE (Ternary round 2): WITH CHECK (true) lets any request, anon
 -- key included, insert a profile row with arbitrary column values for any
@@ -92,9 +93,15 @@ create policy "profiles_select_policy"
 --       on public.profiles for insert
 --       with check (true);
 
-create policy "Users can insert their own profile"
-    on public.profiles for insert
-    with check ((auth.uid() = id) or (auth.role() = 'authenticated'));
+-- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
+-- EXECUTABLE (Ternary round 4): the auth.role() = 'authenticated' branch is
+-- a tautology for any signed-in caller, so this permits inserting a profile
+-- row for ANY id — cross-user, same danger class as the commented anon-key
+-- policies above. Exists in prod today (TAB-108). Verbatim text, commented:
+--
+--   create policy "Users can insert their own profile"
+--       on public.profiles for insert
+--       with check ((auth.uid() = id) or (auth.role() = 'authenticated'));
 
 create policy "profiles_insert_policy"
     on public.profiles for insert
