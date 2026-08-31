@@ -468,6 +468,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
         if let existing = resumeStore.record(for: sermonLocalId),
            existing.objectPath == objectPath {
             if !existing.matchesLocalFile(localFile, length: fileLength) {
+                print("[UploadManager] Local file changed for \(sermonLocalId); abandoning stale resume record")
                 try await abandonStaleResumeRecord(existing)
             } else if let uploadURL = existing.uploadURL {
                 do {
@@ -477,9 +478,11 @@ final class UploadManager: NSObject, SermonAudioUploading {
                         sermonLocalId: sermonLocalId
                     )
                     if TusUploadClient.isUploadComplete(offset: offset, fileLength: fileLength) {
+                        print("[UploadManager] Upload for \(sermonLocalId) already complete at offset \(offset); clearing resume record")
                         resumeStore.remove(sermonLocalId: sermonLocalId)
                         return
                     }
+                    print("[UploadManager] Resuming upload for \(sermonLocalId) from offset \(offset)/\(fileLength)")
                     try await patchUntilComplete(
                         localFile: localFile,
                         sermonLocalId: sermonLocalId,
@@ -525,6 +528,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             contentType: "audio/m4a",
             upsert: upsert
         )
+        print("[UploadManager] Minted new TUS upload for \(sermonLocalId) (\(fileLength) bytes); starting from offset 0")
         try throwIfResumableCancelled(epoch: flagEpoch)
         record.uploadURL = uploadURL
         resumeStore.save(record)
@@ -566,6 +570,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     private func drainResumableUploadsForFlagOff(timeoutNanoseconds: UInt64) async throws {
         let flagged = resumeStore.allRecords().filter(\.startedUnderFlag)
+        print("[UploadManager] Flag-off drain: \(flagged.count) flagged resumable upload record(s)")
         let paths = Set(flagged.map(\.objectPath))
         let sermonIds = Self.sermonIdsAffectedByFlagOff(
             flaggedRecords: flagged,
@@ -737,6 +742,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             offset: TusUploadClient.parseUploadOffset(from: http),
             fileLength: fileLength
         ) {
+            print("[UploadManager] HEAD returned \(http.statusCode) for \(sermonLocalId); upload resource gone — restarting from scratch")
             resumeStore.remove(sermonLocalId: sermonLocalId)
             throw UploadManagerError.headRestart(status: http.statusCode)
         }
@@ -747,6 +753,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             throw UploadManagerError.headFailed(status: http.statusCode)
         }
         guard TusUploadClient.isValidOffset(offset, fileLength: fileLength) else {
+            print("[UploadManager] HEAD offset \(offset) invalid for length \(fileLength) (\(sermonLocalId)); restarting from scratch")
             resumeStore.remove(sermonLocalId: sermonLocalId)
             throw UploadManagerError.headRestart(status: http.statusCode)
         }
@@ -896,6 +903,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
             guard let range = TusUploadClient.nextChunkRange(offset: offset, fileLength: fileLength) else {
                 throw UploadManagerError.incomplete(offset: offset, length: fileLength)
             }
+            print("[UploadManager] PATCH \(sermonLocalId) bytes \(range.lowerBound)..<\(range.upperBound) of \(fileLength)")
             offset = try await patchChunk(
                 localFile: localFile,
                 sermonLocalId: sermonLocalId,
@@ -906,6 +914,7 @@ final class UploadManager: NSObject, SermonAudioUploading {
                 upsert: upsert
             )
         }
+        print("[UploadManager] Upload complete for \(sermonLocalId) (\(fileLength) bytes); resume record cleared")
         resumeStore.remove(sermonLocalId: sermonLocalId)
     }
 
@@ -1296,12 +1305,14 @@ final class UploadManager: NSObject, SermonAudioUploading {
 
     private func continueUploadUnserialized(for record: UploadResumeRecord) async throws {
         let sermonLocalId = record.sermonLocalId
+        print("[UploadManager] Continuing persisted upload for \(sermonLocalId) after relaunch")
 
         let localURL = URL(fileURLWithPath: record.filePath)
         guard let uploadURL = record.uploadURL else {
             return
         }
         guard record.matchesLocalFile(localURL, length: record.uploadLength) else {
+            print("[UploadManager] Local file changed for \(sermonLocalId); abandoning persisted resume record")
             try await abandonStaleResumeRecord(record)
             return
         }

@@ -121,15 +121,18 @@ enum ResumableUploadPathResolver {
         if let record = resumeStore.record(for: sermonLocalId),
            record.ownerUserId == ownerUserId,
            record.matchesLocalFile(localFile, length: fileLength) {
+            print("[UploadManager] Plan for \(sermonLocalId): reusing existing resume record (no mint)")
             return Plan(objectPath: record.objectPath, upsert: record.upsert, didMint: false)
         }
         if let stale = resumeStore.record(for: sermonLocalId) {
+            print("[UploadManager] Plan for \(sermonLocalId): abandoning stale resume record before fresh mint")
             // Always drain via UploadManager (same-owner remint or foreign-owner
             // leftovers) before dropping the only sermon→task mapping.
             try await abandonStaleRecord?(stale)
             resumeStore.remove(sermonLocalId: sermonLocalId)
         }
         let minted = try await mint()
+        print("[UploadManager] Plan for \(sermonLocalId): minted fresh upload path")
         if mayPersistNewRecord() {
             let mtime = try? localFile.resourceValues(forKeys: [.contentModificationDateKey])
                 .contentModificationDate?.timeIntervalSince1970
