@@ -39,22 +39,52 @@ from pg_constraint where conrelid = 'public.<table>'::regclass;
 select indexname, indexdef from pg_indexes
 where schemaname = 'public' and tablename = '<table>';
 
--- RLS + policies
+-- RLS + policies (pg_policies returns rows even when RLS is DISABLED —
+-- check relrowsecurity too, or a silently-disabled RLS passes the diff)
+select relrowsecurity from pg_class where oid = 'public.<table>'::regclass;
 select policyname, cmd, roles::text, qual, with_check
 from pg_policies where schemaname = 'public' and tablename = '<table>';
+
+-- Triggers + their functions
+select tgname, pg_get_triggerdef(oid)
+from pg_trigger where tgrelid = 'public.<table>'::regclass and not tgisinternal;
+select pg_get_functiondef('touch_processing_jobs_updated_at()'::regprocedure);
 ```
 
-## Known warts (documented as found, deliberately not "fixed" here)
+## Divergence from committed migrations
+
+`supabase/migrations/20260807170000_add_processing_jobs_and_profiles.sql`
+(repo root) declares a `profiles` definition that does NOT match live prod:
+`subscription_status text not null default 'inactive'` and
+`id … references auth.users(id) on delete cascade`. Prod actually has the
+column nullable with default `'active'` and the FK with **no** delete action.
+The migration used `create table if not exists` / `add column if not exists`,
+so against the already-existing prod table those stricter clauses were silent
+no-ops — its profiles DDL describes what a *fresh* database would get, not
+what prod is. **This directory is authoritative for prod's current shape**;
+reconciling the two (and deciding which defaults are intended) is part of the
+TAB-108 cleanup.
+
+## Known warts — do NOT bootstrap an environment from these files
 
 The `profiles` policy set has accumulated near-duplicate policies across
-several generations of manual SQL-editor work, including two that deserve
-scrutiny (tracked separately — see TAB-108):
+several generations of manual SQL-editor work. Two are genuine security
+findings, not hygiene (tracked as TAB-108; permissive policies OR together,
+so the stricter duplicates are decorative):
 
 - `Allow profile writes` — `INSERT` with `WITH CHECK (true)`: any request,
-  including anon-key, may insert a profile row for any id that exists in
-  `auth.users`.
-- `Allow profile reads with restrictions` — `SELECT` allows reading **any**
-  profile for 5 minutes after its creation, not just your own.
+  anon-key included, may insert a profile row **with arbitrary column
+  values** for any id in `auth.users`. Because `getSubscriptionState`
+  derives the paid tier from `subscription_status = 'active'`, a user who
+  signs up and inserts their own row with
+  `subscription_tier='premium', subscription_status='active'` before the app
+  does self-provisions premium entitlements — a privilege-escalation path,
+  not a style issue.
+- `Allow profile reads with restrictions` — `SELECT` allows **any** request
+  to read **any** profile (email, name, subscription metadata) for 5 minutes
+  after that profile's creation: a PII-exposure window for anyone polling
+  with the anon key.
 
-A documentation-of-record file records what is, warts included; policy cleanup
-is a behavior change and gets its own issue and owner-run migration.
+These files reproduce prod verbatim so the state is reviewable — that is the
+opposite of a recommendation. Do not apply them to a fresh environment before
+the TAB-108 cleanup lands; policy changes are owner-run migrations.
