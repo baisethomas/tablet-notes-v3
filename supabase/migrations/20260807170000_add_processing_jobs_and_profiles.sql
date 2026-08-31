@@ -1,5 +1,12 @@
 -- TAB-72: Server-side processing jobs (processing_jobs) + committed profiles schema
 --
+-- NOTE (TAB-101, 2026-08-31): the `profiles` DDL below does NOT match live
+-- prod — the IF NOT EXISTS guards made its stricter clauses (not-null
+-- 'inactive' default, ON DELETE CASCADE) silent no-ops against the
+-- already-existing table. Prod's actual current shape is documented in
+-- tablet-notes-api/schema/, which is authoritative; see its README's
+-- "Divergence" section. Reconciliation is tracked in TAB-108.
+--
 -- Problem: the AssemblyAI job id lives only in the phone's memory. transcribe.js
 -- submits the job and returns the provider id in the HTTP response; it is never
 -- written to Postgres. If the app is killed, backgrounded past its polling
