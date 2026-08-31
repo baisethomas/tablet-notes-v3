@@ -187,7 +187,7 @@ final class SermonSyncEngine {
                 remoteId: remoteId,
                 syncedAt: syncedAt,
                 scopes: syncData.scopes,
-                pushedSnapshotUpdatedAt: syncData.updatedAt
+                pushedSnapshotEpochs: syncData.epochs
             )
             return
         }
@@ -206,7 +206,7 @@ final class SermonSyncEngine {
                 remoteId: createResult.remoteId,
                 syncedAt: syncedAt,
                 scopes: createResult.syncedScopes,
-                pushedSnapshotUpdatedAt: syncData.updatedAt
+                pushedSnapshotEpochs: syncData.epochs
             )
         } catch SyncError.remoteAlreadyExists {
             let resolvedRemoteId = try await resolveExistingRemoteId(for: sermonId, userId: userId)
@@ -215,7 +215,7 @@ final class SermonSyncEngine {
                 remoteId: resolvedRemoteId,
                 syncedAt: syncedAt,
                 scopes: syncData.scopes,
-                pushedSnapshotUpdatedAt: syncData.updatedAt
+                pushedSnapshotEpochs: syncData.epochs
             )
         }
     }
@@ -227,37 +227,26 @@ final class SermonSyncEngine {
         remoteId: String?,
         syncedAt: Date,
         scopes: SermonSyncScopes,
-        pushedSnapshotUpdatedAt: Date? = nil
+        pushedSnapshotEpochs: SermonScopeEpochs? = nil
     ) throws {
         guard let sermon = try localRepository.refreshSermon(id: sermonId) else {
             print("[SyncService] ⚠️ Sermon \(sermonId) deleted during push, skipping sync bookkeeping")
             return
         }
 
-        // A push can take minutes (the create carries the whole audio upload).
-        // If the sermon changed while it was in flight — the prod case was
-        // transcription + summary completing mid-upload — the snapshot we
-        // pushed no longer represents the sermon, so ack nothing: record the
-        // remote row and leave every dirty flag for the next cycle. An extra
-        // push of unchanged data is harmless; clearing a completion that was
-        // never pushed poisoned prod for hours (TAB-95).
-        if let anchor = pushedSnapshotUpdatedAt,
-           let current = sermon.updatedAt,
-           current > anchor {
-            print("[SyncService] ⚠️ Sermon \(sermonId) changed during push; keeping dirty scopes for the next sync")
-            if let remoteId, !remoteId.isEmpty {
-                sermon.remoteId = remoteId
-            }
-            sermon.lastSyncedAt = syncedAt
-            try localRepository.save()
-            return
-        }
-
+        // A push can take minutes (the create carries the whole audio
+        // upload), and a local write landing while it is in flight was never
+        // part of the pushed snapshot. The repository acks per scope by
+        // comparing write epochs (TAB-98) — the epoch replaced TAB-95's
+        // updatedAt anchor because the pull overwrites updatedAt with remote
+        // values, letting overlapping cycles walk it backward past any
+        // timestamp anchor and blind the guard.
         try localRepository.markSermonSynced(
             sermon,
             remoteId: remoteId,
             syncedAt: syncedAt,
-            scopes: scopes
+            scopes: scopes,
+            snapshotEpochs: pushedSnapshotEpochs
         )
     }
 
@@ -326,7 +315,8 @@ final class SermonSyncEngine {
                 unlinkedSermon,
                 remoteId: remoteSermon.id,
                 syncedAt: Date(),
-                scopes: .none
+                scopes: .none,
+                snapshotEpochs: nil
             )
             try await mergeRemoteSermon(remoteSermon, into: unlinkedSermon)
             return

@@ -52,7 +52,7 @@ struct SyncServiceMergeTests {
             return syncData
         }
 
-        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws {
+        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes, snapshotEpochs: SermonScopeEpochs?) throws {
             recorder.record("local.markSermonSynced")
             markedScopes.append(scopes)
             sermon.lastSyncedAt = syncedAt
@@ -1256,8 +1256,8 @@ struct SyncServiceMergeTests {
 
         func sermonsNeedingSync() throws -> [Sermon] { try wrapped.sermonsNeedingSync() }
         func syncData(for sermon: Sermon) -> SermonSyncData { wrapped.syncData(for: sermon) }
-        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes) throws {
-            try wrapped.markSermonSynced(sermon, remoteId: remoteId, syncedAt: syncedAt, scopes: scopes)
+        func markSermonSynced(_ sermon: Sermon, remoteId: String?, syncedAt: Date, scopes: SermonSyncScopes, snapshotEpochs: SermonScopeEpochs?) throws {
+            try wrapped.markSermonSynced(sermon, remoteId: remoteId, syncedAt: syncedAt, scopes: scopes, snapshotEpochs: snapshotEpochs)
         }
         func findSermon(remoteId: String) throws -> Sermon? { try wrapped.findSermon(remoteId: remoteId) }
         func refreshSermon(id: UUID) throws -> Sermon? { try wrapped.refreshSermon(id: id) }
@@ -1589,7 +1589,14 @@ struct SyncServiceMergeTests {
         try await engine.sync(userId: UUID())
 
         // Reaching here without a SwiftData assertion is the regression check.
-        #expect(sermon.syncStatus == "synced")
+        // The transcript scope was skipped mid-push ("snapshot unavailable"),
+        // so transcriptNeedsSync legitimately survives the ack — the sermon
+        // still has queued work, and since TAB-98 syncStatus says so honestly
+        // ("pending") instead of stamping "synced" over a dirty flag. The
+        // re-push behavior is unchanged: this sermon was re-attempted every
+        // cycle before TAB-98 too, only labeled "synced" while it happened.
+        #expect(sermon.syncStatus == "pending")
+        #expect(sermon.transcriptNeedsSync)
         #expect(sermon.transcript == nil)
     }
 

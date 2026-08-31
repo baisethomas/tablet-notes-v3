@@ -28,6 +28,18 @@ final class Sermon {
     var notesNeedSync: Bool = false
     var transcriptNeedsSync: Bool = false
     var summaryNeedsSync: Bool = false
+
+    // TAB-98: per-scope write epochs. Bumped by every markPendingSync of the
+    // scope and by nothing else — unlike updatedAt, which the pull overwrites
+    // with remote values, an epoch only moves forward and only for a real
+    // local write. The push snapshot records them; the ack clears a scope's
+    // dirty flag only when the epoch still matches, so a write that raced an
+    // in-flight push keeps its flag and goes out on the next sync.
+    // Additive + defaulted: lightweight-migration-safe.
+    var metadataSyncEpoch: Int = 0
+    var notesSyncEpoch: Int = 0
+    var transcriptSyncEpoch: Int = 0
+    var summarySyncEpoch: Int = 0
     
     // User relationship - each sermon belongs to a user
     var userId: UUID? // Foreign key to User - optional for migration compatibility
@@ -84,18 +96,22 @@ final class Sermon {
     ) {
         if metadata {
             metadataNeedsSync = true
+            metadataSyncEpoch &+= 1
         }
 
         if notes {
             notesNeedSync = true
+            notesSyncEpoch &+= 1
         }
 
         if transcript {
             transcriptNeedsSync = true
+            transcriptSyncEpoch &+= 1
         }
 
         if summary {
             summaryNeedsSync = true
+            summarySyncEpoch &+= 1
         }
 
         self.updatedAt = updatedAt
