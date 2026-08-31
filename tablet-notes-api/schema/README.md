@@ -67,10 +67,9 @@ TAB-108 cleanup.
 
 ## Known warts — do NOT bootstrap an environment from these files
 
-The `profiles` policy set has accumulated near-duplicate policies across
-several generations of manual SQL-editor work. Two are genuine security
-findings, not hygiene (tracked as TAB-108; permissive policies OR together,
-so the stricter duplicates are decorative):
+The `profiles` policy set HAD accumulated near-duplicate policies and two
+genuine security findings — all removed by the TAB-108 migration on
+2026-08-31 (see the resolution note above). Recorded here for history:
 
 - `Allow profile writes` — `INSERT` with `WITH CHECK (true)`: any request,
   anon-key included, may insert a profile row **with arbitrary column
@@ -91,12 +90,12 @@ verbatim text inside comment blocks in `profiles.sql`, so an accidental
 apply cannot recreate them (a policy diff against prod will therefore show
 them present in prod and commented here — expected until TAB-108).
 
-**The deeper hole (verified at the grants level, 8/31): even without those
-two policies, any AUTHENTICATED user can write their own `subscription_*`
-columns** — the own-row INSERT/UPDATE policies pass any column change, and
-`anon`/`authenticated` hold full column privileges. A signed-in user can
-PATCH themselves to `premium/active` in prod today, and entitlements derive
-from exactly those columns. That model is reproduced faithfully here
-because it is what prod is; the fix (service-role-only entitlement columns,
-coordinated with the client's `saveUserProfile` writes) is TAB-108, now
-Urgent. Policy changes are owner-run migrations.
+**Resolved 2026-08-31 (TAB-108, migration 20260831210000):** the
+entitlement-forging hole is closed. `anon`/`authenticated` no longer hold
+INSERT/UPDATE on any `subscription_*` column (entitlements are
+service-role-only — verify-purchase.js writes them from the verified
+StoreKit transaction), the three dangerous policies were dropped, and the
+policy set is now one canonical own-row policy per command. Verified live:
+an anon-key PATCH of `subscription_tier`/`subscription_status` returns 42501.
+`profiles.sql` reflects this cleaned state; the removed policies live in the
+migration and git history. Policy changes remain owner-run migrations.
