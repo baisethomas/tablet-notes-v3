@@ -79,6 +79,13 @@ struct SettingsToggle: View {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
                 .tint(Color.SV.primary)
+                // The Sacred Vellum cards are light-only by design (see
+                // Color+SacredVellum.swift), but the switch inherits the
+                // device colorScheme — in dark mode its off-track resolves to
+                // a translucent near-white meant for dark backgrounds and
+                // vanishes on the light card (TAB-100). Pin the control to
+                // the scheme its card actually renders.
+                .environment(\.colorScheme, .light)
         }
     }
 }
