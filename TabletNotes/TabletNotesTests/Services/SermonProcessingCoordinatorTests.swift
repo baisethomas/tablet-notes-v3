@@ -142,6 +142,10 @@ struct SermonProcessingCoordinatorTests {
         }
 
         coordinator.resetForTesting()
+        // This test pins LEGACY-path behavior, which still exists behind the
+        // flag as the rollback story. Since TAB-103 the shipped default is
+        // durable-ON, so the path under test is selected explicitly.
+        coordinator.isDurableProcessingEnabled = { false }
         coordinator.syncRunner = {}
         coordinator.configure(modelContext: context, sermonService: sermonService)
 
@@ -208,6 +212,10 @@ struct SermonProcessingCoordinatorTests {
         }
 
         coordinator.resetForTesting()
+        // This test pins LEGACY-path behavior, which still exists behind the
+        // flag as the rollback story. Since TAB-103 the shipped default is
+        // durable-ON, so the path under test is selected explicitly.
+        coordinator.isDurableProcessingEnabled = { false }
         coordinator.syncRunner = {}
         coordinator.configure(modelContext: context, sermonService: sermonService)
 
