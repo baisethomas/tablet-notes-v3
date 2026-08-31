@@ -41,10 +41,15 @@ create table public.profiles (
 create index idx_profiles_email on public.profiles using btree (email);
 
 -- RLS: enabled, with a policy set accumulated across several generations of
--- manual SQL-editor work. Reproduced VERBATIM — including near-duplicates and
--- two overly-permissive policies (marked below) — because this file records
--- what prod is, not what it should be. Cleanup is tracked separately
--- (TAB-108) and is an owner-run migration.
+-- manual SQL-editor work. Reproduced verbatim in TEXT — near-duplicates
+-- included — because this file records what prod is, not what it should be.
+-- The two dangerous policies below are preserved inside comment blocks so
+-- they are reviewable but NOT executable: applying this file must not be
+-- able to recreate prod's privilege-escalation / PII-exposure paths in a
+-- fresh environment. Cleanup is tracked separately (TAB-108) and is an
+-- owner-run migration. NOTE: consequently, a policy diff against prod will
+-- show these two present in prod and commented here — expected until
+-- TAB-108 removes them from prod.
 alter table public.profiles enable row level security;
 
 -- SELECT (three near-duplicates + one permissive variant)
@@ -60,18 +65,29 @@ create policy "profiles_select_policy"
     on public.profiles for select
     using (auth.uid() = id);
 
--- ⚠ Permissive: any request may read ANY profile for 5 minutes after that
--- profile's creation (presumably a signup-flow workaround).
-create policy "Allow profile reads with restrictions"
-    on public.profiles for select
-    using ((auth.uid() = id) or (created_at > (now() - interval '5 minutes')));
+-- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
+-- EXECUTABLE (Ternary round 2): any request may read ANY profile (email,
+-- name, subscription metadata) for 5 minutes after that profile's creation.
+-- This exists in prod today (TAB-108 tracks its removal); reproducing it
+-- runnably would let an accidental apply create the PII-exposure window in
+-- a new environment. Verbatim text, commented:
+--
+--   create policy "Allow profile reads with restrictions"
+--       on public.profiles for select
+--       using ((auth.uid() = id) or (created_at > (now() - interval '5 minutes')));
 
 -- INSERT (three variants)
--- ⚠ Permissive: WITH CHECK (true) — any request, anon key included, may
--- insert a profile row for any id existing in auth.users.
-create policy "Allow profile writes"
-    on public.profiles for insert
-    with check (true);
+-- ⚠⚠ DANGEROUS POLICY — PRESERVED AS DOCUMENTATION, DELIBERATELY NOT
+-- EXECUTABLE (Ternary round 2): WITH CHECK (true) lets any request, anon
+-- key included, insert a profile row with arbitrary column values for any
+-- id in auth.users — a premium self-provisioning path (entitlements derive
+-- from subscription_status='active'). Exists in prod today (TAB-108 tracks
+-- its removal); must not be re-creatable by an accidental apply. Verbatim
+-- text, commented:
+--
+--   create policy "Allow profile writes"
+--       on public.profiles for insert
+--       with check (true);
 
 create policy "Users can insert their own profile"
     on public.profiles for insert

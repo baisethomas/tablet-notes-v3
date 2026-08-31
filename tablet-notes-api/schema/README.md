@@ -85,6 +85,9 @@ so the stricter duplicates are decorative):
   after that profile's creation: a PII-exposure window for anyone polling
   with the anon key.
 
-These files reproduce prod verbatim so the state is reviewable — that is the
-opposite of a recommendation. Do not apply them to a fresh environment before
-the TAB-108 cleanup lands; policy changes are owner-run migrations.
+These files reproduce prod's state so it is reviewable — that is the
+opposite of a recommendation. The two dangerous policies are preserved as
+verbatim text inside comment blocks in `profiles.sql`, so an accidental
+apply cannot recreate them (a policy diff against prod will therefore show
+them present in prod and commented here — expected until TAB-108 removes
+them from prod). Policy changes are owner-run migrations.
