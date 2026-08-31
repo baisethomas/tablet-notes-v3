@@ -342,6 +342,31 @@ class SummaryRetryService: ObservableObject {
         return true
     }
 
+    /// TAB-97 companion to TranscriptionRetryService.repairAlreadyTranscribedStatuses:
+    /// the durable pipeline skips this service's recovery sweeps (pumping both
+    /// pipelines would double-bill), which also skipped the repair above — a
+    /// sermon whose summary already exists but whose status was walked back to
+    /// "pending"/"processing" stayed "preparing" forever. Status-only: no jobs
+    /// minted, no summary re-run, no network touched.
+    func repairAlreadySummarizedStatuses() {
+        guard let context = modelContext else { return }
+        // Only repair candidates are fetched: after one pass their statuses
+        // are terminal, so the steady-state fetch on every foreground refresh
+        // returns nothing. The summary-exists half of the check lives in
+        // repairSummarizedSermonIfNeeded — optional-relationship predicates
+        // are unreliable in SwiftData (see dispatchPendingDurableJobs).
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { sermon in
+                sermon.summaryStatus == "pending" ||
+                sermon.summaryStatus == "processing"
+            }
+        )
+        let sermons = (try? context.fetch(descriptor)) ?? []
+        for sermon in sermons {
+            repairSummarizedSermonIfNeeded(sermon)
+        }
+    }
+
     private func openSummaryJobs(for sermonId: UUID) -> [ProcessingJob] {
         guard let context = modelContext else { return [] }
         let descriptor = FetchDescriptor<ProcessingJob>(

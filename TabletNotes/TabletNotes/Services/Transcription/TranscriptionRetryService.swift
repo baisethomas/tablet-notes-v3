@@ -323,6 +323,34 @@ class TranscriptionRetryService: ObservableObject {
         return true
     }
 
+    /// TAB-97: the status-only half of the TAB-94 guard, callable when the
+    /// durable pipeline owns processing. The durable branch skips this
+    /// service's recovery sweeps entirely (pumping both pipelines would
+    /// double-bill AssemblyAI), which also skipped the repair that walks a
+    /// poisoned "pending"/"processing"/"failed" status forward to "complete"
+    /// for a sermon whose transcript already exists — leaving it stuck
+    /// locally and never pushing the corrected status. This sweep runs just
+    /// that repair: no jobs minted, nothing submitted, no network touched.
+    func repairAlreadyTranscribedStatuses() {
+        guard let context = modelContext else { return }
+        // Only repair candidates are fetched: after one pass their statuses
+        // are terminal, so the steady-state fetch on every foreground refresh
+        // returns nothing. The transcript-exists half of the check stays in
+        // memory — optional-relationship predicates are unreliable in
+        // SwiftData (see dispatchPendingDurableJobs).
+        let descriptor = FetchDescriptor<Sermon>(
+            predicate: #Predicate<Sermon> { sermon in
+                sermon.transcriptionStatus == "pending" ||
+                sermon.transcriptionStatus == "processing" ||
+                sermon.transcriptionStatus == "failed"
+            }
+        )
+        let sermons = (try? context.fetch(descriptor)) ?? []
+        for sermon in sermons where sermon.transcript != nil {
+            completeAlreadyTranscribedSermonIfNeeded(sermon, in: context)
+        }
+    }
+
     private func openTranscriptionJobs(for sermonId: UUID, in context: ModelContext) -> [ProcessingJob] {
         let descriptor = FetchDescriptor<ProcessingJob>(
             sortBy: [SortDescriptor(\.createdAt)]
