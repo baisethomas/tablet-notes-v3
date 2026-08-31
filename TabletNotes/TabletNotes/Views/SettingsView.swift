@@ -746,8 +746,13 @@ struct SubscriptionPromptView: View {
         authManager: AuthenticationManager.shared,
         supabaseService: SupabaseService()
     )
-    @State private var showingPrivacyPolicy = false
-    @State private var showingTermsOfService = false
+    /// One optional drives one sheet: the two legal documents can never
+    /// race each other's presentation flags (Ternary round 1).
+    private enum LegalDocument: String, Identifiable {
+        case privacy, terms
+        var id: String { rawValue }
+    }
+    @State private var presentedLegalDocument: LegalDocument?
     
     var body: some View {
         NavigationView {
@@ -847,10 +852,10 @@ struct SubscriptionPromptView: View {
 
                         HStack(spacing: 16) {
                             Button("Privacy Policy") {
-                                showingPrivacyPolicy = true
+                                presentedLegalDocument = .privacy
                             }
                             Button("Terms of Use") {
-                                showingTermsOfService = true
+                                presentedLegalDocument = .terms
                             }
                         }
                         .font(.caption)
@@ -862,11 +867,11 @@ struct SubscriptionPromptView: View {
                     Spacer()
                 }
             }
-            .sheet(isPresented: $showingPrivacyPolicy) {
-                PrivacyPolicyView()
-            }
-            .sheet(isPresented: $showingTermsOfService) {
-                TermsOfServiceView()
+            .sheet(item: $presentedLegalDocument) { document in
+                switch document {
+                case .privacy: PrivacyPolicyView()
+                case .terms: TermsOfServiceView()
+                }
             }
             .navigationTitle("Upgrade")
             .navigationBarTitleDisplayMode(.inline)
