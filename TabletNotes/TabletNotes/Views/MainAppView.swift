@@ -27,7 +27,10 @@ struct MainAppView: View {
     @State private var selectedServiceType: String? = nil
     @State private var showSplash = true
     @State private var onboardingReturnScreen: AppScreen = .home // Track where to return after tutorial
-    @State private var currentRecordingSessionId = UUID().uuidString // Persistent session ID for recording
+    /// Note-session id for the recording in progress + the guarded rule for
+    /// ending one (TAB-109): a save completion may only clear the session it
+    /// saved, never the session of a newer, still-live recording.
+    @State private var noteSession = RecordingNoteSession()
     @State private var currentRecordingServiceType: String? = nil // Track what type of service is being recorded
     @State private var cancellables = Set<AnyCancellable>() // Store Combine subscriptions for mini player
     @State private var sermonService: SermonService
@@ -49,6 +52,10 @@ struct MainAppView: View {
     private struct PendingRecordingSave {
         let audioURL: URL
         let serviceType: String
+        /// The note session of THIS recording, captured when the save first
+        /// ran — a retry must attach these notes, not whatever session is
+        /// current by then (TAB-109).
+        let sessionId: String
     }
 
     init(modelContext: ModelContext) {
@@ -310,7 +317,7 @@ struct MainAppView: View {
                     Button("Retry") {
                         guard let pending = pendingRecordingSave else { return }
                         recordingSaveErrorMessage = nil
-                        saveCompletedRecording(audioURL: pending.audioURL, serviceType: pending.serviceType)
+                        saveCompletedRecording(audioURL: pending.audioURL, serviceType: pending.serviceType, sessionId: pending.sessionId)
                     }
                 }
             } message: {
@@ -344,7 +351,9 @@ struct MainAppView: View {
                                     }
 
                                     do {
-                                        recordingService.prepareRecoverySession(sessionId: currentRecordingSessionId)
+                                        // A fresh note session per recording: never inherit a
+                                        // previous recording's notes, never be cleared as them.
+                                        recordingService.prepareRecoverySession(sessionId: noteSession.begin())
                                         try await recordingService.startRecording(serviceType: type)
                                         print("[MainAppView] Recording started immediately for \(type)")
 
@@ -491,15 +500,16 @@ struct MainAppView: View {
                 }
             )
         case .recording(let serviceType):
+            // Captured at render time: the completion below must finish the
+            // session this screen recorded, not the one current when it fires.
+            let recordingSessionId = noteSession.sessionId
             RecordingView(
                 serviceType: serviceType ?? "Sermon",
-                noteService: NoteService.shared(for: currentRecordingSessionId),
+                noteService: NoteService.shared(for: recordingSessionId),
                 onNext: { sermonId in
                     sermonService.fetchSermons()
-                    // Save is confirmed complete (completion handler) — clear session immediately
-                    let noteService = NoteService.shared(for: currentRecordingSessionId)
-                    noteService.clearSession()
-                    currentRecordingSessionId = UUID().uuidString
+                    // Save is confirmed complete (completion handler) — end this recording's session.
+                    finishRecordingSession(recordingSessionId)
                     currentScreen = .sermons
                 },
                 sermonService: sermonService,
@@ -552,10 +562,22 @@ struct MainAppView: View {
         }
     }
 
-    private func saveCompletedRecording(audioURL: URL, serviceType: String) {
+    /// Ends a recording's note session once its sermon is durably saved.
+    /// Only a session whose recording has stopped is cleared; the service
+    /// type is dropped only when the live session itself ended, so a stale
+    /// completion can't hide the mini-player of a newer recording.
+    private func finishRecordingSession(_ sessionId: String) {
+        let outcome = noteSession.finish(sessionId, isRecordingLive: recordingService.isRecording)
+        if outcome == .clearedAndRotated {
+            currentRecordingServiceType = nil
+        }
+    }
+
+    private func saveCompletedRecording(audioURL: URL, serviceType: String, sessionId: String? = nil) {
         let title = Sermon.fallbackTitle()
         let date = Date()
-        let noteService = NoteService.shared(for: currentRecordingSessionId)
+        let sessionId = sessionId ?? noteSession.sessionId
+        let noteService = NoteService.shared(for: sessionId)
         noteService.flushPersistedNotes()
         let notes = noteService.currentNotes
 
@@ -569,13 +591,11 @@ struct MainAppView: View {
             switch result {
             case .success:
                 pendingRecordingSave = nil
-                noteService.clearSession()
-                currentRecordingSessionId = UUID().uuidString
-                currentRecordingServiceType = nil
+                finishRecordingSession(sessionId)
                 sermonService.fetchSermons()
             case .failure(let error):
                 print("[MainAppView] Failed to save recording from mini player: \(error)")
-                pendingRecordingSave = PendingRecordingSave(audioURL: audioURL, serviceType: serviceType)
+                pendingRecordingSave = PendingRecordingSave(audioURL: audioURL, serviceType: serviceType, sessionId: sessionId)
                 recordingSaveErrorMessage = error.localizedDescription
             }
         }

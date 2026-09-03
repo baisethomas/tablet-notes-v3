@@ -109,6 +109,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
         let service = NoteService(sessionId: sessionId)
         sharedInstances[sessionId] = service
+        print("[NoteService] Minted instance for session \(sessionId) (loaded \(service.notes.count) persisted notes)")
         return service
     }
 
@@ -127,13 +128,41 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     /// the post-stop flush) must not move that marker. A genuine timestamp 0
     /// means the user typed at second zero.
     func upsertPrimaryNote(text: String, timestamp: TimeInterval) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let existing = notes.first {
-            updateNote(id: existing.id, newText: trimmed.isEmpty ? " " : trimmed)
-            return
+        guard stagePrimaryNoteText(text, timestamp: timestamp) else { return }
+        saveNotesToPersistence()
+        if let note = notes.first {
+            print("[NoteService] Saved primary note id=\(note.id), characters=\(note.text.count), timestamp=\(note.timestamp), total=\(notes.count)")
         }
-        guard !trimmed.isEmpty else { return }
-        addNote(text: trimmed, timestamp: timestamp)
+    }
+
+    /// The in-memory half of `upsertPrimaryNote`: applies the recording
+    /// screen's current text to the primary note WITHOUT touching the store
+    /// (TAB-109). The recording screen calls this on every keystroke so this
+    /// service — which outlives the screen — is the source of truth at all
+    /// times, not only after a debounce fires or a disappear flush runs. The
+    /// debounced `upsertPrimaryNote` / `flushPersistedNotes` still persist.
+    ///
+    /// Returns whether anything changed. Same semantics as the upsert: a
+    /// non-blank first text creates the note at `timestamp`; later text
+    /// updates it in place (blank becomes a single space so the note keeps
+    /// its slot); blank text with no note is ignored; a retired session
+    /// accepts nothing.
+    @discardableResult
+    func stagePrimaryNoteText(_ text: String, timestamp: TimeInterval) -> Bool {
+        guard !isRetired else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let idx = notes.indices.first {
+            let newText = trimmed.isEmpty ? " " : trimmed
+            guard notes[idx].text != newText else { return false }
+            hasMutatedNotes = true
+            notes[idx].text = newText
+            notes = notes
+            return true
+        }
+        guard !trimmed.isEmpty else { return false }
+        hasMutatedNotes = true
+        notes.append(Note(text: trimmed, timestamp: timestamp))
+        return true
     }
     
     private func loadNotesFromPersistence() {
