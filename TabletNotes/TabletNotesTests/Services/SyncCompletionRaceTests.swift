@@ -41,7 +41,7 @@ struct SyncCompletionRaceTests {
             return RemoteSermonCreateResult(remoteId: "remote-created", syncedScopes: .all)
         }
 
-        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {}
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes { .all }
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL { url }
         func deleteRemoteSermon(remoteId: String) async throws {}
         func deleteAllRemoteData(for userId: UUID) async throws {}
@@ -344,7 +344,7 @@ struct SyncScopeEpochRaceTests {
             return RemoteSermonCreateResult(remoteId: "remote-created", syncedScopes: .all)
         }
 
-        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {}
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes { .all }
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL { url }
         func deleteRemoteSermon(remoteId: String) async throws {}
         func deleteAllRemoteData(for userId: UUID) async throws {}

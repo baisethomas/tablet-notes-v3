@@ -181,12 +181,19 @@ final class SermonSyncEngine {
         let existingRemoteId = sermon.remoteId
 
         if let remoteId = existingRemoteId, !remoteId.isEmpty {
-            try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
+            let acknowledged = try await remoteGateway.updateRemoteSermon(remoteId: remoteId, data: syncData)
+            // Clear only the scopes the backend acknowledged — a failed child
+            // write (e.g. a notes re-insert) stays dirty and is re-pushed
+            // instead of being acked by the blanket 2xx (TAB-110).
+            let ackedScopes = syncData.scopes.intersection(acknowledged)
+            if ackedScopes != syncData.scopes {
+                print("[SyncService] ⚠️ Sermon \(sermonId): server did not ack every pushed scope; keeping the rest dirty")
+            }
             try markSermonSyncedIfStillPresent(
                 sermonId: sermonId,
                 remoteId: remoteId,
                 syncedAt: syncedAt,
-                scopes: syncData.scopes,
+                scopes: ackedScopes,
                 pushedSnapshotEpochs: syncData.epochs
             )
             return
