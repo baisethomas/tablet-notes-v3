@@ -57,6 +57,17 @@ struct SermonSyncScopes: Equatable {
         metadata || notes || transcript || summary
     }
 
+    /// Scopes present in both — used to narrow a pushed snapshot's scopes to
+    /// the ones the server actually acknowledged (TAB-110).
+    func intersection(_ other: SermonSyncScopes) -> SermonSyncScopes {
+        SermonSyncScopes(
+            metadata: metadata && other.metadata,
+            notes: notes && other.notes,
+            transcript: transcript && other.transcript,
+            summary: summary && other.summary
+        )
+    }
+
     static let all = SermonSyncScopes(
         metadata: true,
         notes: true,

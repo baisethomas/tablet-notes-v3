@@ -4,7 +4,9 @@ import Foundation
 protocol SermonSyncRemoteGatewayProtocol {
     func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData]
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult
-    func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws
+    /// Returns the scopes the backend acknowledged. An older backend that
+    /// omits `syncedScopes` is treated as acknowledging everything.
+    func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes
     func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL
     func deleteRemoteSermon(remoteId: String) async throws
     func deleteAllRemoteData(for userId: UUID) async throws
@@ -244,7 +246,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         )
     }
 
-    func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+    func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes {
         print("[SyncService] Updating remote sermon: \(data.title) (remoteId: \(remoteId))")
 
         let token = try await getAuthToken()
@@ -315,6 +317,15 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
             }
             throw SyncError.networkError
         }
+
+        // A 2xx no longer means every child scope landed (TAB-110): the
+        // backend reports per-scope outcomes and the caller clears only those.
+        let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+        let syncedScopes = parseSyncedScopes((json?["data"] as? [String: Any])?["syncedScopes"])
+        if syncedScopes != .all {
+            print("[SyncService] ⚠️ Sermon updated with partial child writes: \(remoteId)")
+        }
+        return syncedScopes
     }
 
     func downloadAudioFile(from url: URL, remotePath: String? = nil) async throws -> URL {

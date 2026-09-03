@@ -11,6 +11,7 @@ const {
   planStageStatusWrites,
   applyStageStatusWrites
 } = require('./utils/sermonStatus');
+const { reconcileSermonNotes } = require('./utils/reconcileSermonNotes');
 
 exports.handler = withLogging('update-sermon', async (event, context) => {
   const logger = event.logger;
@@ -171,55 +172,22 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
       return createErrorResponse(new Error(updateError.message), 500);
     }
 
-    // Update notes if provided
+    // Child scopes are acknowledged individually, the same contract as
+    // create-sermon (TAB-34): a scope that failed stays dirty on the client
+    // and is re-pushed, instead of being acked by a blanket 2xx.
+    const syncedScopes = { metadata: true, notes: true, transcript: true, summary: true };
+
+    // Reconcile notes if provided. Never delete-before-insert (TAB-110): the
+    // helper inserts/updates first and removes stale rows last, and reports
+    // any failure so the scope is not acknowledged.
     if (body.notes && Array.isArray(body.notes)) {
-      logger.info('Updating notes', { count: body.notes.length, sermonId: body.remoteId });
-      // Delete existing notes
-      const { error: deleteError } = await supabase
-        .from('notes')
-        .delete()
-        .eq('sermon_id', body.remoteId)
-        .eq('user_id', user.id);
-
-      if (deleteError) {
-        logger.warn('Failed to delete existing notes', {
-          sermonId: body.remoteId,
-          error: deleteError.message
-        });
-      }
-
-      // Insert new notes
-      if (body.notes.length > 0) {
-        const notesData = body.notes.map(note => ({
-          local_id: note.id,
-          sermon_id: body.remoteId,
-          user_id: user.id,
-          text: note.text,
-          // notes.timestamp is an integer column; the client sends fractional
-          // seconds. An unrounded value fails the whole insert with 22P02 —
-          // and the existing notes were already deleted above.
-          timestamp: Math.round(note.timestamp) || 0
-        }));
-
-        const { data: insertedNotes, error: notesError } = await supabase
-          .from('notes')
-          .insert(notesData)
-          .select();
-
-        if (notesError) {
-          logger.error('Failed to update notes', {
-            sermonId: body.remoteId,
-            error: notesError.message,
-            code: notesError.code,
-            details: notesError.details
-          });
-        } else {
-          logger.info('Successfully updated notes', {
-            sermonId: body.remoteId,
-            count: insertedNotes?.length || 0
-          });
-        }
-      }
+      syncedScopes.notes = await reconcileSermonNotes({
+        supabase,
+        sermonId: body.remoteId,
+        userId: user.id,
+        notes: body.notes,
+        logger
+      });
     }
 
     // Update transcript if provided
@@ -246,6 +214,7 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
         .select();
 
       if (transcriptError) {
+        syncedScopes.transcript = false;
         logger.error('Failed to update transcript', {
           sermonId: body.remoteId,
           error: transcriptError.message,
@@ -292,6 +261,7 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
         .select();
 
       if (summaryError) {
+        syncedScopes.summary = false;
         logger.error('Failed to update summary', {
           sermonId: body.remoteId,
           error: summaryError.message,
@@ -312,14 +282,23 @@ exports.handler = withLogging('update-sermon', async (event, context) => {
       });
     }
 
-    logger.info('Sermon updated successfully', {
-      userId: user.id,
-      sermonId: sermon.id
-    });
+    if (!syncedScopes.notes || !syncedScopes.transcript || !syncedScopes.summary) {
+      logger.warn('Sermon updated with partial child writes', {
+        userId: user.id,
+        sermonId: sermon.id,
+        syncedScopes
+      });
+    } else {
+      logger.info('Sermon updated successfully', {
+        userId: user.id,
+        sermonId: sermon.id
+      });
+    }
 
     return createSuccessResponse({
       id: sermon.id,
-      updatedAt: sermon.updated_at
+      updatedAt: sermon.updated_at,
+      syncedScopes
     }, 200);
 
   } catch (error) {

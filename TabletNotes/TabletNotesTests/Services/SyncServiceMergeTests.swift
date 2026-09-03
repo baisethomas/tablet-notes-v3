@@ -121,6 +121,7 @@ struct SyncServiceMergeTests {
         var shouldBlockCreate = false
         var shouldBlockFetch = false
         var createSyncedScopes: SermonSyncScopes = .all
+        var updateSyncedScopes: SermonSyncScopes = .all
         var failingDownloadURLs: Set<URL> = []
         struct DownloadFailure: Error {}
 
@@ -166,10 +167,11 @@ struct SyncServiceMergeTests {
             )
         }
 
-        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes {
             _ = remoteId
             _ = data
             recorder.record("remote.update")
+            return updateSyncedScopes
         }
 
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
@@ -1493,6 +1495,46 @@ struct SyncServiceMergeTests {
         #expect(remoteGateway.createCallCount == 2)
     }
 
+    // MARK: - TAB-110: an update ack is per scope
+
+    /// update-sermon reports which child scopes actually landed. A scope the
+    /// server did not acknowledge (e.g. the notes re-insert failed) must stay
+    /// dirty so it is re-pushed, instead of being cleared by the blanket 2xx.
+    @Test func updatePushKeepsUnacknowledgedScopeDirty() async throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+
+        let sermon = Sermon(
+            title: "Edited Sermon",
+            audioFileName: "edited.m4a",
+            date: Date(),
+            serviceType: "Sunday Service",
+            syncStatus: "pending",
+            transcriptionStatus: "complete",
+            summaryStatus: "complete",
+            remoteId: "remote-sermon",
+            updatedAt: Date()
+        )
+        modelContext.insert(sermon)
+        let note = Note(text: "Keep me", timestamp: 12, updatedAt: Date(), needsSync: true)
+        note.sermon = sermon
+        modelContext.insert(note)
+        sermon.notes.append(note)
+        sermon.markPendingSync(metadata: true, notes: true)
+        try modelContext.save()
+
+        let gateway = MutatingRemoteGateway()
+        gateway.updateScopes = SermonSyncScopes(metadata: true, notes: false, transcript: true, summary: true)
+
+        let engine = SermonSyncEngine(localRepository: repository, remoteGateway: gateway)
+        try await engine.sync(userId: UUID())
+
+        #expect(!sermon.metadataNeedsSync, "acknowledged scope is cleared")
+        #expect(sermon.notesNeedSync, "unacknowledged scope stays dirty for the next push")
+        #expect(note.needsSync, "the note itself is still marked for sync")
+        #expect(sermon.syncStatus == "pending")
+    }
+
     // MARK: - TAB-21: deletion during in-flight push must not crash
 
     /// Remote gateway that runs a caller-supplied action while the push is
@@ -1500,6 +1542,7 @@ struct SyncServiceMergeTests {
     final class MutatingRemoteGateway: SermonSyncRemoteGatewayProtocol {
         var onUpdate: (() -> Void)?
         var onCreate: (() -> Void)?
+        var updateScopes: SermonSyncScopes = .all
 
         func fetchRemoteSermons(for userId: UUID) async throws -> [RemoteSermonData] {
             []
@@ -1510,8 +1553,9 @@ struct SyncServiceMergeTests {
             return RemoteSermonCreateResult(remoteId: "remote-created", syncedScopes: .all)
         }
 
-        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws {
+        func updateRemoteSermon(remoteId: String, data: SermonSyncData) async throws -> SermonSyncScopes {
             onUpdate?()
+            return updateScopes
         }
 
         func downloadAudioFile(from url: URL, remotePath: String?) async throws -> URL {
