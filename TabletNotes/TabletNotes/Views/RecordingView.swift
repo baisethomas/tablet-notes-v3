@@ -167,6 +167,7 @@ struct RecordingView: View {
             if let existingNote = noteService.currentNotes.first {
                 noteText = existingNote.text
             }
+            print("[RecordingView] Appeared: session=\(noteService.sessionId) isRecording=\(recordingService.isRecording) serviceNotes=\(noteService.currentNotes.count) restoredChars=\(noteText.count)")
         }
         .onDisappear {
             transcriptAnalysisTask?.cancel()
@@ -176,9 +177,11 @@ struct RecordingView: View {
             // flush when the recording already stopped: those paths flush via
             // processTranscription, and the session may have been cleared.
             noteSaveTask?.cancel()
-            if recordingService.isRecording {
+            let shouldFlush = recordingService.isRecording
+            if shouldFlush {
                 saveNoteText(noteText)
             }
+            print("[RecordingView] Disappeared: session=\(noteService.sessionId) isRecording=\(shouldFlush) noteChars=\(noteText.count) serviceNotes=\(noteService.currentNotes.count) flushed=\(shouldFlush)")
         }
         .onChange(of: isNotesFocused) { _, focused in
             // Give the editor full height while typing: collapse the ambient
@@ -403,6 +406,11 @@ struct RecordingView: View {
                 }
                 .padding(.horizontal, 20)
                 .onChange(of: noteText) { _, newText in
+                    // Mirror every keystroke into the service immediately and
+                    // persist on a debounce (TAB-109): the service outlives this
+                    // screen, so the latest text must never depend on a
+                    // disappear flush or a timer that may not get to run.
+                    noteService.stagePrimaryNoteText(newText, timestamp: currentNoteTimestamp())
                     scheduleNoteSave(newText)
                 }
             }
@@ -577,21 +585,22 @@ struct RecordingView: View {
         }
     }
 
-    private func saveNoteText(_ text: String) {
-        // The create-vs-update decision belongs to the service's own state —
-        // the `notes` @State replica arrives asynchronously and an empty
-        // replica over non-empty text used to mint a duplicate note (TAB-96).
-        // stopRecording() zeroes the duration, and a save still runs after it
-        // (processTranscription), so remember the last live duration: a note
-        // created by that final save must not land at timestamp 0.
+    /// stopRecording() zeroes the duration, and a save still runs after it
+    /// (processTranscription), so remember the last live duration: a note
+    /// created by that final save must not land at timestamp 0.
+    private func currentNoteTimestamp() -> TimeInterval {
         let duration = recordingService.recordingDuration
         if duration > 0 {
             lastKnownRecordingDuration = duration
         }
-        noteService.upsertPrimaryNote(
-            text: text,
-            timestamp: duration > 0 ? duration : lastKnownRecordingDuration
-        )
+        return duration > 0 ? duration : lastKnownRecordingDuration
+    }
+
+    private func saveNoteText(_ text: String) {
+        // The create-vs-update decision belongs to the service's own state —
+        // the `notes` @State replica arrives asynchronously and an empty
+        // replica over non-empty text used to mint a duplicate note (TAB-96).
+        noteService.upsertPrimaryNote(text: text, timestamp: currentNoteTimestamp())
         noteService.flushPersistedNotes()
     }
 
