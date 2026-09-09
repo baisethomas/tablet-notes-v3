@@ -911,15 +911,18 @@ struct CurrentPlanStatusView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Image(systemName: user.isPaidUser ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(user.isPaidUser ? .successGreen : .adaptiveSecondaryText)
-                
+                // TAB-112: a trial user is entitled but not paid — label the
+                // card "Free Trial" and withhold the paid checkmark so the
+                // Subscribe buttons below don't look redundant.
+                Image(systemName: user.showsPaidPlanCheckmark ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(user.showsPaidPlanCheckmark ? .successGreen : .adaptiveSecondaryText)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Current Plan")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
-                    Text(user.currentPlan.tier.displayName)
+
+                    Text(user.currentPlanDisplayName)
                         .font(.headline)
                         .fontWeight(.semibold)
                 }

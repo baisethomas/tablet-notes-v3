@@ -252,16 +252,44 @@ extension User {
     
     // MARK: - Subscription Status
     
+    /// Title for the paywall's plan card (TAB-112). The 14-day trial is stored
+    /// as tier premium / status active, so `currentPlan.tier.displayName` read
+    /// "Premium" for a trial user — right above the Subscribe buttons.
+    var currentPlanDisplayName: String {
+        switch trialState {
+        case .trialActive, .trialExpiringSoon:
+            return "Free Trial"
+        case .free, .trialExpired, .paidActive:
+            return currentPlan.tier.displayName
+        }
+    }
+
+    /// Only a real purchase earns the green "paid" checkmark on the plan card
+    /// (TAB-112); a trial is entitled but not paid.
+    var showsPaidPlanCheckmark: Bool {
+        trialState == .paidActive
+    }
+
     var subscriptionDisplayStatus: String {
-        if isPaidUser {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+
+        switch trialState {
+        case .trialActive, .trialExpiringSoon:
             if let expiry = subscriptionExpiry {
-                let formatter = DateFormatter()
-                formatter.dateStyle = .medium
+                return "Trial ends \(formatter.string(from: expiry))"
+            }
+            return "Trial"
+        case .trialExpired:
+            return "Trial ended"
+        case .paidActive:
+            if let expiry = subscriptionExpiry {
                 return "Active until \(formatter.string(from: expiry))"
             }
             return "Active"
+        case .free:
+            return "Free Plan"
         }
-        return "Free Plan"
     }
     
     var isSubscriptionExpiringSoon: Bool {
