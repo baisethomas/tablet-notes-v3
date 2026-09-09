@@ -7,6 +7,8 @@ struct AccountView: View {
     @State private var showingPrivacyPolicy = false
     @State private var showingTerms = false
     @State private var showingSupport = false
+    /// Paywall sheet behind the always-visible subscription row (TAB-111).
+    @State private var showingSubscription = false
     @State private var showingSignOutAlert = false
     @State private var isSigningOut = false
     
@@ -115,6 +117,26 @@ struct AccountView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         
+                        // Subscription Section (TAB-111). Shown in EVERY
+                        // entitlement state, including the 14-day trial a new
+                        // account starts on: the trial's entitlements used to
+                        // hide the app's only paywall entry (Settings → Cloud
+                        // Sync → "Upgrade"), which is why App Review could not
+                        // locate the in-app purchases.
+                        VStack(spacing: 0) {
+                            AccountSectionHeader(title: "Subscription")
+
+                            VStack(spacing: 0) {
+                                SubscriptionEntryRow(
+                                    entryPoint: (currentUser?.trialState ?? .free).entryPoint
+                                ) {
+                                    showingSubscription = true
+                                }
+                            }
+                            .background(Color.SV.surfaceContainerLowest)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+
                         // Account Settings Section
                         VStack(spacing: 0) {
                             AccountSectionHeader(title: "Account Settings")
@@ -305,6 +327,9 @@ struct AccountView: View {
             .background(Color.SV.surface)
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .sheet(isPresented: $showingSubscription) {
+            SubscriptionPromptView()
+        }
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView(user: currentUser)
         }
@@ -411,6 +436,52 @@ struct AccountRowView: View {
             .padding(.vertical, 13)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Subscription Entry Row
+/// The always-visible subscription row (TAB-111). Same shape as
+/// `AccountRowView`, but the trailing chevron is replaced by the state's call
+/// to action ("Subscribe" / "Upgrade" / "Manage") so the purchase path is
+/// legible at a glance, not just discoverable.
+struct SubscriptionEntryRow: View {
+    let entryPoint: SubscriptionEntryPoint
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.orange)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TabletNotes Premium")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.SV.onSurface)
+
+                    Text(entryPoint.subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.SV.onSurface.opacity(0.5))
+                }
+
+                Spacer()
+
+                Text(entryPoint.callToAction)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.SV.primary)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.SV.onSurface.opacity(0.3))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("TabletNotes Premium, \(entryPoint.subtitle)")
+        .accessibilityHint(entryPoint.callToAction)
     }
 }
 
