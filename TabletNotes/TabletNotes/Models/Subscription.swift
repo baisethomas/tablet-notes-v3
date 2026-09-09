@@ -358,4 +358,34 @@ enum SubscriptionTrialState: Equatable {
             return false
         }
     }
+
+    /// Presentation for the always-visible subscription row in Account and
+    /// Settings (TAB-111). Every state maps to a row — there is deliberately no
+    /// "hidden" case. App Review rejected v1.0 twice because the reviewer's
+    /// Sign in with Apple account landed in `.trialActive`, where the trial's
+    /// entitlements made the Cloud Sync "Upgrade" caption (then the only
+    /// paywall entry) disappear, leaving no way to reach the products.
+    var entryPoint: SubscriptionEntryPoint {
+        switch self {
+        case .free:
+            return SubscriptionEntryPoint(subtitle: "Free plan", callToAction: "Upgrade")
+        case .trialActive(let days), .trialExpiringSoon(let days):
+            return SubscriptionEntryPoint(
+                subtitle: "Free trial · \(days) day\(days == 1 ? "" : "s") left",
+                callToAction: "Subscribe"
+            )
+        case .trialExpired:
+            return SubscriptionEntryPoint(subtitle: "Trial expired", callToAction: "Upgrade")
+        case .paidActive:
+            return SubscriptionEntryPoint(subtitle: "Premium active", callToAction: "Manage")
+        }
+    }
+}
+
+/// What the subscription row says, per entitlement state (TAB-111).
+struct SubscriptionEntryPoint: Equatable {
+    /// Current plan, shown under the row title.
+    let subtitle: String
+    /// Trailing action label; tapping the row opens `SubscriptionPromptView`.
+    let callToAction: String
 }

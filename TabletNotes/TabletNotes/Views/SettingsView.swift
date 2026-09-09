@@ -44,6 +44,21 @@ struct SettingsView: View {
             
             ScrollView {
                 LazyVStack(spacing: 24) {
+                    // Subscription (TAB-111): always-visible paywall entry,
+                    // independent of entitlement state. The Cloud Sync row
+                    // below still shows "Upgrade" for free users, but during
+                    // the 14-day trial it reads "Sync Now" and used to leave
+                    // the app with no route to the in-app purchases.
+                    SettingsSection(title: "Subscription") {
+                        VStack(spacing: 0) {
+                            SubscriptionEntryRow(
+                                entryPoint: (authManager.currentUser?.trialState ?? .free).entryPoint
+                            ) {
+                                showingSubscriptionPrompt = true
+                            }
+                        }
+                    }
+
                     // Recording Settings
                     SettingsSection(title: "Recording") {
                         VStack(spacing: 0) {
