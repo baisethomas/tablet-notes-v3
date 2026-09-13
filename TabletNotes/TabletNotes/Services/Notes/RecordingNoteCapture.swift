@@ -15,19 +15,30 @@ enum RecordingNoteCapture {
     ///   - fallbackTimestamp: recording offset to stamp a rebuilt note with
     ///     when the service lost the original (the note's first keystroke if
     ///     known, else the stop time).
-    /// - Returns: the service's notes when it has any; otherwise a single
-    ///   note rebuilt from the editor text, or nothing when both are empty.
+    /// - Returns: the service's notes with the primary note's text reconciled
+    ///   to the editor (the editor is what the user sees, so it wins; the
+    ///   note keeps its identity and start timestamp); a single note rebuilt
+    ///   from the editor when the service has none; the service's notes
+    ///   untouched when the editor is blank; nothing when both are empty.
     static func notesForSave(
         serviceNotes: [Note],
         editorText: String,
         fallbackTimestamp: TimeInterval
     ) -> [Note] {
-        if !serviceNotes.isEmpty {
-            return serviceNotes
-        }
         let trimmed = editorText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        NotesLog.logger.error("Stop: service returned no notes but the editor holds \(trimmed.count) characters — rebuilding the note from the editor (TAB-113)")
-        return [Note(text: trimmed, timestamp: fallbackTimestamp)]
+        guard let primary = serviceNotes.first else {
+            guard !trimmed.isEmpty else { return [] }
+            NotesLog.logger.error("Stop: service returned no notes but the editor holds \(trimmed.count) characters — rebuilding the note from the editor (TAB-113)")
+            return [Note(text: trimmed, timestamp: fallbackTimestamp)]
+        }
+        // A blank editor is either a deliberate delete (already staged as a
+        // single space) or a stale view; neither may erase held content.
+        guard !trimmed.isEmpty, primary.text != trimmed else { return serviceNotes }
+        // Round 3: a service holding an older draft (e.g. retired after the
+        // first save, refusing later keystrokes) is not authoritative over
+        // the text on screen.
+        NotesLog.logger.error("Stop: service primary note (\(primary.text.count) chars) is behind the editor (\(trimmed.count) chars) — saving the editor text (TAB-113)")
+        primary.text = trimmed
+        return serviceNotes
     }
 }
