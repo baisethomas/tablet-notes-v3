@@ -56,10 +56,19 @@ final class RecordingNoteSession {
     ///   now. If it is and `finishedSessionId` is the current session, the
     ///   caller is trying to clear the notes of the recording the user is in
     ///   the middle of — refused.
+    ///
+    /// The service has the last word (TAB-113 round 2): `clearSession()`
+    /// refuses the session bound to the recording in progress, whatever
+    /// `isRecordingLive` claims. A refused clear never rotates the id —
+    /// rotating would leave the live notes in the old service while every
+    /// later save reads a fresh, empty one.
     @discardableResult
     func finish(_ finishedSessionId: String, isRecordingLive: Bool) -> FinishOutcome {
         if finishedSessionId != sessionId {
-            NoteService.shared(for: finishedSessionId).clearSession()
+            guard NoteService.shared(for: finishedSessionId).clearSession() else {
+                NotesLog.logger.error("Finish REFUSED for superseded id \(finishedSessionId, privacy: .public): the service says it is the live recording")
+                return .refusedLiveRecording
+            }
             NotesLog.logger.notice("Finish: cleared superseded session \(finishedSessionId, privacy: .public); current \(self.sessionId, privacy: .public) untouched")
             print("[RecordingNoteSession] Cleared superseded session \(finishedSessionId); live session \(sessionId) untouched")
             return .clearedStale
@@ -69,7 +78,11 @@ final class RecordingNoteSession {
             print("[RecordingNoteSession] REFUSED to clear session \(sessionId): its recording is still live")
             return .refusedLiveRecording
         }
-        NoteService.shared(for: sessionId).clearSession()
+        guard NoteService.shared(for: sessionId).clearSession() else {
+            NotesLog.logger.error("Finish REFUSED for session \(self.sessionId, privacy: .public): caller said stopped, service says live — not rotating")
+            print("[RecordingNoteSession] REFUSED to clear session \(sessionId): service reports it live; not rotating")
+            return .refusedLiveRecording
+        }
         let previous = sessionId
         sessionId = UUID().uuidString
         NotesLog.logger.notice("Finished session \(previous, privacy: .public); next session \(self.sessionId, privacy: .public)")

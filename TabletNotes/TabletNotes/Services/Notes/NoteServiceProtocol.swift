@@ -8,5 +8,7 @@ protocol NoteServiceProtocol {
     func upsertPrimaryNote(text: String, timestamp: TimeInterval)
     func updateNote(id: UUID, newText: String)
     func deleteNote(id: UUID)
-    func clearSession()
+    /// `false` when refused because the session is the live recording (TAB-113).
+    @discardableResult
+    func clearSession() -> Bool
 } 

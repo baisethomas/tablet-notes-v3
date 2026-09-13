@@ -254,13 +254,17 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         saveNotesToPersistence()
     }
     
-    func clearSession() {
+    /// Retires the session and wipes its notes. Returns `false` — and does
+    /// nothing — when the session belongs to the recording in progress
+    /// (TAB-113); callers that rotate or re-key on a clear must branch on it.
+    @discardableResult
+    func clearSession() -> Bool {
         let key = "\(notesKey)_\(sessionId)"
         if isLiveRecordingSession {
             // Enforced here, not at the callers: every caller already has a
             // guard and one of them still lost two sermons' notes (TAB-113).
             NotesLog.logger.error("REFUSED to clear session \(self.sessionId, privacy: .public): its recording is live (holding \(self.notes.count) notes)")
-            return
+            return false
         }
         NotesLog.logger.notice("Clearing session \(self.sessionId, privacy: .public); had \(self.notes.count) notes")
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
@@ -276,5 +280,6 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
         Self.evictShared(sessionId: sessionId)
         print("[NoteService] Session cleared. Notes count now: \(notes.count)")
+        return true
     }
 }

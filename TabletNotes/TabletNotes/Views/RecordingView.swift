@@ -414,8 +414,10 @@ struct RecordingView: View {
                     // screen, so the latest text must never depend on a
                     // disappear flush or a timer that may not get to run.
                     let timestamp = currentNoteTimestamp()
-                    if firstNoteTimestamp == nil,
-                       !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        // Draft deleted: the next note starts fresh (round 2).
+                        firstNoteTimestamp = nil
+                    } else if firstNoteTimestamp == nil {
                         firstNoteTimestamp = timestamp
                     }
                     noteService.stagePrimaryNoteText(newText, timestamp: timestamp)
