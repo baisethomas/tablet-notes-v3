@@ -273,8 +273,11 @@ struct MainAppView: View {
             .onAppear {
                 // The note service refuses to retire the live recording's
                 // session (TAB-113); the recovery manifest says which one that is.
+                recordingService.fallbackNoteSessionProvider = { [noteSession] in
+                    noteSession.sessionId
+                }
                 NoteService.liveRecordingSessionProvider = { [recordingService] in
-                    recordingService.isRecording ? recordingService.activeRecoverySessionId : nil
+                    recordingService.liveNoteSessionId
                 }
                 // Inject syncService into sermonService
                 sermonService.setSyncService(syncService)
@@ -299,16 +302,14 @@ struct MainAppView: View {
                     await processingCoordinator.handleAuthStateChange(userId: newUserId)
                 }
             }
-            .onReceive(recordingService.recordingStoppedPublisher) { audioURL, wasAutoStopped in
+            .onReceive(recordingService.recordingStoppedPublisher) { stopped in
                 // Auto-stop is handled here exclusively so a duration-limit
                 // stop isn't lost while navigating to/from RecordingView
                 // (PassthroughSubject does not replay to late subscribers).
-                guard wasAutoStopped else { return }
                 transcriptionService.stopTranscription()
-                if let audioURL, let serviceType = currentRecordingServiceType {
-                    // Auto-stop already ran stopRecording(); the manifest id it
-                    // finalized is the one bound to this audio (TAB-113).
-                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
+                if let audioURL = stopped.audioURL, let serviceType = stopped.serviceType,
+                   let sessionId = stopped.sessionId {
+                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: sessionId)
                 }
             }
             .alert(

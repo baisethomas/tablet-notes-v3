@@ -31,12 +31,12 @@ class RecordingService {
     /// Deliberately a PassthroughSubject (no replay): MainAppView is the sole
     /// auto-stop save owner *because* late subscribers never see a stale stop
     /// event. A replaying subject here would double-save auto-stops.
-    let recordingStoppedPublisher: AnyPublisher<(URL?, Bool), Never>
+    let recordingStoppedPublisher: AnyPublisher<AutoStoppedRecording, Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
     private let audioFileNameSubject = CurrentValueSubject<String?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
-    private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
+    private let recordingStoppedSubject = PassthroughSubject<AutoStoppedRecording, Never>()
 
     private var durationTask: Task<Void, Never>?
     private let authManager: AuthenticationManager
@@ -45,12 +45,24 @@ class RecordingService {
     /// manifest (TAB-113): the authoritative answer to "whose notes are these?"
     /// for the audio being captured. `nil` when not recording.
     private(set) var activeRecoverySessionId: String?
-    /// The manifest session id of the recording that `stopRecording()` most
-    /// recently finalized (TAB-113). `stopRecording()` clears
-    /// `activeRecoverySessionId` before the synchronous auto-stop subscriber
-    /// saves. Deferred saves must use `stopRecordingForSave` instead: this
-    /// property can be reset or replaced by a subsequent recording.
+    /// Diagnostic lifecycle state only; save owners carry their own snapshot.
     private(set) var lastRecordingSessionId: String?
+    private var activeServiceType: String?
+
+    /// MainAppView supplies its stable session owner for legacy captures that
+    /// have no prepared manifest. Resolve it before publishing a stop event.
+    @MainActor var fallbackNoteSessionProvider: () -> String? = { nil }
+
+    @MainActor var liveNoteSessionId: String? {
+        guard isRecording else { return nil }
+        return activeRecoverySessionId ?? fallbackNoteSessionProvider()
+    }
+
+    struct AutoStoppedRecording: Sendable {
+        let audioURL: URL?
+        let sessionId: String?
+        let serviceType: String?
+    }
 
     init(
         captureEngine: (any AudioCapturing)? = nil,
@@ -134,6 +146,7 @@ class RecordingService {
             throw RecordingError.recordingFailed
         }
 
+        activeServiceType = serviceType
         recordingURL = started.url
         // Synchronous — no await between engine start and this save. An
         // interruption or termination in that gap would otherwise leave an
@@ -195,6 +208,7 @@ class RecordingService {
         // Exactly this recording's manifest id — nil when none was prepared,
         // so the save owner falls back to the view session rather than a
         // previous recording's id (TAB-113 round 4).
+        activeServiceType = nil
         lastRecordingSessionId = activeRecoverySessionId
         activeRecoverySessionId = nil
         recoveryStore.clear()
@@ -282,10 +296,19 @@ class RecordingService {
                 // The engine has already finalized the file. Emit a stop so
                 // the auto-stop save owner (MainAppView) persists the partial
                 // recording instead of losing it.
-                _ = self.stopRecording()
-                self.recordingStoppedSubject.send((eventURL, true))
+                self.autoStopRecording()
             }
         }
+    }
+
+    @MainActor
+    private func autoStopRecording() {
+        let sessionId = liveNoteSessionId
+        let serviceType = activeServiceType
+        let audioURL = stopRecording()
+        recordingStoppedSubject.send(AutoStoppedRecording(
+            audioURL: audioURL, sessionId: sessionId, serviceType: serviceType
+        ))
     }
 
     // MARK: - Duration tracking
@@ -319,8 +342,7 @@ class RecordingService {
 
         if recordingDuration >= maxDuration {
             print("[RecordingService] Recording duration limit reached (\(Int(maxDuration / 60)) minutes), auto-stopping")
-            let audioURL = stopRecording()
-            recordingStoppedSubject.send((audioURL, true))
+            autoStopRecording()
         }
     }
 }

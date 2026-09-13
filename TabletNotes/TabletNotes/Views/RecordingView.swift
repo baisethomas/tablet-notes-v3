@@ -119,16 +119,14 @@ struct RecordingView: View {
                 isPaused = paused
             }
         }
-        .onReceive(recordingService.recordingStoppedPublisher) { (audioURL, wasAutoStopped) in
-            if wasAutoStopped {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                    isPaused = false
-                    isRecordingStarted = false
-                }
-                transcriptionService.stopTranscription()
-                // MainAppView owns auto-stop save/processing so the sermon
-                // isn't lost during navigation transitions to this screen.
+        .onReceive(recordingService.recordingStoppedPublisher) { _ in
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                isPaused = false
+                isRecordingStarted = false
             }
+            transcriptionService.stopTranscription()
+            // MainAppView owns auto-stop save/processing so the sermon
+            // isn't lost during navigation transitions to this screen.
         }
         .onReceive(recordingService.audioFileURLPublisher) { url in
             audioFileURL = url
