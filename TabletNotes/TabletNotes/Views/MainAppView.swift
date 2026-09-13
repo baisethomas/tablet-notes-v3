@@ -125,9 +125,6 @@ struct MainAppView: View {
                                 onStop: {
                                     // Stop recording and process
                                     Task {
-                                        // The manifest's session id is the one bound to this
-                                        // audio; read it BEFORE stop clears it (TAB-113).
-                                        let manifestSessionId = recordingService.activeRecoverySessionId
                                         // Stop the recording and get the audio URL
                                         let audioURL = recordingService.stopRecording()
                                         print("[MiniPlayer] Recording stopped")
@@ -138,7 +135,9 @@ struct MainAppView: View {
 
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: manifestSessionId)
+                                                // Save under the manifest session bound to this
+                                                // audio, not the view-level id (TAB-113).
+                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
                                             }
                                         }
                                     }
@@ -220,7 +219,9 @@ struct MainAppView: View {
 
                                 await MainActor.run {
                                     if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                        saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                                        // Save under the manifest session bound to this
+                                        // audio, not the view-level id (TAB-113).
+                                        saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
                                     }
                                 }
                             }
@@ -307,7 +308,9 @@ struct MainAppView: View {
                 guard wasAutoStopped else { return }
                 transcriptionService.stopTranscription()
                 if let audioURL, let serviceType = currentRecordingServiceType {
-                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                    // Auto-stop already ran stopRecording(); the manifest id it
+                    // finalized is the one bound to this audio (TAB-113).
+                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
                 }
             }
             .alert(

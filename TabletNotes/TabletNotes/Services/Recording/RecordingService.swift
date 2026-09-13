@@ -45,6 +45,11 @@ class RecordingService {
     /// manifest (TAB-113): the authoritative answer to "whose notes are these?"
     /// for the audio being captured. `nil` when not recording.
     private(set) var activeRecoverySessionId: String?
+    /// The manifest session id of the recording that `stopRecording()` most
+    /// recently finalized (TAB-113). `stopRecording()` clears
+    /// `activeRecoverySessionId` before any save can run, so every save owner
+    /// (mini-players, auto-stop) reads this instead of the view-level id.
+    private(set) var lastRecordingSessionId: String?
 
     init(
         captureEngine: (any AudioCapturing)? = nil,
@@ -168,6 +173,9 @@ class RecordingService {
         recordingDuration = 0
         remainingTime = nil
         cachedMaxDuration = nil
+        if let activeRecoverySessionId {
+            lastRecordingSessionId = activeRecoverySessionId
+        }
         activeRecoverySessionId = nil
         recoveryStore.clear()
 
