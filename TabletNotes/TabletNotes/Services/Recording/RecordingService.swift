@@ -41,7 +41,10 @@ class RecordingService {
     private var durationTask: Task<Void, Never>?
     private let authManager: AuthenticationManager
     private let recoveryStore: InterruptedRecordingRecoveryStore
-    private var activeRecoverySessionId: String?
+    /// The note-session id bound to the recording in progress via its recovery
+    /// manifest (TAB-113): the authoritative answer to "whose notes are these?"
+    /// for the audio being captured. `nil` when not recording.
+    private(set) var activeRecoverySessionId: String?
 
     init(
         captureEngine: (any AudioCapturing)? = nil,

@@ -60,6 +60,9 @@ struct RecordingView: View {
     @State private var isRecordingStarted = false
     @State private var isPaused = false
     @State private var noteText: String = ""
+    /// Recording offset of the first keystroke of this session's note, so a
+    /// note rebuilt from the editor at stop (TAB-113) keeps its real position.
+    @State private var firstNoteTimestamp: TimeInterval? = nil
     @State private var lastKnownRecordingDuration: TimeInterval = 0
     @State private var noteSaveTask: Task<Void, Never>? = nil
     @State private var transcriptAnalysisTask: Task<Void, Never>? = nil
@@ -410,7 +413,12 @@ struct RecordingView: View {
                     // persist on a debounce (TAB-109): the service outlives this
                     // screen, so the latest text must never depend on a
                     // disappear flush or a timer that may not get to run.
-                    noteService.stagePrimaryNoteText(newText, timestamp: currentNoteTimestamp())
+                    let timestamp = currentNoteTimestamp()
+                    if firstNoteTimestamp == nil,
+                       !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        firstNoteTimestamp = timestamp
+                    }
+                    noteService.stagePrimaryNoteText(newText, timestamp: timestamp)
                     scheduleNoteSave(newText)
                 }
             }
@@ -743,7 +751,15 @@ struct RecordingView: View {
         // 500ms (e.g. before an auto-stop) is included in the saved sermon.
         noteSaveTask?.cancel()
         saveNoteText(noteText)
-        let latestNotes = noteService.currentNotes
+        // Never save fewer notes than the user can see (TAB-113): if the
+        // service was retired underneath this screen it holds nothing, but
+        // the editor still has the note.
+        let latestNotes = RecordingNoteCapture.notesForSave(
+            serviceNotes: noteService.currentNotes,
+            editorText: noteText,
+            fallbackTimestamp: firstNoteTimestamp ?? currentNoteTimestamp()
+        )
+        NotesLog.logger.notice("Stop from recording screen: session \(noteService.sessionId, privacy: .public) saving \(latestNotes.count) note(s); editor holds \(noteText.count) chars")
         processingCoordinator.handleCompletedRecording(
             audioURL: url,
             title: title,

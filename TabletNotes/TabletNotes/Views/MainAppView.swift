@@ -125,6 +125,9 @@ struct MainAppView: View {
                                 onStop: {
                                     // Stop recording and process
                                     Task {
+                                        // The manifest's session id is the one bound to this
+                                        // audio; read it BEFORE stop clears it (TAB-113).
+                                        let manifestSessionId = recordingService.activeRecoverySessionId
                                         // Stop the recording and get the audio URL
                                         let audioURL = recordingService.stopRecording()
                                         print("[MiniPlayer] Recording stopped")
@@ -135,7 +138,7 @@ struct MainAppView: View {
 
                                         await MainActor.run {
                                             if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: manifestSessionId)
                                             }
                                         }
                                     }
@@ -269,6 +272,11 @@ struct MainAppView: View {
 
             }
             .onAppear {
+                // The note service refuses to retire the live recording's
+                // session (TAB-113); the recovery manifest says which one that is.
+                NoteService.liveRecordingSessionProvider = { [recordingService] in
+                    recordingService.isRecording ? recordingService.activeRecoverySessionId : nil
+                }
                 // Inject syncService into sermonService
                 sermonService.setSyncService(syncService)
                 processingCoordinator.configure(
@@ -580,6 +588,7 @@ struct MainAppView: View {
         let noteService = NoteService.shared(for: sessionId)
         noteService.flushPersistedNotes()
         let notes = noteService.currentNotes
+        NotesLog.logger.notice("Stop from mini-player: session \(sessionId, privacy: .public) (view session \(noteSession.sessionId, privacy: .public)) saving \(notes.count) note(s)")
 
         processingCoordinator.handleCompletedRecording(
             audioURL: audioURL,

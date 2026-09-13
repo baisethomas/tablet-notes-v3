@@ -45,6 +45,7 @@ final class RecordingNoteSession {
     func begin() -> String {
         let previous = sessionId
         sessionId = UUID().uuidString
+        NotesLog.logger.notice("Began session \(self.sessionId, privacy: .public) (previous \(previous, privacy: .public))")
         print("[RecordingNoteSession] Began session \(sessionId) (previous \(previous))")
         return sessionId
     }
@@ -59,16 +60,19 @@ final class RecordingNoteSession {
     func finish(_ finishedSessionId: String, isRecordingLive: Bool) -> FinishOutcome {
         if finishedSessionId != sessionId {
             NoteService.shared(for: finishedSessionId).clearSession()
+            NotesLog.logger.notice("Finish: cleared superseded session \(finishedSessionId, privacy: .public); current \(self.sessionId, privacy: .public) untouched")
             print("[RecordingNoteSession] Cleared superseded session \(finishedSessionId); live session \(sessionId) untouched")
             return .clearedStale
         }
         if isRecordingLive {
+            NotesLog.logger.error("Finish REFUSED for session \(self.sessionId, privacy: .public): its recording is still live")
             print("[RecordingNoteSession] REFUSED to clear session \(sessionId): its recording is still live")
             return .refusedLiveRecording
         }
         NoteService.shared(for: sessionId).clearSession()
         let previous = sessionId
         sessionId = UUID().uuidString
+        NotesLog.logger.notice("Finished session \(previous, privacy: .public); next session \(self.sessionId, privacy: .public)")
         print("[RecordingNoteSession] Finished session \(previous); next session \(sessionId)")
         return .clearedAndRotated
     }

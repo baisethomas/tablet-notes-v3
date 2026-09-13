@@ -487,6 +487,7 @@ class SermonService {
             print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
 
             // Add debugging for notes
+            NotesLog.logger.notice("saveSermon \"\(title, privacy: .public)\": \(notes.count) note(s)")
             print("[DEBUG] saveSermon: Processing \(notes.count) notes")
             for (index, note) in notes.enumerated() {
                 print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s, id: \(note.id)")
