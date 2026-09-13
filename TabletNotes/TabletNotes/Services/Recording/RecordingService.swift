@@ -110,6 +110,9 @@ class RecordingService {
         }
 
         cachedMaxDuration = await getMaxRecordingDuration()
+        // A new recording must never inherit the previous one's save binding
+        // (TAB-113 round 4): nil until this recording's own stop sets it.
+        lastRecordingSessionId = nil
 
         // Resolve the recovery user id up front (AuthenticationManager is
         // @MainActor). The manifest must be written with no suspension point
@@ -173,9 +176,10 @@ class RecordingService {
         recordingDuration = 0
         remainingTime = nil
         cachedMaxDuration = nil
-        if let activeRecoverySessionId {
-            lastRecordingSessionId = activeRecoverySessionId
-        }
+        // Exactly this recording's manifest id — nil when none was prepared,
+        // so the save owner falls back to the view session rather than a
+        // previous recording's id (TAB-113 round 4).
+        lastRecordingSessionId = activeRecoverySessionId
         activeRecoverySessionId = nil
         recoveryStore.clear()
 

@@ -174,4 +174,30 @@ struct RecordingServiceFacadeTests {
         }
         #expect(service.isPaused)
     }
+
+    // MARK: - lastRecordingSessionId lifecycle (TAB-113 round 4)
+
+    /// The save owners bind a stopped recording's notes to
+    /// `lastRecordingSessionId`. It must be exactly the manifest id of the
+    /// recording that just stopped — never a previous recording's id
+    /// lingering across a start, which would attach another sermon's notes
+    /// (or an already-cleared session's empty re-mint) to the new audio.
+    @Test func lastRecordingSessionIdIsTheStoppedRecordingsManifestIdAndResetsOnStart() async throws {
+        let (service, _) = makeService()
+        #expect(service.lastRecordingSessionId == nil)
+
+        service.prepareRecoverySession(sessionId: "session-A")
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == "session-A")
+
+        // Second recording with no manifest session prepared: the stale
+        // "session-A" must not survive the start, and the stop must not
+        // resurrect it — nil tells the save owner to use the view session.
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == nil)
+    }
 }
