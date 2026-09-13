@@ -126,7 +126,8 @@ struct MainAppView: View {
                                     // Stop recording and process
                                     Task {
                                         // Stop the recording and get the audio URL
-                                        let audioURL = recordingService.stopRecording()
+                                        let serviceType = currentRecordingServiceType
+                                        let stopped = recordingService.stopRecordingForSave(fallbackSessionId: noteSession.sessionId)
                                         print("[MiniPlayer] Recording stopped")
 
                                         // Stop transcription service
@@ -134,10 +135,8 @@ struct MainAppView: View {
                                         print("[MiniPlayer] Transcription stopped")
 
                                         await MainActor.run {
-                                            if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                // Save under the manifest session bound to this
-                                                // audio, not the view-level id (TAB-113).
-                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
+                                            if let stopped, let serviceType {
+                                                saveCompletedRecording(audioURL: stopped.audioURL, serviceType: serviceType, sessionId: stopped.sessionId)
                                             }
                                         }
                                     }
@@ -210,7 +209,8 @@ struct MainAppView: View {
                             // Stop recording and process
                             Task {
                                 // Stop the recording and get the audio URL
-                                let audioURL = recordingService.stopRecording()
+                                let serviceType = currentRecordingServiceType
+                                let stopped = recordingService.stopRecordingForSave(fallbackSessionId: noteSession.sessionId)
                                 print("[MiniPlayer] Recording stopped")
 
                                 // Stop transcription service
@@ -218,10 +218,8 @@ struct MainAppView: View {
                                 print("[MiniPlayer] Transcription stopped")
 
                                 await MainActor.run {
-                                    if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                        // Save under the manifest session bound to this
-                                        // audio, not the view-level id (TAB-113).
-                                        saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: recordingService.lastRecordingSessionId)
+                                    if let stopped, let serviceType {
+                                        saveCompletedRecording(audioURL: stopped.audioURL, serviceType: serviceType, sessionId: stopped.sessionId)
                                     }
                                 }
                             }

@@ -47,8 +47,9 @@ class RecordingService {
     private(set) var activeRecoverySessionId: String?
     /// The manifest session id of the recording that `stopRecording()` most
     /// recently finalized (TAB-113). `stopRecording()` clears
-    /// `activeRecoverySessionId` before any save can run, so every save owner
-    /// (mini-players, auto-stop) reads this instead of the view-level id.
+    /// `activeRecoverySessionId` before the synchronous auto-stop subscriber
+    /// saves. Deferred saves must use `stopRecordingForSave` instead: this
+    /// property can be reset or replaced by a subsequent recording.
     private(set) var lastRecordingSessionId: String?
 
     init(
@@ -158,6 +159,21 @@ class RecordingService {
         } else {
             print("[RecordingService] Started recording with no duration limit")
         }
+    }
+
+    /// Values belonging to one completed capture, safe to retain across a
+    /// suspension even if another recording starts or stops in the meantime.
+    struct StoppedRecording: Sendable {
+        let audioURL: URL
+        let sessionId: String
+    }
+
+    func stopRecordingForSave(fallbackSessionId: String) -> StoppedRecording? {
+        // Resolve even the fallback before stop publishes state changes, and
+        // never consult lastRecordingSessionId after yielding to save work.
+        let sessionId = activeRecoverySessionId ?? fallbackSessionId
+        guard let audioURL = stopRecording() else { return nil }
+        return StoppedRecording(audioURL: audioURL, sessionId: sessionId)
     }
 
     func stopRecording() -> URL? {

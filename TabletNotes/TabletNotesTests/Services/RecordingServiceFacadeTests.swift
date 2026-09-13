@@ -177,6 +177,54 @@ struct RecordingServiceFacadeTests {
 
     // MARK: - lastRecordingSessionId lifecycle (TAB-113 round 4)
 
+    @Test(arguments: [true, false])
+    func delayedSaveKeepsStoppedAudioAndNotesAcrossAnotherRecording(hasManifest: Bool) async throws {
+        let (service, engine) = makeService()
+        let firstSession = UUID().uuidString
+        let secondSession = UUID().uuidString
+        defer {
+            NoteService.shared(for: firstSession).clearSession()
+            NoteService.shared(for: secondSession).clearSession()
+        }
+        NoteService.shared(for: firstSession).stagePrimaryNoteText("First sermon", timestamp: 12)
+        NoteService.shared(for: secondSession).stagePrimaryNoteText("Second sermon", timestamp: 24)
+
+        engine.stubbedFileName = "first-sermon.m4a"
+        if hasManifest {
+            service.prepareRecoverySession(sessionId: firstSession)
+        }
+        try await service.startRecording(serviceType: "Sunday Service")
+        let firstURL = try #require(engine.lastStartedURL)
+        // With a manifest, deliberately pass the wrong view id. Without a
+        // manifest, the fallback must be captured before the view moves on.
+        let stopped = try #require(service.stopRecordingForSave(
+            fallbackSessionId: hasManifest ? secondSession : firstSession
+        ))
+
+        let (saveGate, releaseSave) = AsyncStream<Void>.makeStream()
+        let delayedSave = Task { @MainActor in
+            for await _ in saveGate { break }
+            let notes = NoteService.shared(for: stopped.sessionId).currentNotes
+            return (stopped.audioURL, notes.map(\.text))
+        }
+
+        // Hold A's save until B has both reset and replaced the mutable
+        // lastRecordingSessionId. No timing sleeps: the gate fixes the order.
+        engine.stubbedFileName = "second-sermon.m4a"
+        service.prepareRecoverySession(sessionId: secondSession)
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == secondSession)
+        releaseSave.yield(())
+        releaseSave.finish()
+
+        let (savedURL, savedTexts) = await delayedSave.value
+        #expect(stopped.sessionId == firstSession)
+        #expect(savedURL == firstURL)
+        #expect(savedTexts == ["First sermon"])
+    }
+
     /// The save owners bind a stopped recording's notes to
     /// `lastRecordingSessionId`. It must be exactly the manifest id of the
     /// recording that just stopped — never a previous recording's id
