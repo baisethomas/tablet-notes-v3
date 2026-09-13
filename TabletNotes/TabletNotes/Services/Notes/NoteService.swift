@@ -32,6 +32,18 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     /// bounded by recording sessions per process launch.
     private static var retiredSessionIds: Set<String> = []
 
+    /// Answers "which session belongs to the recording in progress right now?"
+    /// — `nil` when nothing is recording (TAB-113). MainAppView wires this to
+    /// the recording service's recovery-manifest session id. `clearSession()`
+    /// refuses to retire that session no matter who asks: a retired live
+    /// session drops every keystroke silently while the editor keeps showing
+    /// the note, and the stop then saves nothing (9/6, 9/13).
+    static var liveRecordingSessionProvider: () -> String? = { nil }
+
+    private var isLiveRecordingSession: Bool {
+        Self.liveRecordingSessionProvider() == sessionId
+    }
+
     private var isRetired: Bool {
         Self.retiredSessionIds.contains(sessionId)
     }
@@ -109,6 +121,7 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
         let service = NoteService(sessionId: sessionId)
         sharedInstances[sessionId] = service
+        NotesLog.logger.notice("Minted service for session \(sessionId, privacy: .public) (loaded \(service.notes.count) persisted notes; retired: \(retiredSessionIds.contains(sessionId)))")
         print("[NoteService] Minted instance for session \(sessionId) (loaded \(service.notes.count) persisted notes)")
         return service
     }
@@ -149,7 +162,10 @@ class NoteService: NoteServiceProtocol, ObservableObject {
     /// accepts nothing.
     @discardableResult
     func stagePrimaryNoteText(_ text: String, timestamp: TimeInterval) -> Bool {
-        guard !isRetired else { return false }
+        guard !isRetired else {
+            NotesLog.logger.error("Refused note text (\(text.count) chars) for retired session \(self.sessionId, privacy: .public)")
+            return false
+        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let idx = notes.indices.first {
             let newText = trimmed.isEmpty ? " " : trimmed
@@ -238,8 +254,19 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         saveNotesToPersistence()
     }
     
-    func clearSession() {
+    /// Retires the session and wipes its notes. Returns `false` — and does
+    /// nothing — when the session belongs to the recording in progress
+    /// (TAB-113); callers that rotate or re-key on a clear must branch on it.
+    @discardableResult
+    func clearSession() -> Bool {
         let key = "\(notesKey)_\(sessionId)"
+        if isLiveRecordingSession {
+            // Enforced here, not at the callers: every caller already has a
+            // guard and one of them still lost two sermons' notes (TAB-113).
+            NotesLog.logger.error("REFUSED to clear session \(self.sessionId, privacy: .public): its recording is live (holding \(self.notes.count) notes)")
+            return false
+        }
+        NotesLog.logger.notice("Clearing session \(self.sessionId, privacy: .public); had \(self.notes.count) notes")
         print("[NoteService] Clearing session with key: \(key). Had \(notes.count) notes before clearing")
         Self.retiredSessionIds.insert(sessionId)
         notes.removeAll()
@@ -253,5 +280,6 @@ class NoteService: NoteServiceProtocol, ObservableObject {
         }
         Self.evictShared(sessionId: sessionId)
         print("[NoteService] Session cleared. Notes count now: \(notes.count)")
+        return true
     }
 }

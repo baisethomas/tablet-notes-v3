@@ -487,6 +487,9 @@ class SermonService {
             print("[SermonService] Saving sermon for user: \(currentUser.name) (ID: \(currentUser.id))")
 
             // Add debugging for notes
+            // Count only: the title is user content and stays out of the
+            // unified log (Ternary, PR #76).
+            NotesLog.logger.notice("saveSermon: \(notes.count) note(s), \(audioFileURL.lastPathComponent, privacy: .public)")
             print("[DEBUG] saveSermon: Processing \(notes.count) notes")
             for (index, note) in notes.enumerated() {
                 print("[DEBUG] Note \(index): '\(note.text)' at \(note.timestamp)s, id: \(note.id)")

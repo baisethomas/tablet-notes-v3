@@ -126,7 +126,8 @@ struct MainAppView: View {
                                     // Stop recording and process
                                     Task {
                                         // Stop the recording and get the audio URL
-                                        let audioURL = recordingService.stopRecording()
+                                        let serviceType = currentRecordingServiceType
+                                        let stopped = recordingService.stopRecordingForSave(fallbackSessionId: noteSession.sessionId)
                                         print("[MiniPlayer] Recording stopped")
 
                                         // Stop transcription service
@@ -134,8 +135,8 @@ struct MainAppView: View {
                                         print("[MiniPlayer] Transcription stopped")
 
                                         await MainActor.run {
-                                            if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                                saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                                            if let stopped, let serviceType {
+                                                saveCompletedRecording(audioURL: stopped.audioURL, serviceType: serviceType, sessionId: stopped.sessionId)
                                             }
                                         }
                                     }
@@ -208,7 +209,8 @@ struct MainAppView: View {
                             // Stop recording and process
                             Task {
                                 // Stop the recording and get the audio URL
-                                let audioURL = recordingService.stopRecording()
+                                let serviceType = currentRecordingServiceType
+                                let stopped = recordingService.stopRecordingForSave(fallbackSessionId: noteSession.sessionId)
                                 print("[MiniPlayer] Recording stopped")
 
                                 // Stop transcription service
@@ -216,8 +218,8 @@ struct MainAppView: View {
                                 print("[MiniPlayer] Transcription stopped")
 
                                 await MainActor.run {
-                                    if let audioURL = audioURL, let serviceType = currentRecordingServiceType {
-                                        saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                                    if let stopped, let serviceType {
+                                        saveCompletedRecording(audioURL: stopped.audioURL, serviceType: serviceType, sessionId: stopped.sessionId)
                                     }
                                 }
                             }
@@ -269,6 +271,14 @@ struct MainAppView: View {
 
             }
             .onAppear {
+                // The note service refuses to retire the live recording's
+                // session (TAB-113); the recovery manifest says which one that is.
+                recordingService.fallbackNoteSessionProvider = { [noteSession] in
+                    noteSession.sessionId
+                }
+                NoteService.liveRecordingSessionProvider = { [recordingService] in
+                    recordingService.liveNoteSessionId
+                }
                 // Inject syncService into sermonService
                 sermonService.setSyncService(syncService)
                 processingCoordinator.configure(
@@ -292,14 +302,14 @@ struct MainAppView: View {
                     await processingCoordinator.handleAuthStateChange(userId: newUserId)
                 }
             }
-            .onReceive(recordingService.recordingStoppedPublisher) { audioURL, wasAutoStopped in
+            .onReceive(recordingService.recordingStoppedPublisher) { stopped in
                 // Auto-stop is handled here exclusively so a duration-limit
                 // stop isn't lost while navigating to/from RecordingView
                 // (PassthroughSubject does not replay to late subscribers).
-                guard wasAutoStopped else { return }
                 transcriptionService.stopTranscription()
-                if let audioURL, let serviceType = currentRecordingServiceType {
-                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType)
+                if let audioURL = stopped.audioURL, let serviceType = stopped.serviceType,
+                   let sessionId = stopped.sessionId {
+                    saveCompletedRecording(audioURL: audioURL, serviceType: serviceType, sessionId: sessionId)
                 }
             }
             .alert(
@@ -580,6 +590,7 @@ struct MainAppView: View {
         let noteService = NoteService.shared(for: sessionId)
         noteService.flushPersistedNotes()
         let notes = noteService.currentNotes
+        NotesLog.logger.notice("Stop from mini-player: session \(sessionId, privacy: .public) (view session \(noteSession.sessionId, privacy: .public)) saving \(notes.count) note(s)")
 
         processingCoordinator.handleCompletedRecording(
             audioURL: audioURL,

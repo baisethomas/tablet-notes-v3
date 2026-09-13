@@ -79,22 +79,27 @@ struct RecordingServiceFacadeTests {
         #expect(isolated.store.load() == nil)
     }
 
-    @Test func engineFailureAutoStopsAndEmitsStopEvent() async throws {
+    @Test(arguments: [true, false])
+    func engineFailureAutoStopsAndEmitsStopEvent(hasManifest: Bool) async throws {
         let (service, engine) = makeService()
 
-        service.prepareRecoverySession(sessionId: "session-123")
+        let viewSession = RecordingNoteSession(sessionId: "session-123")
+        service.fallbackNoteSessionProvider = { viewSession.sessionId }
+        if hasManifest {
+            service.prepareRecoverySession(sessionId: "session-123")
+        }
         try await service.startRecording(serviceType: "Sunday Service")
         let startedURL = engine.lastStartedURL
 
         // Collect the auto-stop event MainAppView's save owner listens for.
         final class StopCollector: @unchecked Sendable {
             private let lock = NSLock()
-            private var _events: [(URL?, Bool)] = []
-            var events: [(URL?, Bool)] {
+            private var _events: [RecordingService.AutoStoppedRecording] = []
+            var events: [RecordingService.AutoStoppedRecording] {
                 lock.lock(); defer { lock.unlock() }
                 return _events
             }
-            func append(_ event: (URL?, Bool)) {
+            func append(_ event: RecordingService.AutoStoppedRecording) {
                 lock.lock(); defer { lock.unlock() }
                 _events.append(event)
             }
@@ -109,9 +114,23 @@ struct RecordingServiceFacadeTests {
         engine.emit(.captureFailed(url: startedURL, reason: "engine could not restart"))
 
         #expect(await eventually { collector.events.count == 1 })
-        #expect(collector.events.first?.0 == startedURL)
-        #expect(collector.events.first?.1 == true)
+        #expect(collector.events.first?.audioURL == startedURL)
+        #expect(collector.events.first?.sessionId == "session-123")
+        #expect(collector.events.first?.serviceType == "Sunday Service")
         #expect(!service.isRecording)
+
+        // Simulate delivery being held until a later recording has replaced
+        // both service state and the view's fallback session.
+        let nextSession = viewSession.begin()
+        engine.stubbedFileName = "later-sermon.m4a"
+        service.prepareRecoverySession(sessionId: nextSession)
+        try await service.startRecording(serviceType: "Bible Study")
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == nextSession)
+        let delivered = try #require(collector.events.first)
+        #expect(delivered.audioURL == startedURL)
+        #expect(delivered.sessionId == "session-123")
+        #expect(delivered.serviceType == "Sunday Service")
     }
 
     @Test func staleCaptureFailureForAnotherRecordingIsIgnored() async throws {
@@ -173,5 +192,105 @@ struct RecordingServiceFacadeTests {
             try service.resumeRecording()
         }
         #expect(service.isPaused)
+    }
+
+    @Test func liveGuardProtectsFallbackSessionWithoutManifest() {
+        let (service, _) = makeService()
+        let session = RecordingNoteSession()
+        service.fallbackNoteSessionProvider = { session.sessionId }
+        let previous = NoteService.liveRecordingSessionProvider
+        NoteService.liveRecordingSessionProvider = { service.liveNoteSessionId }
+        defer {
+            NoteService.liveRecordingSessionProvider = previous
+            NoteService.shared(for: session.sessionId).clearSession()
+        }
+        let notes = session.noteService
+        notes.stagePrimaryNoteText("Live fallback note", timestamp: 15)
+        #expect(service.liveNoteSessionId == nil)
+        service.isRecording = true
+        service.isPaused = true
+        #expect(service.activeRecoverySessionId == nil)
+        #expect(service.liveNoteSessionId == session.sessionId)
+        #expect(!notes.clearSession())
+        #expect(session.finish(session.sessionId, isRecordingLive: false) == .refusedLiveRecording)
+        #expect(notes.currentNotes.first?.text == "Live fallback note")
+        #expect(notes.stagePrimaryNoteText("Later keystrokes survive", timestamp: 20))
+        service.isRecording = false
+        #expect(service.liveNoteSessionId == nil)
+        #expect(notes.clearSession())
+    }
+
+    // MARK: - lastRecordingSessionId lifecycle (TAB-113 round 4)
+
+    @Test(arguments: [true, false])
+    func delayedSaveKeepsStoppedAudioAndNotesAcrossAnotherRecording(hasManifest: Bool) async throws {
+        let (service, engine) = makeService()
+        let firstSession = UUID().uuidString
+        let secondSession = UUID().uuidString
+        defer {
+            NoteService.shared(for: firstSession).clearSession()
+            NoteService.shared(for: secondSession).clearSession()
+        }
+        NoteService.shared(for: firstSession).stagePrimaryNoteText("First sermon", timestamp: 12)
+        NoteService.shared(for: secondSession).stagePrimaryNoteText("Second sermon", timestamp: 24)
+
+        engine.stubbedFileName = "first-sermon.m4a"
+        if hasManifest {
+            service.prepareRecoverySession(sessionId: firstSession)
+        }
+        try await service.startRecording(serviceType: "Sunday Service")
+        let firstURL = try #require(engine.lastStartedURL)
+        // With a manifest, deliberately pass the wrong view id. Without a
+        // manifest, the fallback must be captured before the view moves on.
+        let stopped = try #require(service.stopRecordingForSave(
+            fallbackSessionId: hasManifest ? secondSession : firstSession
+        ))
+
+        let (saveGate, releaseSave) = AsyncStream<Void>.makeStream()
+        let delayedSave = Task { @MainActor in
+            for await _ in saveGate { break }
+            let notes = NoteService.shared(for: stopped.sessionId).currentNotes
+            return (stopped.audioURL, notes.map(\.text))
+        }
+
+        // Hold A's save until B has both reset and replaced the mutable
+        // lastRecordingSessionId. No timing sleeps: the gate fixes the order.
+        engine.stubbedFileName = "second-sermon.m4a"
+        service.prepareRecoverySession(sessionId: secondSession)
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == secondSession)
+        releaseSave.yield(())
+        releaseSave.finish()
+
+        let (savedURL, savedTexts) = await delayedSave.value
+        #expect(stopped.sessionId == firstSession)
+        #expect(savedURL == firstURL)
+        #expect(savedTexts == ["First sermon"])
+    }
+
+    /// The save owners bind a stopped recording's notes to
+    /// `lastRecordingSessionId`. It must be exactly the manifest id of the
+    /// recording that just stopped — never a previous recording's id
+    /// lingering across a start, which would attach another sermon's notes
+    /// (or an already-cleared session's empty re-mint) to the new audio.
+    @Test func lastRecordingSessionIdIsTheStoppedRecordingsManifestIdAndResetsOnStart() async throws {
+        let (service, _) = makeService()
+        #expect(service.lastRecordingSessionId == nil)
+
+        service.prepareRecoverySession(sessionId: "session-A")
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == "session-A")
+
+        // Second recording with no manifest session prepared: the stale
+        // "session-A" must not survive the start, and the stop must not
+        // resurrect it — nil tells the save owner to use the view session.
+        try await service.startRecording(serviceType: "Sunday Service")
+        #expect(service.lastRecordingSessionId == nil)
+        _ = service.stopRecording()
+        #expect(service.lastRecordingSessionId == nil)
     }
 }

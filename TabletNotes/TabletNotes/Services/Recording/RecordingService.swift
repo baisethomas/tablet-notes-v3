@@ -31,17 +31,38 @@ class RecordingService {
     /// Deliberately a PassthroughSubject (no replay): MainAppView is the sole
     /// auto-stop save owner *because* late subscribers never see a stale stop
     /// event. A replaying subject here would double-save auto-stops.
-    let recordingStoppedPublisher: AnyPublisher<(URL?, Bool), Never>
+    let recordingStoppedPublisher: AnyPublisher<AutoStoppedRecording, Never>
     private let isRecordingSubject = CurrentValueSubject<Bool, Never>(false)
     private let audioFileURLSubject = CurrentValueSubject<URL?, Never>(nil)
     private let audioFileNameSubject = CurrentValueSubject<String?, Never>(nil)
     private let isPausedSubject = CurrentValueSubject<Bool, Never>(false)
-    private let recordingStoppedSubject = PassthroughSubject<(URL?, Bool), Never>()
+    private let recordingStoppedSubject = PassthroughSubject<AutoStoppedRecording, Never>()
 
     private var durationTask: Task<Void, Never>?
     private let authManager: AuthenticationManager
     private let recoveryStore: InterruptedRecordingRecoveryStore
-    private var activeRecoverySessionId: String?
+    /// The note-session id bound to the recording in progress via its recovery
+    /// manifest (TAB-113): the authoritative answer to "whose notes are these?"
+    /// for the audio being captured. `nil` when not recording.
+    private(set) var activeRecoverySessionId: String?
+    /// Diagnostic lifecycle state only; save owners carry their own snapshot.
+    private(set) var lastRecordingSessionId: String?
+    private var activeServiceType: String?
+
+    /// MainAppView supplies its stable session owner for legacy captures that
+    /// have no prepared manifest. Resolve it before publishing a stop event.
+    @MainActor var fallbackNoteSessionProvider: () -> String? = { nil }
+
+    @MainActor var liveNoteSessionId: String? {
+        guard isRecording else { return nil }
+        return activeRecoverySessionId ?? fallbackNoteSessionProvider()
+    }
+
+    struct AutoStoppedRecording: Sendable {
+        let audioURL: URL?
+        let sessionId: String?
+        let serviceType: String?
+    }
 
     init(
         captureEngine: (any AudioCapturing)? = nil,
@@ -102,6 +123,9 @@ class RecordingService {
         }
 
         cachedMaxDuration = await getMaxRecordingDuration()
+        // A new recording must never inherit the previous one's save binding
+        // (TAB-113 round 4): nil until this recording's own stop sets it.
+        lastRecordingSessionId = nil
 
         // Resolve the recovery user id up front (AuthenticationManager is
         // @MainActor). The manifest must be written with no suspension point
@@ -122,6 +146,7 @@ class RecordingService {
             throw RecordingError.recordingFailed
         }
 
+        activeServiceType = serviceType
         recordingURL = started.url
         // Synchronous — no await between engine start and this save. An
         // interruption or termination in that gap would otherwise leave an
@@ -149,6 +174,21 @@ class RecordingService {
         }
     }
 
+    /// Values belonging to one completed capture, safe to retain across a
+    /// suspension even if another recording starts or stops in the meantime.
+    struct StoppedRecording: Sendable {
+        let audioURL: URL
+        let sessionId: String
+    }
+
+    func stopRecordingForSave(fallbackSessionId: String) -> StoppedRecording? {
+        // Resolve even the fallback before stop publishes state changes, and
+        // never consult lastRecordingSessionId after yielding to save work.
+        let sessionId = activeRecoverySessionId ?? fallbackSessionId
+        guard let audioURL = stopRecording() else { return nil }
+        return StoppedRecording(audioURL: audioURL, sessionId: sessionId)
+    }
+
     func stopRecording() -> URL? {
         // Engine stop is synchronous and finalizes the m4a before returning —
         // callers hand the URL straight to the save/transcribe pipeline.
@@ -165,6 +205,11 @@ class RecordingService {
         recordingDuration = 0
         remainingTime = nil
         cachedMaxDuration = nil
+        // Exactly this recording's manifest id — nil when none was prepared,
+        // so the save owner falls back to the view session rather than a
+        // previous recording's id (TAB-113 round 4).
+        activeServiceType = nil
+        lastRecordingSessionId = activeRecoverySessionId
         activeRecoverySessionId = nil
         recoveryStore.clear()
 
@@ -251,10 +296,19 @@ class RecordingService {
                 // The engine has already finalized the file. Emit a stop so
                 // the auto-stop save owner (MainAppView) persists the partial
                 // recording instead of losing it.
-                _ = self.stopRecording()
-                self.recordingStoppedSubject.send((eventURL, true))
+                self.autoStopRecording()
             }
         }
+    }
+
+    @MainActor
+    private func autoStopRecording() {
+        let sessionId = liveNoteSessionId
+        let serviceType = activeServiceType
+        let audioURL = stopRecording()
+        recordingStoppedSubject.send(AutoStoppedRecording(
+            audioURL: audioURL, sessionId: sessionId, serviceType: serviceType
+        ))
     }
 
     // MARK: - Duration tracking
@@ -288,8 +342,7 @@ class RecordingService {
 
         if recordingDuration >= maxDuration {
             print("[RecordingService] Recording duration limit reached (\(Int(maxDuration / 60)) minutes), auto-stopping")
-            let audioURL = stopRecording()
-            recordingStoppedSubject.send((audioURL, true))
+            autoStopRecording()
         }
     }
 }
