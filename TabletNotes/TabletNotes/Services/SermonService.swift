@@ -1265,6 +1265,18 @@ class SermonService {
 
         guard let manifest = recoveryStore.load() else { return }
 
+        // A manifest whose session is the recording in progress is not an
+        // interrupted recording (TAB-114). This scan ran mid-recording from a
+        // SermonService built by a re-entrant MainAppView.init on foreground:
+        // it deleted the live manifest (crash recovery gone for the rest of
+        // the recording) and cleared the live note session (the TAB-113
+        // note loss). Leave both alone; a stop clears the manifest itself.
+        if let live = NoteService.liveRecordingSessionProvider(), live == manifest.sessionId {
+            NotesLog.logger.error("Recovery scan skipped: manifest session \(manifest.sessionId, privacy: .public) is the recording in progress (TAB-114)")
+            print("[SermonService] Skipping interrupted recording recovery — manifest belongs to the live recording")
+            return
+        }
+
         guard let activeUserId = activeUser?.id else {
             print("[SermonService] Skipping interrupted recording recovery — no signed-in user")
             return

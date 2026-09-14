@@ -19,6 +19,12 @@ struct TabletNotesApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     let container: ModelContainer
     let modelContext: ModelContext
+    /// Built exactly once, here, for the life of the process (TAB-114).
+    /// MainAppView used to construct these in its own init, which re-runs on
+    /// every parent re-render; the throwaway SermonService's recovery scan
+    /// then deleted the live recording's manifest and cleared its notes.
+    let sermonService: SermonService
+    let syncService: SyncService
     @StateObject private var deepLinkHandler = DeepLinkHandler()
     
     init() {
@@ -85,11 +91,17 @@ struct TabletNotesApp: App {
 
         modelContext = ModelContext(container)
         AppStoreScreenshotSeed.seedIfNeeded(in: modelContext)
+        sermonService = SermonService(modelContext: modelContext)
+        syncService = SyncService(
+            modelContext: modelContext,
+            supabaseService: SupabaseService.shared,
+            authService: AuthenticationManager.shared
+        )
     }
 
     var body: some Scene {
         WindowGroup {
-            MainAppView(modelContext: modelContext)
+            MainAppView(modelContext: modelContext, sermonService: sermonService, syncService: syncService)
                 .requiresAuthentication()
                 .environment(\.authManager, AuthenticationManager.shared)
                 .environmentObject(deepLinkHandler)

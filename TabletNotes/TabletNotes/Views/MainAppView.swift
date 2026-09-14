@@ -58,16 +58,16 @@ struct MainAppView: View {
         let sessionId: String
     }
 
-    init(modelContext: ModelContext) {
+    /// The services are built ONCE by the app root and handed in (TAB-114).
+    /// This initializer re-runs on every parent re-render (a foreground auth
+    /// recheck is enough); `State(initialValue:)` keeps only the first value,
+    /// but constructing a SermonService here still ran its side effects —
+    /// fetch, interrupted-recording scan, auth observers — on a throwaway
+    /// instance, mid-recording. Nothing with side effects may be built here.
+    init(modelContext: ModelContext, sermonService: SermonService, syncService: SyncService) {
         self.modelContext = modelContext
-        let sermonSvc = SermonService(modelContext: modelContext)
-        _sermonService = State(initialValue: sermonSvc)
-        let syncSvc = SyncService(
-            modelContext: modelContext,
-            supabaseService: SupabaseService.shared,
-            authService: AuthenticationManager.shared
-        )
-        _syncService = State(initialValue: syncSvc)
+        _sermonService = State(initialValue: sermonService)
+        _syncService = State(initialValue: syncService)
         _backgroundSyncManager = StateObject(
             wrappedValue: BackgroundSyncManager(processingCoordinator: SermonProcessingCoordinator.shared)
         )
@@ -615,5 +615,14 @@ struct MainAppView: View {
 
 #Preview {
     let container = try! ModelContainer(for: Sermon.self, Note.self, Transcript.self, Summary.self, ProcessingJob.self, TranscriptSegment.self)
-    MainAppView(modelContext: ModelContext(container))
+    let modelContext = ModelContext(container)
+    MainAppView(
+        modelContext: modelContext,
+        sermonService: SermonService(modelContext: modelContext),
+        syncService: SyncService(
+            modelContext: modelContext,
+            supabaseService: SupabaseService.shared,
+            authService: AuthenticationManager.shared
+        )
+    )
 } 
