@@ -113,9 +113,6 @@ export default function Home() {
             </p>
             <div className="hero-actions">
               <DownloadLink />
-              <a className="text-link" href="#launch-film">
-                Watch the film <span aria-hidden="true">↗</span>
-              </a>
             </div>
             <p className="availability">
               Free to start <span>·</span> iPhone &amp; iPad
