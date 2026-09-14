@@ -1,25 +1,37 @@
-import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: 'Tablet Notes — Write it on the tablet of your heart.',
+  metadataBase: new URL("https://www.tabletnotes.io"),
+  title: "Tablet Notes — Keep the message with you.",
   description:
-    'A focused note-taking platform designed for sermon reflection and lasting retention. Coming to iPhone.',
-}
+    "Record sermons, take timestamped notes, and revisit the message with transcripts, summaries, and AI Chat. Available now for iPhone and iPad.",
+  openGraph: {
+    title: "Tablet Notes — Keep the message with you.",
+    description:
+      "Your sermon recordings, notes, and reflections. Together in one place. Now on the App Store.",
+    url: "https://www.tabletnotes.io",
+    siteName: "Tablet Notes",
+    type: "website",
+  },
+  twitter: { card: "summary_large_image" },
+  appleWebApp: { title: "Tablet Notes" },
+  itunes: { appId: "6748637379" },
+};
 
 export const viewport: Viewport = {
-  themeColor: '#1F1F23',
-  width: 'device-width',
+  themeColor: "#F7F3EA",
+  width: "device-width",
   initialScale: 1,
-}
+};
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
     <html lang="en" className={inter.variable}>
@@ -28,5 +40,5 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">{children}</body>
     </html>
-  )
+  );
 }

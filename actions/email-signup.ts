@@ -101,7 +101,7 @@ export async function subscribeToNewsletter(formData: FormData) {
     if (error instanceof z.ZodError) {
       return {
         success: false,
-        message: error.errors[0].message || "Please check your information and try again.",
+        message: error.issues[0]?.message || "Please check your information and try again.",
       }
     }
 
