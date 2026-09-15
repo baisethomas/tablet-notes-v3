@@ -5,7 +5,7 @@ describe the production database (several contradict each other and prod —
 e.g. `notes.timestamp` is `INTEGER` in prod, `DOUBLE PRECISION` here), and
 they must never be executed against any environment.
 
-Current schema truth, per `TabletNotes/CLAUDE.md` §2/§8:
+Current schema truth, per `docs/OPERATING-MANUAL.md` §2/§8:
 1. the live Supabase database (read-only queries), and
 2. `supabase/migrations/` — the only place new schema changes land.
 

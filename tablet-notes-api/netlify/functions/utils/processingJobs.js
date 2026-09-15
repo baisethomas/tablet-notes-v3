@@ -2,7 +2,7 @@
  * processing_jobs helpers (TAB-72).
  *
  * Pure/near-pure logic lives here so it is unit-testable — Netlify function
- * handlers themselves have no test harness (CLAUDE.md §10: extract to test).
+ * handlers themselves have no test harness (docs/OPERATING-MANUAL.md §10: extract to test).
  */
 
 const {
@@ -324,7 +324,7 @@ function secretMatches(provided, expected) {
  * A deliberate retry may still revive it. Nothing else may.
  *
  * Extracted here rather than written inline in `jobs.js` because functions are
- * not directly testable (CLAUDE.md §10) — and the first version of this logic
+ * not directly testable (docs/OPERATING-MANUAL.md §10) — and the first version of this logic
  * shipped a `ReferenceError` past a green suite precisely because the test
  * asserted on the source text instead of calling anything.
  */

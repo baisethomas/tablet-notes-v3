@@ -16,7 +16,7 @@ The owner's invariant: **one issue = one branch = one PR, owner reviews and merg
    gh pr list --state all --search "TAB-NN"
    git branch -a | grep -i "tab-nn"
    ```
-3. If the issue references a phase plan, read it (`docs/superpowers/plans/`). If it references prod symptoms ("61 stuck sermons", "notes not syncing"), verify the symptom with a read-only prod query (see CLAUDE.md §8) **before** designing a fix — several issues here turned out to have a different root cause than the issue text assumed.
+3. If the issue references a phase plan, read it (`docs/superpowers/plans/`). If it references prod symptoms ("61 stuck sermons", "notes not syncing"), verify the symptom with a read-only prod query (see docs/OPERATING-MANUAL.md §8) **before** designing a fix — several issues here turned out to have a different root cause than the issue text assumed.
 4. Restate the root cause in one sentence. If you cannot, you are not ready to implement — keep diagnosing.
 
 **Exit gate:** you can say what's broken, why, which files own it, and what "fixed" observably looks like.
@@ -36,7 +36,7 @@ Scope discipline:
 - Touch only what the issue needs. Unrelated bug found → flag it (new Linear issue or spawn_task with file paths), do not fix it here.
 - Backend + client fix pairs are allowed in one PR when they're the same issue (e.g. TAB-56 rounded timestamps on both sides) — same issue, same PR is fine; second issue, second PR.
 
-Binding constraints (full list in CLAUDE.md §5–6; the ones violated most):
+Binding constraints (full list in docs/OPERATING-MANUAL.md §5–6; the ones violated most):
 - No `MainActor.assumeIsolated`; no `AnyView`; no `@StateObject`/`@ObservedObject` on `@Observable`.
 - Touching a `@Model` = migration event → note it now for the PR body.
 - Backend: never return 2xx on partial failure; never delete-before-insert; fail closed; validate + rate-limit new endpoints.
@@ -118,6 +118,6 @@ Owner review rounds are the norm (TAB-53 took five). For each round:
 
 ## Phase 6 — After merge
 
-- Backend files changed → the code **auto-deploys on merge** (CLAUDE.md §7), so it is usually already live. What does NOT ride along is migrations, env vars and flags — and their absence is silent, because the code fails closed. Verify the prerequisites actually landed rather than assuming either way, and track any unmet one as deploy debt (see `deploy-api` skill). Update the Linear issue: merged @ sha, plus what is still gated.
+- Backend files changed → the code **auto-deploys on merge** (docs/OPERATING-MANUAL.md §7), so it is usually already live. What does NOT ride along is migrations, env vars and flags — and their absence is silent, because the code fails closed. Verify the prerequisites actually landed rather than assuming either way, and track any unmet one as deploy debt (see `deploy-api` skill). Update the Linear issue: merged @ sha, plus what is still gated.
 - Client-only → note which build/TestFlight it lands in.
 - Move Linear status only to a state that's true (merged ≠ Done if deploy or device verification is pending).

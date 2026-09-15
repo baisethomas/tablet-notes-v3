@@ -78,7 +78,7 @@ The individual Netlify functions are carefully written — fail-closed tier reso
 - **`SermonSyncEngine`'s shape** — phase isolation (a push failure can't starve the pull), per-scope acknowledgment, pull-completeness signal. Painfully earned via TAB-53/55.
 - **Backend utilities:** `applePurchase.js` (server-side JWS verification, fail-closed), `subscriptionTier.js` (fails closed on every branch), `storageCleanup.js`, the storage RLS migration.
 - **App-layer fundamentals:** protocol-based services with mocks, one `AnyView` in 26k lines, deliberate and documented `@MainActor` decisions, low force-unwrap density, `SummaryService`'s error handling (the pattern the rest should copy).
-- **The knowledge in `TabletNotes/CLAUDE.md` §9** — seventeen named production failure modes. A greenfield app would re-learn all seventeen the hard way.
+- **The knowledge in `docs/OPERATING-MANUAL.md` §9** — seventeen named production failure modes. A greenfield app would re-learn all seventeen the hard way.
 - **UI layer verdict: salvageable.** Its problems (no ViewModel layer, four coexisting DI styles, incomplete Combine→Observation migration, god-files like the 1,560-line `SettingsView`, a NaN-width progress bar and five `as!` casts) are mechanical extractions, not architectural rot.
 
 ---

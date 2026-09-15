@@ -63,7 +63,7 @@ plutil -p "$CONTAINER/Library/Preferences/Creative-Native.TabletNotes.plist" | g
 
 **Audio files:** recordings live under the container's Documents — compare filenames against `ZAUDIOFILENAME` to find orphans (audio without a row) or ghosts (row without audio).
 
-**Cross-check against cloud** (read-only prod query, CLAUDE.md §8): local count vs cloud count for the signed-in user is the canonical "did restore/sync complete" check (e.g. 119 local vs 180 cloud exposed TAB-55).
+**Cross-check against cloud** (read-only prod query, docs/OPERATING-MANUAL.md §8): local count vs cloud count for the signed-in user is the canonical "did restore/sync complete" check (e.g. 119 local vs 180 cloud exposed TAB-55).
 
 ## 4. Staging the standard scenarios
 
