@@ -128,6 +128,7 @@ Rollback restores the served artifact, not Git repository/root configuration or 
 - Import: original tree and source ancestry verified by worker and independently by root.
 - Local frozen install, explicit TypeScript check and Next production build passed on Node 22.14.0 / pnpm 10.15.1. Root independently repeated typecheck/build successfully from `apps/website`; 7 static pages generated. Package and lockfile unchanged. Existing build skips ESLint; this is not lint verification. pnpm warned of ignored `sharp` and `unrs-resolver` build scripts; build still passed without enabling them.
 - Hosted Preview, staged Production, visual browser checks, production settings changes and live cutover: not performed.
+- Root started this worktree's production server on port 3028 and confirmed HTTP 200 with expected content types for `/`, `/privacy`, `/terms`, `/opengraph-image`, `/launch/icon.png`, and the brand WebM/MP4. Server stopped afterward. A worker's separate port-3018 checks used an existing server and are excluded from this build's evidence.
 - No email tests or changes to backend, database, billing, or existing client paths are authorized by this plan.
 
 ## References

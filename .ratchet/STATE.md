@@ -55,6 +55,7 @@ Website import and migration plan prepared on the isolated TAB-118 branch. Produ
 
 - TAB-118: worker frozen install, explicit TypeScript and Next production build passed on Node 22.14.0 / pnpm 10.15.1; original package/lock unchanged. Root independently verified original-tree equality, source ancestry, TypeScript and production build. Hosted/visual/Production checks remain pending.
 - TAB-117 merged in PR #81 at base `3a615c5`.
+- Root's isolated port-3028 production server returned expected HTTP 200/content types for homepage, legal routes, OpenGraph and representative launch media; stopped after checks. Hosted preview and visual checks remain pending.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
