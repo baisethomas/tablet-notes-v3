@@ -10,14 +10,15 @@ SCOPE: branch-local; Git integration reconciles branches. Not a session transcri
 
 ## Objective
 
-TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is post-launch stabilization: ship 1.0.1 with the recording-notes fixes, then move to monitoring and the backlog.
+TAB-118: import the live website into `apps/website` with original history and prepare the existing Vercel project's cutover. iOS 1.0 remains live; 1.0.1 was submitted for App Review separately.
 
 ## Current phase
 
-1.0.1 submitted for App Review (2026-09-14 evening PT). Waiting on Apple. The Ratchet harness is on `main` (TAB-116, merged 2026-09-15); this file is now the `main` state.
+Website import and migration plan prepared on the isolated TAB-118 branch. Production configuration and deployment are unchanged; hosted verification and owner-approved cutover remain pending.
 
 ## Completed
 
+- TAB-118 import: source `70d5504` retained as an ancestor of subtree commit `90c27d8`; imported tree exactly matches source. Plan: `docs/superpowers/plans/2026-09-15-website-monorepo-migration.md`.
 - TAB-117: added a thin `CODEX.md` adapter that maps the repository's existing risk tiers to Codex models while keeping `AGENTS.md` canonical.
 - 1.0 approved and live. The paywall is reachable from the Account tab and Settings in every entitlement state, including the trial (TAB-111, TAB-112).
 - Recording notes are now preserved across backgrounding and stop paths (TAB-113, TAB-114; device-verified). History and evidence are in those issues and PRs #76/#77.
@@ -26,20 +27,23 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Working on
 
-- TAB-117 is open for owner review in PR #81; implementation and two-axis review are complete.
+- TAB-118: review handoff and remaining hosted validation; Luna performed exact Git import and named checks, Terra authored website guidance, Astra reviewed cutover/rollback and final documents. Its two sequencing findings were incorporated.
 
 ## Next
 
-1. When Apple approves 1.0.1: close TAB-110, TAB-113, TAB-114, TAB-115. If rejected, bring the Resolution Center text into the working session.
-2. Watch the owner's daily health check for the first real purchase and for the new build's note-save behavior.
-3. Backlog, roughly in order: TAB-103 step 2 (retire the legacy processing path once the durable pipeline has soaked), TAB-33, then TAB-102/104/105 (low).
+1. Complete hosted Preview validation and the concrete production approval packet in the migration plan.
+2. Owner merges TAB-118 using a MERGE COMMIT (not squash/rebase) to preserve website ancestry. Verify source ancestry on resulting main.
+3. Execute approved guarded Vercel repo/root transition, staged Production validation, promotion, and post-cutover checks. Keep old repo/deployment for rollback.
+4. Separate release follow-up: on 1.0.1 approval, close TAB-110/113/114/115; retain post-launch stabilization backlog.
 
 ## Blocked
 
-- None. (App Review is a wait, not a blocker.)
+- Live Vercel configuration/cutover and PR merge require owner approval. Authenticated Vercel/GitHub access is available. No hosted preview has been created yet.
 
 ## Important context
 
+- Correct website Vercel project is `tablet-app-landingpage`; the DIFFERENT `tablet-notes-v3` Vercel project points to the API. Current website root is `.` in old repo; target root is `apps/website` in destination repo. Keep existing domains and environment values. Snapshot and rollback reference are in the plan.
+- Website-only migration: keep existing native/backend paths and package managers. No workspace conversion or Android work in TAB-118.
 - Every release after a live version needs `MARKETING_VERSION` bumped in `TabletNotes.xcodeproj` before archiving; Xcode assigns the build number per version string at upload (see D-20260914-0400 in `DECISIONS.md`).
 - The recovery manifest is the source of truth for which note session belongs to the audio being captured. Nothing may clear it or the session while a recording is live (D-20260913-2300).
 - Long-lived services are built once at the app root and injected; nothing with side effects is constructed in a SwiftUI view initializer (D-20260914-0000).
@@ -49,7 +53,9 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Verification status
 
-- TAB-117 implementation commit 015a8e3: `git diff --check` passes and referenced repository files exist; no product code changed, so iOS and backend tests were not required.
+- TAB-118: worker frozen install, explicit TypeScript and Next production build passed on Node 22.14.0 / pnpm 10.15.1; original package/lock unchanged. Root independently verified original-tree equality, source ancestry, TypeScript and production build. Hosted/visual/Production checks remain pending.
+- TAB-117 merged in PR #81 at base `3a615c5`.
+- Root's isolated port-3028 production server returned expected HTTP 200/content types for homepage, legal routes, OpenGraph and representative launch media; stopped after checks. Hosted preview and visual checks remain pending.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
@@ -61,11 +67,11 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Integration note
 
-- TAB-117 is isolated on its Linear-named feature branch in PR #81; unrelated untracked Marketing artifacts were left untouched.
+- TAB-118 is isolated in `/Users/baisethomas/Dev/tablet-notes-tab-118`; original checkout's uncommitted Ratchet and Marketing changes remain untouched. This state is branch-local.
 
 ## Last handoff
 
 - Updated: 2026-09-15
 - By: agent (Codex)
-- Branch/worktree: `baise/tab-117-add-codex-adapter-to-the-ratchet-harness`
-- Last known-good commit: 015a8e3 (TAB-117 implementation)
+- Branch/worktree: `baise/tab-118-import-live-website-into-monorepo-and-prepare-vercel-cutover`
+- Last known-good import commit: `90c27d8`; website source `70d5504`.
