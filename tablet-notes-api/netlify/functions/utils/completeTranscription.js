@@ -22,7 +22,7 @@ const { applySermonStageTerminal, STATUS_NO_SPEECH, STATUS_COMPLETE, STATUS_TOO_
  *
  * Ordering is load-bearing: the transcript row is written and confirmed BEFORE
  * the job is marked done. A client reacting to `done` over Realtime must never
- * find a missing transcript (CLAUDE.md §9 #2 — never acknowledge ahead of the
+ * find a missing transcript (docs/OPERATING-MANUAL.md §9 #2 — never acknowledge ahead of the
  * write).
  *
  * @returns {Promise<{ok: true, summaryChained: boolean} | {ok: false, error: string}>}

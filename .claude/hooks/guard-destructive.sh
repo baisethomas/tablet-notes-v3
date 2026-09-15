@@ -267,7 +267,9 @@ has '(^|[;&|][[:space:]]*)netlify[[:space:]]+env:(set|unset|import|clone)([[:spa
   && block "a Netlify environment-variable change"
 
 # Supabase migrations are owner-only, applied in the SQL editor (manual §8).
-has '(^|[;&|][[:space:]]*)supabase[[:space:]]+(db[[:space:]]+(push|reset|remote[[:space:]]+commit)|migration[[:space:]]+(up|repair|squash))([[:space:]]|$)' \
+# Creating one is a hard stop too (AGENTS.md: "creating, modifying, or
+# executing any database migration"), not only applying it.
+has '(^|[;&|][[:space:]]*)supabase[[:space:]]+(db[[:space:]]+(push|reset|remote[[:space:]]+commit)|migration[[:space:]]+(new|up|repair|squash))([[:space:]]|$)' \
   && block "a Supabase migration or database reset"
 
 # Erasing a simulator destroys its store, UserDefaults, and orphan audio.
@@ -279,5 +281,17 @@ has '(^|[;&|][[:space:]]*)xcrun[[:space:]]+simctl[[:space:]]+erase([[:space:]]|$
 has "$(git_sub push)" \
   && has '(^|[[:space:]])([^[:space:]]+:)?(refs/heads/)?main([[:space:]]|$)' \
   && block "a direct push to main"
+
+# `git push` / `git push origin` with no refspec pushes the CURRENT branch's
+# upstream — no literal "main" in the text. Resolve the checked-out branch and
+# refuse any push made while main is checked out; --all/--mirror include it
+# regardless of the current branch.
+has "$(git_sub push)" && has '(^|[[:space:]])(--all|--mirror|--branches)([[:space:]]|$)' \
+  && block "a multi-ref push that would include main"
+if has "$(git_sub push)"; then
+  current_branch=$(cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  [ "$current_branch" = "main" ] \
+    && block "a push while main is checked out (it would update main)"
+fi
 
 exit 0

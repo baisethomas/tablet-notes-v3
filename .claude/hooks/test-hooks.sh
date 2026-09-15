@@ -14,13 +14,26 @@ fail=0
 # JSON-encode a string without assuming jq: the hooks support node as a parser,
 # so the suite that validates them must run in a node-only environment too.
 json_str() {
+  # The value goes in on stdin, never as an argument: the large-payload tests
+  # below use a 200 KB command, which exceeds the per-argument limit on Linux
+  # and would make `--arg`/argv encoders emit nothing — and an empty encoding
+  # turns into malformed JSON that the guard fails closed on (exit 2), which
+  # the "must BLOCK" assertions would then miscount as a genuine match.
+  local out=""
   if command -v jq >/dev/null 2>&1; then
-    jq -Rn --arg c "$1" '$c'
+    out=$(printf '%s' "$1" | jq -Rs .)
   elif command -v node >/dev/null 2>&1; then
-    node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$1"
+    out=$(printf '%s' "$1" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s)))')
   else
-    printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+    out=$(printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')")
   fi
+  if [ -z "$out" ]; then
+    echo "FAIL: json_str could not encode a ${#1}-byte payload; the suite cannot trust any assertion built from it" >&2
+    fail=$((fail + 1))
+    printf '""'
+    return 1
+  fi
+  printf '%s' "$out"
 }
 
 # assert_guard <expected_exit> <command>
@@ -525,6 +538,27 @@ assert_guard 2 'git push origin baise/tab-1-x:main'
 assert_guard 2 'git push origin refs/heads/main:refs/heads/main'
 assert_guard 2 'git push origin HEAD:refs/heads/main'
 assert_guard 2 'git push --dry-run origin main'
+assert_guard 2 'supabase migration new add_table'
+assert_guard 2 'git push --all origin'
+assert_guard 2 'git push origin --mirror'
+
+echo "== guard (TabletNotes): an implicit push while main is checked out must BLOCK =="
+# `git push` with no refspec updates the current branch's upstream, so the
+# guard resolves the checked-out branch from CLAUDE_PROJECT_DIR.
+onmain=$(mktemp -d)
+( cd "$onmain" && git init -q -b main . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init ) 2>/dev/null
+for cmd in 'git push' 'git push origin' 'git push -u origin'; do
+  printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str "$cmd")" \
+    | CLAUDE_PROJECT_DIR="$onmain" ./guard-destructive.sh >/dev/null 2>&1
+  [ $? -eq 2 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: '$cmd' while main is checked out should block"; }
+done
+( cd "$onmain" && git checkout -q -b feature ) 2>/dev/null
+for cmd in 'git push' 'git push -u origin feature'; do
+  printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str "$cmd")" \
+    | CLAUDE_PROJECT_DIR="$onmain" ./guard-destructive.sh >/dev/null 2>&1
+  [ $? -eq 0 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: '$cmd' on a feature branch should be allowed"; }
+done
+rm -rf "$onmain"
 
 echo "== guard (TabletNotes): ordinary workflow must stay ALLOWED =="
 assert_guard 0 'netlify deploy'

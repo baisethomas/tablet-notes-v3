@@ -2,7 +2,7 @@
 
 **These files mirror the live Supabase production schema. They are documentation,
 not migrations. Never run them against prod** — migrations remain owner-run via
-the Supabase SQL editor (CLAUDE.md §8). Their purpose is to make the schema
+the Supabase SQL editor (docs/OPERATING-MANUAL.md §8). Their purpose is to make the schema
 reviewable, diffable, and recreatable in a fresh environment; before this
 directory existed, the running database was the schema's only source of truth
 (TAB-101 / TAB-72 follow-up).
