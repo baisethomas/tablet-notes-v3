@@ -101,7 +101,11 @@ if [ -n "$state_dir" ]; then
   key=$(printf '%s' "$session" | { shasum 2>/dev/null || sha1sum 2>/dev/null; } | cut -d' ' -f1)
   [ -z "$key" ] && key="fallback"
   counter="$state_dir/$key"
-  ios_cache="$state_dir/ios-green-$(printf '%s' "$PWD" | { shasum 2>/dev/null || sha1sum 2>/dev/null; } | cut -d' ' -f1)"
+  # Key the cache on the build configuration too (simulator, scheme, and this
+  # script's own contents), so editing the hook or changing the simulator
+  # cannot reuse a green fingerprint recorded under a different configuration.
+  hook_hash=$( { shasum 2>/dev/null || sha1sum 2>/dev/null; } < "${BASH_SOURCE[0]}" | cut -d' ' -f1)
+  ios_cache="$state_dir/ios-green-$(printf '%s|%s|%s|%s' "$PWD" "$IOS_SIM_ID" "TabletNotes" "$hook_hash" | { shasum 2>/dev/null || sha1sum 2>/dev/null; } | cut -d' ' -f1)"
 fi
 
 # --- Checks ------------------------------------------------------------------

@@ -49,7 +49,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 ## Verification status
 
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
-- This branch: `.claude/hooks/test-hooks.sh` 242/242 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions including implicit pushes while `main` is checked out); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
+- This branch: `.claude/hooks/test-hooks.sh` 260/260 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
 ## Open risks / assumptions
 
