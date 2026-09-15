@@ -26,7 +26,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Working on
 
-- TAB-117 is in PR preparation on `baise/tab-117-add-codex-adapter-to-the-ratchet-harness`; implementation and review are complete.
+- TAB-117 is open for owner review in PR #81; implementation and two-axis review are complete.
 
 ## Next
 
@@ -49,7 +49,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Verification status
 
-- TAB-117 branch atop `main` @ 9b6ff6d: `git diff --check` passes and referenced repository files exist; no product code changed, so iOS and backend tests were not required.
+- TAB-117 implementation commit 015a8e3: `git diff --check` passes and referenced repository files exist; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
@@ -61,11 +61,11 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Integration note
 
-- TAB-117 is isolated on its Linear-named feature branch atop 9b6ff6d; unrelated untracked Marketing artifacts were left untouched.
+- TAB-117 is isolated on its Linear-named feature branch in PR #81; unrelated untracked Marketing artifacts were left untouched.
 
 ## Last handoff
 
 - Updated: 2026-09-15
 - By: agent (Codex)
 - Branch/worktree: `baise/tab-117-add-codex-adapter-to-the-ratchet-harness`
-- Last known-good commit: 9b6ff6d (main)
+- Last known-good commit: 015a8e3 (TAB-117 implementation)
