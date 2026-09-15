@@ -18,6 +18,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Completed
 
+- TAB-117: added a thin `CODEX.md` adapter that maps the repository's existing risk tiers to Codex models while keeping `AGENTS.md` canonical.
 - 1.0 approved and live. The paywall is reachable from the Account tab and Settings in every entitlement state, including the trial (TAB-111, TAB-112).
 - Recording notes are now preserved across backgrounding and stop paths (TAB-113, TAB-114; device-verified). History and evidence are in those issues and PRs #76/#77.
 - `MARKETING_VERSION` bumped to 1.0.1 for the release (TAB-115).
@@ -25,7 +26,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Working on
 
-- Nothing in flight. Next work starts from the list below on a fresh branch.
+- TAB-117 is in PR preparation on `baise/tab-117-add-codex-adapter-to-the-ratchet-harness`; implementation and review are complete.
 
 ## Next
 
@@ -48,6 +49,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Verification status
 
+- TAB-117 branch atop `main` @ 9b6ff6d: `git diff --check` passes and referenced repository files exist; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
@@ -59,11 +61,11 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Integration note
 
-- Reconciled after the TAB-116 merge (2026-09-15). Nothing else is in flight.
+- TAB-117 is isolated on its Linear-named feature branch atop 9b6ff6d; unrelated untracked Marketing artifacts were left untouched.
 
 ## Last handoff
 
 - Updated: 2026-09-15
-- By: agent (Claude Code, Fable)
-- Branch/worktree: `main`
-- Last known-good commit: 0fd39d7 (main)
+- By: agent (Codex)
+- Branch/worktree: `baise/tab-117-add-codex-adapter-to-the-ratchet-harness`
+- Last known-good commit: 9b6ff6d (main)

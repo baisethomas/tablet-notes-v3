@@ -3,16 +3,17 @@
 <!--
 Ratchet (https://github.com/baisethomas/Ratchet) model-agnostic operating contract.
 Any coding agent entering this repo reads this first, then the files it names.
-Tool-specific files (CLAUDE.md) point here and must not duplicate these rules.
+Tool-specific files (`CLAUDE.md`, `CODEX.md`) point here and must not duplicate these rules.
 -->
 
 ## Read order for a fresh agent
 
 1. This file.
 2. `docs/OPERATING-MANUAL.md` — the TabletNotes operating manual: repo map, exact commands, house style, backend rules, deploy reality, prod access, the named failure modes, the quality bar, and escalation rules. It is binding and it is model-agnostic; it lived at `TabletNotes/CLAUDE.md` until Ratchet adoption.
-3. `.ratchet/STATE.md` — current state of this branch/workstream.
-4. `.ratchet/DECISIONS.md` — durable decisions with rationale. Do not reopen them accidentally.
-5. The Linear issue you are shipping (one issue = one branch = one PR), and `.claude/skills/ship-linear-issue/SKILL.md` for the end-to-end loop.
+3. The adapter for the current harness, when one exists (`CODEX.md` for Codex; Claude Code loads `CLAUDE.md` before this file).
+4. `.ratchet/STATE.md` — current state of this branch/workstream.
+5. `.ratchet/DECISIONS.md` — durable decisions with rationale. Do not reopen them accidentally.
+6. The Linear issue you are shipping (one issue = one branch = one PR), and `.claude/skills/ship-linear-issue/SKILL.md` for the end-to-end loop.
 
 ## Ratchet invariants
 

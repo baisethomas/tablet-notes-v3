@@ -112,3 +112,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** Claude Code's private auto-memory continues to hold the owner's private pointers; shareable state must also be reflected in `.ratchet/STATE.md`. Stop-time verification runs `npm test` when the API changed and the iOS build when Swift changed (fingerprint-cached, so once per set of edits). Ratchet memory records constraints and ticket references, never incident narratives; the manual's §9 "named failure modes" remain the sanctioned home for lessons learned.
 - **Revisit when:** A second agent tool is adopted in earnest and needs its own thin adapter, or the hooks prove too slow in practice.
 - **Approved by:** owner (requested the adoption 2026-09-14)
+
+### D-20260915-0625-add-codex-adapter — Add a discoverable Codex adapter with risk-based model routing
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-09-15
+- **Decision:** `CODEX.md` is the thin Codex-specific adapter and `AGENTS.md` points Codex agents to it. The owner-facing model remains host-selected; when delegation is separately authorized, high-risk work routes to `gpt-6-astra`, routine implementation to `gpt-5.6-terra`, and chores to `gpt-5.6-luna`, subject to model availability.
+- **Why:** Codex automatically loads `AGENTS.md` but has no automatic `CODEX.md` convention. A canonical pointer makes the adapter operational while keeping shared policy model-independent. Codex also does not automatically inherit Claude Code's hook enforcement or control the root session's model, so the adapter must state those boundaries explicitly.
+- **Rejected / alternatives:** Copying all operating rules into `CODEX.md` — rejected as duplicate memory. Treating the Claude hook configuration as active in Codex — rejected because enforcement is harness-specific. Naming `gpt-6-astra` as an agent-selectable root model — rejected because the host or owner selects it.
+- **Consequences:** Fresh Codex agents read `CODEX.md` through the canonical read order, apply hard stops even without an intercepting hook, and run verification explicitly. The routing table guides only delegation already authorized by the user or another applicable instruction.
+- **Revisit when:** Codex gains a native adapter convention, automatic support for the committed hooks, different available model ids, or root-session model switching.
+- **Approved by:** owner (requested the Codex equivalent on 2026-09-15 UTC)
