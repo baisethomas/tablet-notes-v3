@@ -14,7 +14,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Current phase
 
-1.0.1 submitted for App Review (2026-09-14 evening PT). Waiting on Apple. Repo housekeeping (Ratchet adoption, TAB-116) in flight on this branch.
+1.0.1 submitted for App Review (2026-09-14 evening PT). Waiting on Apple. The Ratchet harness is on `main` (TAB-116, merged 2026-09-15); this file is now the `main` state.
 
 ## Completed
 
@@ -25,7 +25,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Working on
 
-- TAB-116: adopting the Ratchet harness (this branch): `AGENTS.md`, thin `CLAUDE.md`, manual moved to `docs/OPERATING-MANUAL.md`, `.ratchet/` memory, verification hooks.
+- Nothing in flight. Next work starts from the list below on a fresh branch.
 
 ## Next
 
@@ -49,7 +49,7 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 ## Verification status
 
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
-- This branch: `.claude/hooks/test-hooks.sh` 260/260 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
+- Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
 ## Open risks / assumptions
 
@@ -59,11 +59,11 @@ TabletNotes 1.0 is live on the App Store (since 2026-09-11). The workstream is p
 
 ## Integration note
 
-- When this branch merges, this file becomes the `main` state. Nothing else is in flight.
+- Reconciled after the TAB-116 merge (2026-09-15). Nothing else is in flight.
 
 ## Last handoff
 
-- Updated: 2026-09-14
-- By: agent (Claude Code)
-- Branch/worktree: `baise/tab-116-adopt-ratchet-harness`
-- Last known-good commit: d2ac566 (main)
+- Updated: 2026-09-15
+- By: agent (Claude Code, Fable)
+- Branch/worktree: `main`
+- Last known-good commit: 0fd39d7 (main)
