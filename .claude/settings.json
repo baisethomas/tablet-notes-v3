@@ -1,0 +1,46 @@
+{
+  "_readme": [
+    "Ratchet hooks (https://github.com/baisethomas/Ratchet). Shared, committed config.",
+    "Scripts live in .claude/hooks/ and read their payload as JSON on stdin (needs jq or node).",
+    "Only exit 2 blocks; the scripts translate failures accordingly.",
+    "Run .claude/hooks/test-hooks.sh after editing any hook; it asserts the guard blocks what it claims to.",
+    "The guard is a speed bump against momentum, not a security boundary, and has no override token:",
+    "when it blocks something the owner wants, the owner runs it with '! <command>' or disables the hook.",
+    "Personal permission allowlists stay in settings.local.json (not committed)."
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lint-edited-file.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/check-on-stop.sh",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-destructive.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

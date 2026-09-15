@@ -1,4 +1,10 @@
-# CLAUDE.md — TabletNotes Operating Manual
+# TabletNotes Operating Manual
+
+<!--
+Model-agnostic. Every agent reads this after the repo's `AGENTS.md` (the Ratchet operating contract),
+which indexes this file. Root `CLAUDE.md` imports both for Claude Code. This file lived at
+`TabletNotes/CLAUDE.md` until the Ratchet adoption (TAB-116, 2026-09-15); its content is unchanged.
+-->
 
 TabletNotes is an iOS sermon-recording app (SwiftUI + SwiftData) with AI transcription/summarization. Backend: Netlify Functions (`tablet-notes-api/`) + Supabase (Postgres, auth, storage). AssemblyAI does transcription; summaries/chat go through Netlify functions.
 

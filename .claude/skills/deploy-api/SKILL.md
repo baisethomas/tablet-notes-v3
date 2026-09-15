@@ -74,7 +74,7 @@ Then hit the specific endpoint(s) this deploy changed with a request shaped to e
 
 ## Phase 4 — Verify the fix against prod data
 
-Generic smoke isn't verification. For the fix that motivated the deploy, define the observable prod outcome and query it (read-only — see CLAUDE.md §8 for service-key access):
+Generic smoke isn't verification. For the fix that motivated the deploy, define the observable prod outcome and query it (read-only — see docs/OPERATING-MANUAL.md §8 for service-key access):
 
 ```bash
 supabase projects api-keys --project-ref ubghnmenxbhhlpxvypea    # service key (READ-ONLY use)
