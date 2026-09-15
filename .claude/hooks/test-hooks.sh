@@ -285,7 +285,11 @@ assert_guard_in() {
     printf 'FAIL (alias repo): expected exit %s, got %s for: %s\n' "$expected" "$actual" "$cmd"
   fi
 }
-assert_guard_in 2 'git p origin main'
+# A feature-branch target, so only a RESOLVED alias (push --force) can block:
+# `origin main` would be refused by the main rule whether or not the alias
+# resolved, which made the original assertion non-discriminating.
+assert_guard_in 2 'git p origin feature'
+assert_guard_in 0 'git q origin feature'   # unconfigured alias: no rule matches
 # Global options that take a value must not be mistaken for the subcommand.
 assert_guard_in 2 "git -C $aliasrepo p origin feature"
 assert_guard_in 2 "git --git-dir=$aliasrepo/.git p origin feature"
