@@ -1,6 +1,6 @@
 # Live website monorepo migration — TAB-118
 
-Status: preparation in progress; production cutover requires owner approval.
+Status: implementation and hosted verification complete for PR #82 owner review; production cutover requires owner approval.
 
 Issue: https://linear.app/loomlogiclabs/issue/TAB-118/import-live-website-into-monorepo-and-prepare-vercel-cutover
 
@@ -59,7 +59,7 @@ Only one operator changes live Vercel configuration. Agent failure escalation fo
    ```
 
 3. At the import commit, verify source ancestry and an empty source-versus-subdirectory diff. Import commit: `90c27d8645c5fddb0994135081fedaca139c6ac6`.
-4. Add only migration documentation and local operating guidance. Preserve the original package and lockfile. No root workspace changes or dependency upgrades.
+4. Preserve the original tree at the import checkpoint. Review remediation is separate: Next 15.5.24, Resend 6.14.0, aligned lint config, advisory-scoped transitive patches and pnpm pin; explicit website tracing root; smoke/action checks; `.DS_Store` removal. See `2026-09-15-website-review-resolution.md`. No root workspace conversion.
 5. GitHub must integrate this PR with **Create a merge commit**. Squash or rebase merge loses the promised source ancestry. Recheck ancestry on destination `main` afterward. Source GitHub issues, PRs, branch refs, and releases remain in the old repository.
 
 Exit: original tree equality proven, source commit is an ancestor, full diff scoped to imported website and migration documentation.
@@ -127,7 +127,9 @@ Rollback restores the served artifact, not Git repository/root configuration or 
 - Access: Vercel and GitHub authenticated; actual website project and separate API project inspected read-only.
 - Import: original tree and source ancestry verified by worker and independently by root.
 - Local frozen install, explicit TypeScript check and Next production build passed on Node 22.14.0 / pnpm 10.15.1. Root independently repeated typecheck/build successfully from `apps/website`; 7 static pages generated. Package and lockfile unchanged. Existing build skips ESLint; this is not lint verification. pnpm warned of ignored `sharp` and `unrs-resolver` build scripts; build still passed without enabling them.
-- Hosted Preview, staged Production, visual browser checks, production settings changes and live cutover: not performed.
+- Hosted Preview and browser checks completed at app commit `887037d`: https://tablet-notes-website-preview-6rj4oto81-loomlogiclabs-projects.vercel.app, deployment `dpl_AccrHHHyJShYS6eycXvSju4rzpH7`. Vercel cloned the PR branch and built from `apps/website` using Node 22 and pinned pnpm 10.15.1. Environment is Preview. All six scripted checks passed with an authorized cookie; deployment protection remains enabled and no mail secrets were copied.
+- Remediation verification: full/production audits report zero vulnerabilities; TypeScript/build and empty-action-registry check pass. Browser verification covered desktop/mobile layout, no horizontal overflow/page errors, film dialog open/close, reduced-motion background video hidden, legal navigation and images/media. Source SHA and original live deployment remain unchanged. Fresh Astra remediation review found no actionable regressions.
+- Staged Production, live project settings changes and live cutover remain after owner approval. Isolated validation project `tablet-notes-website-preview` has no live custom domains and auto-assignment disabled. Its first Git-triggered deployment was labeled Production by Vercel; the explicitly requested subsequent deployment above was verified as Preview and is the reviewed artifact.
 - Root started this worktree's production server on port 3028 and confirmed HTTP 200 with expected content types for `/`, `/privacy`, `/terms`, `/opengraph-image`, `/launch/icon.png`, and the brand WebM/MP4. Server stopped afterward. A worker's separate port-3018 checks used an existing server and are excluded from this build's evidence.
 - No email tests or changes to backend, database, billing, or existing client paths are authorized by this plan.
 

@@ -14,7 +14,7 @@ TAB-118: import the live website into `apps/website` with original history and p
 
 ## Current phase
 
-Website import and migration plan prepared on the isolated TAB-118 branch. Production configuration and deployment are unchanged; hosted verification and owner-approved cutover remain pending.
+PR #82 is prepared for owner review: import, security remediation, hosted Preview and local/browser verification complete. Production remains on the original website repository pending owner review and cutover approval.
 
 ## Completed
 
@@ -27,18 +27,18 @@ Website import and migration plan prepared on the isolated TAB-118 branch. Produ
 
 ## Working on
 
-- TAB-118: review handoff and remaining hosted validation; Luna performed exact Git import and named checks, Terra authored website guidance, Astra reviewed cutover/rollback and final documents. Its two sequencing findings were incorporated.
+- TAB-118: owner-review handoff in https://github.com/baisethomas/tablet-notes-v3/pull/82. Luna performed import/checks, Terra authored docs/smoke checks, Astra implemented dependency remediation and a fresh Astra review found no actionable regressions.
 
 ## Next
 
-1. Complete hosted Preview validation and the concrete production approval packet in the migration plan.
+1. Owner reviews PR #82 and protected website Preview: https://tablet-notes-website-preview-6rj4oto81-loomlogiclabs-projects.vercel.app (app commit `887037d`).
 2. Owner merges TAB-118 using a MERGE COMMIT (not squash/rebase) to preserve website ancestry. Verify source ancestry on resulting main.
 3. Execute approved guarded Vercel repo/root transition, staged Production validation, promotion, and post-cutover checks. Keep old repo/deployment for rollback.
 4. Separate release follow-up: on 1.0.1 approval, close TAB-110/113/114/115; retain post-launch stabilization backlog.
 
 ## Blocked
 
-- Live Vercel configuration/cutover and PR merge require owner approval. Authenticated Vercel/GitHub access is available. No hosted preview has been created yet.
+- No implementation blocker. PR merge and live cutover await owner approval. Preview is protected by Vercel authentication; no production secrets were copied.
 
 ## Important context
 
@@ -53,9 +53,10 @@ Website import and migration plan prepared on the isolated TAB-118 branch. Produ
 
 ## Verification status
 
-- TAB-118: worker frozen install, explicit TypeScript and Next production build passed on Node 22.14.0 / pnpm 10.15.1; original package/lock unchanged. Root independently verified original-tree equality, source ancestry, TypeScript and production build. Hosted/visual/Production checks remain pending.
+- TAB-118 remediation `887037d`: Next 15.5.24/Resend 6.14.0 and scoped transitive patches; full and production audits zero vulnerabilities. Root verified full audit, TypeScript, production build, no registered Server Actions, and six smoke checks locally and on hosted Preview. Wrong-page negative control fails as expected. Fresh Astra review found no actionable regressions.
+- Website Preview deployment `dpl_AccrHHHyJShYS6eycXvSju4rzpH7` is READY, environment Preview, source `887037d`, root `apps/website`, Node 22/pnpm 10.15.1. Browser checks: 1440px desktop/390px mobile screenshots; no horizontal overflow or page errors; film dialog open/close; reduced-motion background video hidden; legal routes and media verified. Production cutover checks remain pending by design.
 - TAB-117 merged in PR #81 at base `3a615c5`.
-- Root's isolated port-3028 production server returned expected HTTP 200/content types for homepage, legal routes, OpenGraph and representative launch media; stopped after checks. Hosted preview and visual checks remain pending.
+- Original import source-tree equality remains verified at `90c27d8`; subsequent review fixes intentionally change dependencies/configuration and remove `.DS_Store` while retaining source ancestry.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
 
