@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 232 12% 13%;
+    --foreground: 0 0% 100%;
+    --card: 232 10% 16%;
+    --card-foreground: 0 0% 100%;
+    --popover: 232 10% 16%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 222 55% 41%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 228 6% 83%;
+    --secondary-foreground: 232 12% 13%;
+    --muted: 228 10% 16%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 222 55% 41%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 100% / 0.1;
+    --input: 0 0% 100% / 0.1;
+    --ring: 222 55% 41%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom Input Auto-fill fix for dark backgrounds */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px #26262b inset !important;
+  -webkit-text-fill-color: white !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.cta-section input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 30px #385bb5 inset !important;
+}
+
+/* Subtle styling for the "nib" watermark */
+.nib-watermark {
+  mask-image: linear-gradient(to bottom, black, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent);
+}
+
+/* Hide scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

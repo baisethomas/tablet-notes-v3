@@ -29,6 +29,18 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 
 ## Decisions
 
+### D-20260915-website-first-import — Import the website independently before wider monorepo restructuring
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-09-15
+- **Decision:** TAB-118 imports the website at `apps/website` with a non-squashed subtree, preserving source commit hashes and its local pnpm lockfile. Existing native, backend, infrastructure and support paths remain unchanged for this stage. Integration requires a merge commit.
+- **Why:** The live website's Vercel cutover can be verified independently without simultaneously reconfiguring the production API or native build paths.
+- **Rejected / alternatives:** Moving every project and consolidating package managers in this issue adds unrelated deployment and dependency risk. Rewriting or squashing source history fails the history-preservation objective.
+- **Consequences:** Website documentation lives alongside its source; the wider folder layout and shared packages are follow-up work. Production configuration and merge remain owner-gated under the migration plan.
+- **Revisit when:** The website cutover is stable and a separate issue scopes wider repository organization.
+- **Approved by:** agent (within the owner's migration planning and delegated preparation request)
+
 ### D-20260831-2100-entitlements-server-only — Subscription entitlements are written only by the server
 
 - **Status:** accepted
