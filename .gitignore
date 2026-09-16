@@ -169,3 +169,4 @@ tablet-notes-api/supabase/.temp/
 # via the scheme's TestAction (TAB-78). `xcuserdata/` above still keeps
 # per-developer scheme state out of the repo.
 !**/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme
+.vercel
