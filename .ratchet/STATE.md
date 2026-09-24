@@ -25,7 +25,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- Sermon scripture notifications (branch `claude/sermon-scripture-notifications-07g812`): plan drafted at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. No code yet. Waiting on the owner's answers to the plan's open questions (cadence, message source, free vs Premium, opt-in model). No Linear issue has been filed yet; file one before implementation starts.
+- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`): the approach is approved and the owner has answered all four questions (4 reminders, message line from the summary that must be meaningful, free, one global opt-in). The plan is at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. No code yet. Next: step 1 of the plan, the planner and its tests.
 
 ## Next
 
@@ -64,7 +64,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-09-24 (scripture-notifications plan drafted)
+- Updated: 2026-09-24 (TAB-119 filed; plan approved)
 - By: agent (Claude Code)
 - Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)

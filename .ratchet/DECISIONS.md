@@ -124,3 +124,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** Fresh Codex agents read `CODEX.md` through the canonical read order, apply hard stops even without an intercepting hook, and run verification explicitly. The routing table guides only delegation already authorized by the user or another applicable instruction.
 - **Revisit when:** Codex gains a native adapter convention, automatic support for the committed hooks, different available model ids, or root-session model switching.
 - **Approved by:** owner (requested the Codex equivalent on 2026-09-15 UTC)
+
+### D-20260924-1930-scripture-reminders-local-reconciler — Scripture reminders are on-device local notifications, scheduled by an idempotent reconciler, with the preference in UserDefaults
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-09-24
+- **Decision:** TAB-119 reminders use `UNCalendarNotificationTrigger` scheduled on device, with no server component. A single idempotent `reconcile()` schedules eligible sermons: summary complete, not archived, recorded within the last 48 hours, not yet scheduled. A sermon is marked scheduled only after every request is added. The feature is free and has one global opt-in. The preference lives in `UserDefaults`, not on the `UserNotificationSettings` model. The message line comes from the summary with no AI call, and must be a complete, meaningful sentence; otherwise it falls back to the sermon title.
+- **Why:** The content is already on device when the summary completes, so local scheduling needs no deploy, migration, or AI cost. There are several summary completion paths (legacy retry, durable pipeline via sync), so a reconciler covers all of them without editing `SummaryRetryService` or the sync engine. The 48-hour window keeps cloud restores from scheduling old sermons. Keeping the preference in `UserDefaults` avoids a migration and a change to the Supabase settings contract. The owner's goal is daily engagement.
+- **Rejected / alternatives:** Server push (APNs plus a cron): needs new infrastructure and deploy debt for no v1 benefit. A hook in each completion path: fragile and touches high-risk modules. An AI-generated devotional line: per-sermon cost and a new endpoint; the owner accepted summary-derived lines. Premium gating: the owner chose free.
+- **Consequences:** Reminders exist only on the device that processed or synced the sermon within 48 hours. The opt-in does not sync across devices. At most one sermon's reminder run is pending at a time.
+- **Revisit when:** The owner wants configurable time/count, AI-written lines, or cross-device preference sync (the last would need a `@Model` or Supabase change and a migration call).
+- **Approved by:** owner (answers to the plan questions, 2026-09-24)

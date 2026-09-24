@@ -1,8 +1,8 @@
 # Sermon Scripture Notifications — Plan
 
-**Status:** draft, awaiting owner answers to the open questions below. No code yet.
+**Status:** approved approach (owner answers 2026-09-24). No code yet.
 **Branch:** `claude/sermon-scripture-notifications-07g812`
-**Linear:** none yet. One issue = one branch = one PR, so file one before implementation starts.
+**Linear:** TAB-119. PR title `[TAB-119] …`.
 
 ## Goal
 
@@ -44,7 +44,7 @@ Why a reconciler: it covers every completion path (legacy, durable, arriving via
 
 - **Scripture selection:** parse the summary's "Main Scripture Text" section first, then its "Scripture References" section, then the rest of the summary, then the transcript. Pass each through `ScriptureAnalysisService`, dedupe, and keep first-seen order so the main text leads. Cap at the number of reminders in the week.
 - **Schedule:** default is the day after recording, then every other day, for up to 4 reminders over 7 days, at 8:00 local time. Fewer scriptures means fewer reminders. No scriptures means no reminders; a generic "revisit your notes" message is not in scope.
-- **Message line:** v1 takes it from the summary locally: the summary title first, then key points or application bullets, one per reminder, trimmed to fit. No new AI call. The alternative is in the open questions.
+- **Message line:** taken from the summary locally, with no AI call. The owner's condition is that it must be meaningful. Candidates are complete sentences from the key points and application bullets, one per reminder, never repeated. Headings, section labels, boilerplate ("In this sermon…"), bare references and fragments are rejected. A sentence is trimmed at a sentence or clause boundary, never mid-word. If no candidate qualifies, the line falls back to the sermon title.
 - **Content:** title is `"<Reference> · <Sermon title>"`, body is the verse text (truncated around 180 characters) followed by the message line. If verse text can't be fetched (offline, API error), the body is the reference plus the message line, and the reminder still goes out.
 
 ### 4. Identifiers, replacement, cancellation
@@ -87,15 +87,15 @@ A `UNUserNotificationCenterDelegate` set at the app root:
 - `xcodebuild test -only-testing:TabletNotesTests/ScriptureReminderPlannerTests` and `...SchedulerTests`, plus any existing suite whose file is edited (such as the `SermonService*` suites if the delete path changes).
 - Manual on the simulator: pending requests inspected with `getPendingNotificationRequests`, a delivered banner, and tap routing. A signed-in account is needed for verse fetch (manual §12).
 
-## Open questions for the owner
+## Owner decisions (2026-09-24)
 
-1. **Cadence and time.** Default is 4 reminders over 7 days at 8:00 AM, starting the next morning. Should users be able to choose the time or how many reminders they get?
-2. **The quick message.** v1 derives it locally from the summary at no cost. Alternatively, a new AI-generated devotional line per scripture: better copy, but it means a backend endpoint (auth, Joi, rate limit), per-sermon AI cost, and deploy steps. Recommendation: ship v1 local, revisit.
-3. **Free or Premium?** Local-only v1 costs nothing to serve, so it can be free. If it should be Premium, it touches entitlement logic, which is a hard stop needing explicit sign-off.
-4. **On by default after opt-in, or opt-in per sermon?** Recommendation: one global opt-in, with every new sermon scheduled automatically.
-5. **Translation.** Use the user's selected Bible translation (the same setting `ScriptureDetailView` uses). Assumed yes.
+1. **Cadence:** 4 reminders over 7 days at 8:00 AM, starting the next morning. The time and count are not configurable in v1.
+2. **Message:** the line comes from the summary, and it must be meaningful (see step 3). No AI endpoint.
+3. **Free** for all users. No entitlement or tier logic is touched.
+4. **One global opt-in.** Every new sermon is scheduled automatically after that. The goal is daily engagement and lower churn.
+5. **Translation:** the user's selected Bible translation (assumed; not contested).
 
-## Decisions to record when accepted (medium impact)
+## Decisions (recorded in `.ratchet/DECISIONS.md`)
 
 - Reminders are local notifications scheduled on device, with no server component in v1.
 - Scheduling is an idempotent reconciler over eligible sermons, not a hook in each summary completion path.
