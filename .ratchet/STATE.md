@@ -25,7 +25,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- Nothing in flight. TAB-117 merged in PR #81; next work starts from the list below on a fresh branch.
+- Sermon scripture notifications (branch `claude/sermon-scripture-notifications-07g812`): plan drafted at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. No code yet. Waiting on the owner's answers to the plan's open questions (cadence, message source, free vs Premium, opt-in model). No Linear issue has been filed yet; file one before implementation starts.
 
 ## Next
 
@@ -64,7 +64,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-09-15 (1.0.1 live)
-- By: agent (Claude Code, Fable; after Codex TAB-117)
-- Branch/worktree: `main`
+- Updated: 2026-09-24 (scripture-notifications plan drafted)
+- By: agent (Claude Code)
+- Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)
