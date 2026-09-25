@@ -25,7 +25,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`): the approach is approved and the owner has answered all four questions (4 reminders, message line from the summary that must be meaningful, free, one global opt-in). The plan is at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. No code yet. Next: step 1 of the plan, the planner and its tests.
+- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner, is written: `Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`. **It has not been compiled or run.** It was written in a Linux container with no Swift toolchain. The logic was checked against a JS port (47 assertions) and by a separate compile review, but that is not a substitute for `xcodebuild`. The first action on a Mac is to build and run the `ScriptureReminderPlannerTests` suite; fix anything red before starting step 2, the scheduler.
 
 ## Next
 
@@ -54,6 +54,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Open risks / assumptions
 
+- TAB-119: the scripture analyzer drops a reference that follows another word ("in Romans 8:28"). The planner works around the line-break case only. The transcript fallback is therefore weak until the analyzer is fixed; that fix is a separate issue.
+
 - App Review may exercise the app on a fresh Sign in with Apple account (trial state); the always-visible Premium row is what addresses that.
 - The auto-stop save handler skips the save if the stop event carries no session id. Unreachable while audio is present, but it should fall back rather than skip if that invariant ever changes.
 - Crash reporting has been quiet since launch; too early to call it stable.
@@ -64,7 +66,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-09-24 (TAB-119 filed; plan approved)
+- Updated: 2026-09-25 (TAB-119 step 1 written, not yet built)
 - By: agent (Claude Code)
 - Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)
