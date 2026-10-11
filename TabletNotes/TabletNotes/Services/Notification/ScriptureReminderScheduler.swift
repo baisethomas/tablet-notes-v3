@@ -346,10 +346,22 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
             requests.append(UNNotificationRequest(
                 identifier: Self.identifier(sermonId: sermon.id, index: reminder.index),
                 content: content,
-                trigger: UNCalendarNotificationTrigger(dateMatching: reminder.fireDateComponents, repeats: false)
+                trigger: Self.trigger(for: reminder)
             ))
         }
         return requests
+    }
+
+    private static func trigger(for reminder: PlannedScriptureReminder) -> UNNotificationTrigger {
+        #if DEBUG
+        // Manual verification only: SCRIPTURE_REMINDER_DEBUG_DELAY_SECONDS=20 fires
+        // the run 20s, 40s, 60s... after scheduling instead of on the planned mornings.
+        if let raw = ProcessInfo.processInfo.environment["SCRIPTURE_REMINDER_DEBUG_DELAY_SECONDS"],
+           let seconds = TimeInterval(raw), seconds >= 1 {
+            return UNTimeIntervalNotificationTrigger(timeInterval: seconds * TimeInterval(reminder.index + 1), repeats: false)
+        }
+        #endif
+        return UNCalendarNotificationTrigger(dateMatching: reminder.fireDateComponents, repeats: false)
     }
 
     static func identifier(sermonId: UUID, index: Int) -> String {

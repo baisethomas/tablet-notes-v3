@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 
 /// Forwards background URLSession events to the process-wide UploadManager.
 @MainActor
@@ -7,6 +8,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Must be set before launch finishes so a tap that started the app is delivered (TAB-119).
+        UNUserNotificationCenter.current().delegate = ScriptureReminderTapRouter.shared
         UploadManager.shared.prepareBackgroundSessionIfNeeded()
         Task { @MainActor in
             await UploadManager.shared.continueIncompleteBackgroundUploads()
