@@ -25,7 +25,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner, is written: `Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`. **It has not been compiled or run.** It was written in a Linux container with no Swift toolchain. The logic was checked against a JS port (47 assertions) and by a separate compile review, but that is not a substitute for `xcodebuild`. The first action on a Mac is to build and run the `ScriptureReminderPlannerTests` suite; fix anything red before starting step 2, the scheduler.
+- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner (`Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`), is written and verified on a Mac: it compiles unchanged and the suite passes 31/31 on the clean 18.5 simulator (2026-10-11). Next is step 2, the scheduler.
 
 ## Next
 
@@ -48,6 +48,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
+- TAB-119 branch @ ef1777a: `xcodebuild build-for-testing` green on the clean 18.5 simulator; `ScriptureReminderPlannerTests` 31/31 (2026-10-11). No source changes were needed.
+
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
@@ -66,7 +68,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-09-25 (TAB-119 step 1 written, not yet built)
+- Updated: 2026-10-11 (TAB-119 step 1 built and tested on the simulator)
 - By: agent (Claude Code)
 - Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)
