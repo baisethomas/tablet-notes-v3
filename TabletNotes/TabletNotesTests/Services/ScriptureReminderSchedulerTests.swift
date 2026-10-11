@@ -242,6 +242,86 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.defaults.bool(forKey: ScriptureReminderScheduler.enabledDefaultsKey) == false)
     }
 
+    // MARK: Permission
+
+    @Test func grantedPermissionEnablesAndSchedules() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        harness.defaults.set(false, forKey: ScriptureReminderScheduler.enabledDefaultsKey)
+        harness.center.status = .notDetermined
+        let scheduler = harness.makeScheduler()
+
+        let enabled = await scheduler.requestAuthorizationAndEnable()
+
+        #expect(enabled)
+        #expect(scheduler.isEnabled)
+        #expect(scheduler.authorizationStatus == .authorized)
+        #expect(scheduler.hasSeenOptInPrompt)
+        #expect(harness.center.authorizationRequestCount == 1)
+        #expect(harness.center.pending.count == 2)
+    }
+
+    @Test func deniedPermissionLeavesTheFeatureOff() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        harness.defaults.set(false, forKey: ScriptureReminderScheduler.enabledDefaultsKey)
+        harness.center.status = .notDetermined
+        harness.center.grantsAuthorization = false
+        let scheduler = harness.makeScheduler()
+
+        let enabled = await scheduler.requestAuthorizationAndEnable()
+
+        #expect(!enabled)
+        #expect(!scheduler.isEnabled)
+        #expect(scheduler.authorizationStatus == .denied)
+        #expect(harness.center.pending.isEmpty)
+        #expect(harness.defaults.bool(forKey: ScriptureReminderScheduler.enabledDefaultsKey) == false)
+    }
+
+    @Test func alreadyDecidedPermissionIsNotAskedAgain() async throws {
+        let harness = try Harness()
+        harness.center.status = .denied
+        let scheduler = harness.makeScheduler()
+
+        let enabled = await scheduler.requestAuthorizationAndEnable()
+
+        #expect(!enabled)
+        #expect(harness.center.authorizationRequestCount == 0)
+        #expect(scheduler.authorizationStatus == .denied)
+    }
+
+    @Test func aFailedPermissionRequestReadsAsNotGranted() async throws {
+        let harness = try Harness()
+        harness.center.status = .notDetermined
+        harness.center.authorizationRequestError = MockScriptureReminderNotificationCenter.AddFailed()
+        let scheduler = harness.makeScheduler()
+
+        #expect(await scheduler.requestAuthorizationAndEnable() == false)
+        #expect(!scheduler.isEnabled)
+    }
+
+    @Test func optInPromptSeenPersistsAcrossInstances() async throws {
+        let harness = try Harness()
+        let scheduler = harness.makeScheduler()
+        #expect(!scheduler.hasSeenOptInPrompt)
+
+        scheduler.markOptInPromptSeen()
+
+        #expect(scheduler.hasSeenOptInPrompt)
+        #expect(harness.makeScheduler().hasSeenOptInPrompt)
+    }
+
+    @Test func refreshReadsTheCurrentSystemStatus() async throws {
+        let harness = try Harness()
+        harness.center.status = .provisional
+        let scheduler = harness.makeScheduler()
+        #expect(scheduler.authorizationStatus == .notDetermined)
+
+        await scheduler.refreshAuthorizationStatus()
+
+        #expect(scheduler.authorizationStatus == .provisional)
+    }
+
     // MARK: Replacement and cancellation
 
     @Test func newerSermonReplacesTheOlderRunOnlyAfterItsOwnIsInPlace() async throws {

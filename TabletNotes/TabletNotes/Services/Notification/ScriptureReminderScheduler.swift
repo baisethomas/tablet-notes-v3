@@ -9,6 +9,8 @@ import UserNotifications
 /// stand in for the system center (TAB-119).
 protocol ScriptureReminderNotificationCenter: AnyObject {
     func authorizationStatus() async -> UNAuthorizationStatus
+    /// Shows the system permission prompt. True when the user allowed alerts.
+    func requestAuthorization() async throws -> Bool
     func add(_ request: UNNotificationRequest) async throws
     func pendingRequestIdentifiers() async -> [String]
     func removePendingRequests(withIdentifiers identifiers: [String])
@@ -17,6 +19,10 @@ protocol ScriptureReminderNotificationCenter: AnyObject {
 extension UNUserNotificationCenter: ScriptureReminderNotificationCenter {
     func authorizationStatus() async -> UNAuthorizationStatus {
         await notificationSettings().authorizationStatus
+    }
+
+    func requestAuthorization() async throws -> Bool {
+        try await requestAuthorization(options: [.alert, .sound, .badge])
     }
 
     func pendingRequestIdentifiers() async -> [String] {
@@ -84,7 +90,16 @@ struct BibleVerseTextFetcher: ScriptureVerseFetching {
 protocol ScriptureReminderScheduling: AnyObject {
     /// The global opt-in. Turning it off cancels every pending reminder.
     var isEnabled: Bool { get }
+    /// The system permission as of the last `refreshAuthorizationStatus()`.
+    var authorizationStatus: UNAuthorizationStatus { get }
+    /// True once the in-context opt-in card has been answered either way.
+    var hasSeenOptInPrompt: Bool { get }
     func setEnabled(_ enabled: Bool) async
+    func refreshAuthorizationStatus() async
+    /// Asks for permission if needed and turns the feature on when granted.
+    /// Returns whether the feature is on afterwards.
+    func requestAuthorizationAndEnable() async -> Bool
+    func markOptInPromptSeen()
     /// Schedules reminders for the newest eligible sermon. Safe to call on every
     /// launch, foreground, and summary completion: a sermon is scheduled once.
     func reconcile() async
@@ -112,8 +127,11 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
 
     static let enabledDefaultsKey = "scriptureRemindersEnabled"
     static let scheduledSermonIdsDefaultsKey = "scriptureReminders.scheduledSermonIds"
+    static let optInPromptSeenDefaultsKey = "scriptureReminders.optInPromptSeen"
 
     private(set) var isEnabled: Bool
+    private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    private(set) var hasSeenOptInPrompt: Bool
 
     @ObservationIgnored private let modelContext: ModelContext
     @ObservationIgnored private let planner: ScriptureReminderPlanner
@@ -143,6 +161,7 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
         self.calendar = calendar
         self.now = now
         self.isEnabled = userDefaults.bool(forKey: Self.enabledDefaultsKey)
+        self.hasSeenOptInPrompt = userDefaults.bool(forKey: Self.optInPromptSeenDefaultsKey)
     }
 
     // MARK: Opt-in
@@ -155,6 +174,37 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
         } else {
             await cancelAllReminders()
         }
+    }
+
+    // MARK: Permission
+
+    func refreshAuthorizationStatus() async {
+        authorizationStatus = await notificationCenter.authorizationStatus()
+    }
+
+    func requestAuthorizationAndEnable() async -> Bool {
+        markOptInPromptSeen()
+        await refreshAuthorizationStatus()
+        if authorizationStatus == .notDetermined {
+            // A thrown error reads as "not granted"; the status refresh below
+            // reports whatever the system actually recorded.
+            _ = try? await notificationCenter.requestAuthorization()
+            await refreshAuthorizationStatus()
+        }
+        guard isAuthorized(authorizationStatus) else {
+            if isEnabled {
+                await setEnabled(false)
+            }
+            return false
+        }
+        await setEnabled(true)
+        return true
+    }
+
+    func markOptInPromptSeen() {
+        guard !hasSeenOptInPrompt else { return }
+        hasSeenOptInPrompt = true
+        userDefaults.set(true, forKey: Self.optInPromptSeenDefaultsKey)
     }
 
     // MARK: Reconcile
@@ -238,7 +288,12 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     // MARK: Eligibility
 
     private func isAuthorized() async -> Bool {
-        switch await notificationCenter.authorizationStatus() {
+        await refreshAuthorizationStatus()
+        return isAuthorized(authorizationStatus)
+    }
+
+    private func isAuthorized(_ status: UNAuthorizationStatus) -> Bool {
+        switch status {
         case .authorized, .provisional, .ephemeral:
             return true
         case .denied, .notDetermined:

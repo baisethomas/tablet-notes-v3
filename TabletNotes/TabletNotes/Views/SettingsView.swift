@@ -35,6 +35,8 @@ struct SettingsView: View {
     var onShowOnboarding: (() -> Void)?
     var onNavigateToAccount: (() -> Void)?
     var sermonService: SermonService?
+    /// TAB-119. Nil hides the Notifications section (previews, until the app root wires it).
+    var scriptureReminders: (any ScriptureReminderScheduling)?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -111,6 +113,15 @@ struct SettingsView: View {
                     SettingsSection(title: "Bible") {
                         VStack(spacing: 0) {
                             BibleTranslationSettingRow()
+                        }
+                    }
+
+                    // Notifications (TAB-119)
+                    if let scriptureReminders {
+                        SettingsSection(title: "Notifications") {
+                            VStack(spacing: 0) {
+                                ScriptureReminderSettingRow(scheduler: scriptureReminders)
+                            }
                         }
                     }
                     

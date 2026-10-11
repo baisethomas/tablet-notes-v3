@@ -7,6 +7,10 @@ import UserNotifications
 /// Not actor-isolated: the scheduler suite only drives it from the main actor.
 final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificationCenter {
     var status: UNAuthorizationStatus = .authorized
+    /// What the system prompt answers; it also moves `status` accordingly.
+    var grantsAuthorization = true
+    var authorizationRequestError: Error?
+    private(set) var authorizationRequestCount = 0
     /// Adding a request whose identifier ends with this suffix throws.
     var failingIdentifierSuffix: String?
 
@@ -18,6 +22,13 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
 
     func authorizationStatus() async -> UNAuthorizationStatus {
         status
+    }
+
+    func requestAuthorization() async throws -> Bool {
+        authorizationRequestCount += 1
+        if let authorizationRequestError { throw authorizationRequestError }
+        status = grantsAuthorization ? .authorized : .denied
+        return grantsAuthorization
     }
 
     func add(_ request: UNNotificationRequest) async throws {
