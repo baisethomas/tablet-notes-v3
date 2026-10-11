@@ -25,7 +25,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner (`Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`), is written and verified on a Mac: it compiles unchanged and the suite passes 31/31 on the clean 18.5 simulator (2026-10-11). Next is step 2, the scheduler.
+- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner (`Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`), is verified (31/31). Step 2, the scheduler, is written and verified: `Services/Notification/ScriptureReminderScheduler.swift` (protocols `ScriptureReminderNotificationCenter`, `ScriptureVerseFetching`, `ScriptureReminderScheduling`; the live `BibleVerseTextFetcher`) plus `TabletNotesTests/Services/ScriptureReminderSchedulerTests.swift` and `Mocks/MockScriptureReminderNotificationCenter.swift` (18/18; the partial-failure rollback test was mutation-checked). The scheduler takes its notification center and verse fetcher as required init arguments (default arguments are evaluated nonisolated, and `BibleAPIService.init` is main-actor), so the app root builds `BibleVerseTextFetcher(bibleService:)` in step 4. Next is step 3: permission request, Settings toggle (drive it through `setEnabled`), and the opt-in card.
 
 ## Next
 
@@ -48,7 +48,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
-- TAB-119 branch @ ef1777a: `xcodebuild build-for-testing` green on the clean 18.5 simulator; `ScriptureReminderPlannerTests` 31/31 (2026-10-11). No source changes were needed.
+- TAB-119 branch after step 2 (2026-10-11): `xcodebuild test` on the clean 18.5 simulator, `ScriptureReminderPlannerTests` 31/31 and `ScriptureReminderSchedulerTests` 18/18; no warnings in the new files. Nothing outside `Services/Notification/` and the tests has changed yet, so no other suite was run.
 
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
@@ -68,7 +68,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-10-11 (TAB-119 step 1 built and tested on the simulator)
+- Updated: 2026-10-11 (TAB-119 step 2 scheduler written and tested)
 - By: agent (Claude Code)
 - Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)
