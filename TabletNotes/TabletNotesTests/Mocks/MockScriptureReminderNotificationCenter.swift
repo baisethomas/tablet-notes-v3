@@ -54,12 +54,17 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
 final class MockScriptureVerseFetcher: ScriptureVerseFetching {
     var verseTextByReference: [String: String] = [:]
     var shouldFail = false
+    /// Simulates a slow proxy so a test can cancel while a fetch is in flight.
+    var delayNanoseconds: UInt64 = 0
     private(set) var requestedReferences: [String] = []
 
     struct FetchFailed: Error {}
 
     func verseText(for reference: ScriptureReference) async throws -> String {
         requestedReferences.append(reference.displayText)
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
         if shouldFail { throw FetchFailed() }
         return verseTextByReference[reference.displayText] ?? "Verse text for \(reference.displayText)."
     }

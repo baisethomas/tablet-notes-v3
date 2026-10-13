@@ -822,6 +822,11 @@ class SermonService {
     func toggleSermonArchiveStatus(_ sermon: Sermon) {
         sermon.isArchived.toggle()
         try? modelContext.save()
+        if sermon.isArchived {
+            // This is the path the list's swipe and context menu use (TAB-119).
+            let sermonId = sermon.id
+            Task { await scriptureReminderScheduler?.cancelReminders(forSermonId: sermonId) }
+        }
         applyFilters()
     }
     
@@ -991,7 +996,7 @@ class SermonService {
         }
 
         // Reminders belong to the signed-in session; a sign-in later reschedules anything still eligible (TAB-119).
-        Task { await scriptureReminderScheduler?.cancelAllReminders() }
+        Task { await scriptureReminderScheduler?.resetForSignOut() }
 
         if hasUnsyncedLocalWork() {
             print("[SermonService] User signed out with unsynced local work — preserving local data (will be reclaimed on next sign-in or wiped on different-user sign-in)")

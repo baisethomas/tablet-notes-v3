@@ -197,19 +197,47 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.center.pending.isEmpty)
     }
 
-    @Test func sermonWithoutScriptureIsRecordedAndSendsNothing() async throws {
+    private static let noScriptureSummary = """
+    Application
+    Call one person this week who needs to hear that they are not forgotten.
+    """
+
+    @Test func sermonWithoutScriptureSendsNothingAndIsNotRecorded() async throws {
         let harness = try Harness()
-        let summary = """
-        Application
-        Call one person this week who needs to hear that they are not forgotten.
-        """
-        let sermon = try harness.insertSermon(recordedAt: hoursAgo(2), summaryText: summary)
+        try harness.insertSermon(recordedAt: hoursAgo(2), summaryText: Self.noScriptureSummary)
 
         await harness.makeScheduler().reconcile()
 
         #expect(harness.center.pending.isEmpty)
         let recorded = harness.defaults.stringArray(forKey: ScriptureReminderScheduler.scheduledSermonIdsDefaultsKey) ?? []
-        #expect(recorded == [sermon.id.uuidString])
+        #expect(recorded.isEmpty)
+    }
+
+    @Test func aSermonThatGainsScriptureLaterIsScheduled() async throws {
+        let harness = try Harness()
+        let sermon = try harness.insertSermon(recordedAt: hoursAgo(2), summaryText: Self.noScriptureSummary)
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+        #expect(harness.center.pending.isEmpty)
+
+        sermon.summary?.text = Self.twoScriptureSummary
+        try harness.modelContext.save()
+        await scheduler.reconcile()
+
+        #expect(harness.pendingIdentifiers(for: sermon).count == 2)
+    }
+
+    @Test func aScriptureLessNewestSermonKeepsTheOlderRun() async throws {
+        let harness = try Harness()
+        let older = try harness.insertSermon(title: "Saturday", recordedAt: hoursAgo(20))
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+
+        try harness.insertSermon(title: "Sunday", recordedAt: hoursAgo(1), summaryText: Self.noScriptureSummary)
+        await scheduler.reconcile()
+
+        #expect(harness.pendingIdentifiers(for: older).count == 2)
+        #expect(harness.center.removedIdentifiers.isEmpty)
     }
 
     @Test func nothingIsScheduledWhenDisabledOrDenied() async throws {
@@ -367,6 +395,85 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.pendingIdentifiers(for: newer).count == 2)
         #expect(harness.pendingIdentifiers(for: older).isEmpty)
         #expect(harness.center.addedIdentifiers.count == 2)
+    }
+
+    @Test func deletingTheNewestSermonLetsAnOlderOneTakeOver() async throws {
+        let harness = try Harness()
+        let older = try harness.insertSermon(title: "Saturday", recordedAt: hoursAgo(20))
+        let newer = try harness.insertSermon(title: "Sunday", recordedAt: hoursAgo(1))
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+        #expect(harness.pendingIdentifiers(for: newer).count == 2)
+        #expect(harness.pendingIdentifiers(for: older).isEmpty)
+
+        await scheduler.cancelReminders(forSermonId: newer.id)
+        harness.modelContext.delete(newer)
+        try harness.modelContext.save()
+        await scheduler.reconcile()
+
+        #expect(harness.pendingIdentifiers(for: older).count == 2)
+    }
+
+    @Test func turningOffAndOnDoesNotRepeatARun() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+        #expect(harness.center.pending.count == 2)
+
+        await scheduler.setEnabled(false)
+        #expect(harness.center.pending.isEmpty)
+        await scheduler.setEnabled(true)
+
+        #expect(harness.center.pending.isEmpty)
+        #expect(harness.center.addedIdentifiers.count == 2)
+    }
+
+    @Test func signOutResetForgetsTheScheduleRecord() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+
+        await scheduler.resetForSignOut()
+        #expect(harness.center.pending.isEmpty)
+        await scheduler.reconcile()
+
+        #expect(harness.center.pending.count == 2)
+        #expect(harness.center.addedIdentifiers.count == 4)
+    }
+
+    @Test func turningOffDuringAVerseFetchAddsNothing() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        harness.verses.delayNanoseconds = 300_000_000
+        let scheduler = harness.makeScheduler()
+
+        async let pass: Void = scheduler.reconcile()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(harness.verses.requestedReferences.count == 1)
+        await scheduler.setEnabled(false)
+        await pass
+
+        #expect(harness.center.addedIdentifiers.isEmpty)
+        #expect(harness.center.pending.isEmpty)
+        let recorded = harness.defaults.stringArray(forKey: ScriptureReminderScheduler.scheduledSermonIdsDefaultsKey) ?? []
+        #expect(recorded.isEmpty)
+    }
+
+    @Test func deletingDuringAVerseFetchAddsNothing() async throws {
+        let harness = try Harness()
+        let sermon = try harness.insertSermon(recordedAt: hoursAgo(2))
+        harness.verses.delayNanoseconds = 300_000_000
+        let scheduler = harness.makeScheduler()
+
+        async let pass: Void = scheduler.reconcile()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await scheduler.cancelReminders(forSermonId: sermon.id)
+        await pass
+
+        #expect(harness.center.addedIdentifiers.isEmpty)
+        #expect(harness.center.pending.isEmpty)
     }
 
     @Test func cancellingASermonRemovesOnlyItsRequests() async throws {

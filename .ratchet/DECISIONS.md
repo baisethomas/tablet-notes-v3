@@ -136,3 +136,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** Reminders exist only on the device that processed or synced the sermon within 48 hours. The opt-in does not sync across devices. At most one sermon's reminder run is pending at a time.
 - **Revisit when:** The owner wants configurable time/count, AI-written lines, or cross-device preference sync (the last would need a `@Model` or Supabase change and a migration call).
 - **Approved by:** owner (answers to the plan questions, 2026-09-24)
+
+### D-20261013-1100-scripture-reminder-week-owner — The newest eligible sermon with a plan owns the reminder week; only the scheduled sermon is recorded
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-10-13
+- **Decision:** `ScriptureReminderScheduler.reconcile()` selects the newest eligible sermon whose planner output is non-empty. If that sermon is already recorded as scheduled, nothing changes (older sermons never replace a newer run). If it is not, its run is added, older runs are removed only after the new run is fully in place, and only that sermon's id is recorded. A sermon with no scripture is skipped and never recorded. Turning the feature off keeps the record (off/on does not repeat a run); a user-initiated sign-out clears it. Every cancel path bumps a generation that an in-flight reconcile re-checks after each await, so nothing is added behind a cancel.
+- **Why:** PR #84 review (Ternary, Codex). The first cut recorded every eligible sermon as scheduled when one was, which meant a scripture-less newest sermon wiped the previous run and a deleted newest sermon left the week empty; and opt-out erased the record, so off/on re-ran the same sermon. Refines D-20260924-1930 without changing its "one run pending at a time" rule.
+- **Rejected / alternatives:** Keeping the "mark all eligible" supersede rule and documenting delete-then-nothing: rejected, the user loses the week for no reason. Serialising cancels by awaiting the in-flight reconcile: rejected in favour of the generation check, which also covers a cancel that lands between adds.
+- **Consequences:** After the newest sermon is deleted or archived, the next sync pass schedules the next eligible sermon. A summary that gains scripture later gets its run. The scheduled-id record is per install and survives opt-out.
+- **Revisit when:** The owner wants runs for several sermons in one week, or configurable count/time.
+- **Approved by:** agent (medium impact, within the TAB-119 scope); surfaced in the PR #84 review round.

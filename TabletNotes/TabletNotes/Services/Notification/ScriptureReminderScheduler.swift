@@ -104,7 +104,12 @@ protocol ScriptureReminderScheduling: AnyObject {
     /// launch, foreground, and summary completion: a sermon is scheduled once.
     func reconcile() async
     func cancelReminders(forSermonId sermonId: UUID) async
+    /// Removes every pending reminder but keeps the record of which sermons
+    /// were scheduled, so turning the feature off and on does not repeat a run.
     func cancelAllReminders() async
+    /// Sign-out: removes every pending reminder and forgets the schedule record,
+    /// so a later sign-in reschedules whatever is still eligible.
+    func resetForSignOut() async
 }
 
 /// Schedules a sermon's scripture reminders as local notifications (TAB-119).
@@ -143,6 +148,9 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     /// Serialises overlapping `reconcile()` calls (launch and foreground can
     /// arrive together) so two passes never schedule the same sermon twice.
     @ObservationIgnored private var inFlight: Task<Void, Never>?
+    /// Bumped by every cancel path. A reconcile that started before the bump
+    /// re-checks it after each await so it never adds requests behind a cancel.
+    @ObservationIgnored private var cancellationGeneration = 0
 
     init(
         modelContext: ModelContext,
@@ -224,18 +232,34 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     private func reconcileNow() async {
         guard isEnabled else { return }
         guard await isAuthorized() else { return }
+        let generation = cancellationGeneration
 
         let eligible = eligibleSermons()
         var scheduled = scheduledSermonIds()
         // Ids outside the window can never be scheduled again; drop them so the set stays small.
         scheduled.formIntersection(eligible.map(\.id))
 
-        guard let sermon = eligible.first(where: { !scheduled.contains($0.id) }) else {
+        // The newest eligible sermon that has something to say owns the week. A
+        // sermon with no scripture is skipped, not recorded, so a later summary
+        // that does carry scripture still gets its run; and once the owner is
+        // scheduled, older sermons stay as they are until the owner goes away
+        // (deleted or archived), at which point the next one takes over.
+        guard let (sermon, plan) = eligible.lazy
+            .map({ ($0, self.plan(for: $0)) })
+            .first(where: { !$0.1.isEmpty }) else {
+            saveScheduledSermonIds(scheduled)
+            return
+        }
+        guard !scheduled.contains(sermon.id) else {
             saveScheduledSermonIds(scheduled)
             return
         }
 
-        let requests = await requests(for: sermon)
+        let requests = await requests(for: sermon, plan: plan)
+        // A cancel (feature off, delete, archive, sign-out) that ran while the
+        // verse fetches were in flight wins: nothing is added behind it.
+        guard isStillWanted(generation) else { return }
+
         var added: [String] = []
         for request in requests {
             do {
@@ -244,6 +268,10 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
             } catch {
                 // Partial failure is failure: undo what went in and leave the sermon
                 // unscheduled so the next pass retries from scratch.
+                notificationCenter.removePendingRequests(withIdentifiers: added)
+                return
+            }
+            guard isStillWanted(generation) else {
                 notificationCenter.removePendingRequests(withIdentifiers: added)
                 return
             }
@@ -259,15 +287,18 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
             notificationCenter.removePendingRequests(withIdentifiers: others)
         }
 
-        // Every other eligible sermon is superseded by this one; marking them
-        // keeps a later pass from scheduling an older sermon over the newest.
-        scheduled.formUnion(eligible.map(\.id))
+        scheduled.insert(sermon.id)
         saveScheduledSermonIds(scheduled)
+    }
+
+    private func isStillWanted(_ generation: Int) -> Bool {
+        isEnabled && generation == cancellationGeneration
     }
 
     // MARK: Cancel
 
     func cancelReminders(forSermonId sermonId: UUID) async {
+        cancellationGeneration += 1
         let prefix = Self.identifierPrefix + sermonId.uuidString + "."
         let identifiers = await notificationCenter.pendingRequestIdentifiers().filter { $0.hasPrefix(prefix) }
         if !identifiers.isEmpty {
@@ -276,12 +307,17 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     }
 
     func cancelAllReminders() async {
+        cancellationGeneration += 1
         let identifiers = await notificationCenter.pendingRequestIdentifiers().filter {
             $0.hasPrefix(Self.identifierPrefix)
         }
         if !identifiers.isEmpty {
             notificationCenter.removePendingRequests(withIdentifiers: identifiers)
         }
+    }
+
+    func resetForSignOut() async {
+        await cancelAllReminders()
         saveScheduledSermonIds([])
     }
 
@@ -329,13 +365,16 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
 
     // MARK: Requests
 
-    private func requests(for sermon: Sermon) async -> [UNNotificationRequest] {
-        let plan = planner.plan(
+    private func plan(for sermon: Sermon) -> [PlannedScriptureReminder] {
+        planner.plan(
             summaryText: sermon.summary?.text ?? "",
             transcriptText: sermon.transcript?.text,
             now: now(),
             calendar: calendar
         )
+    }
+
+    private func requests(for sermon: Sermon, plan: [PlannedScriptureReminder]) async -> [UNNotificationRequest] {
         var requests: [UNNotificationRequest] = []
         for reminder in plan {
             // Verse text is fetched at scheduling time because the body is static.
