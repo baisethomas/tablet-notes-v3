@@ -283,6 +283,12 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
         let others = await notificationCenter.pendingRequestIdentifiers().filter {
             $0.hasPrefix(Self.identifierPrefix) && !added.contains($0)
         }
+        // Last await before the record is written: a sign-out reset that ran
+        // meanwhile has already cleared it, and must not be overwritten.
+        guard isStillWanted(generation) else {
+            notificationCenter.removePendingRequests(withIdentifiers: added)
+            return
+        }
         if !others.isEmpty {
             notificationCenter.removePendingRequests(withIdentifiers: others)
         }

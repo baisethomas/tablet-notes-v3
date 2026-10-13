@@ -13,6 +13,9 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
     private(set) var authorizationRequestCount = 0
     /// Adding a request whose identifier ends with this suffix throws.
     var failingIdentifierSuffix: String?
+    /// Delays the next `pendingRequestIdentifiers()` call only, so a test can
+    /// run a cancel to completion while one reconcile is suspended there.
+    var nextPendingLookupDelayNanoseconds: UInt64 = 0
 
     private(set) var pending: [UNNotificationRequest] = []
     private(set) var addedIdentifiers: [String] = []
@@ -41,7 +44,12 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
     }
 
     func pendingRequestIdentifiers() async -> [String] {
-        pending.map(\.identifier)
+        if nextPendingLookupDelayNanoseconds > 0 {
+            let delay = nextPendingLookupDelayNanoseconds
+            nextPendingLookupDelayNanoseconds = 0
+            try? await Task.sleep(nanoseconds: delay)
+        }
+        return pending.map(\.identifier)
     }
 
     func removePendingRequests(withIdentifiers identifiers: [String]) {

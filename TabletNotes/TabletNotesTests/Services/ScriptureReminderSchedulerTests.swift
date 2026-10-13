@@ -476,6 +476,25 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.center.pending.isEmpty)
     }
 
+    @Test func signOutDuringTheFinalPendingLookupLeavesNoRecordAndNoRequests() async throws {
+        let harness = try Harness()
+        try harness.insertSermon(recordedAt: hoursAgo(2))
+        // The reconcile's own lookup, after its adds, is the one that stalls.
+        harness.center.nextPendingLookupDelayNanoseconds = 300_000_000
+        let scheduler = harness.makeScheduler()
+
+        async let pass: Void = scheduler.reconcile()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(harness.center.addedIdentifiers.count == 2)
+        await scheduler.resetForSignOut()
+        #expect(harness.center.pending.isEmpty)
+        await pass
+
+        #expect(harness.center.pending.isEmpty)
+        let recorded = harness.defaults.stringArray(forKey: ScriptureReminderScheduler.scheduledSermonIdsDefaultsKey) ?? []
+        #expect(recorded.isEmpty)
+    }
+
     @Test func cancellingASermonRemovesOnlyItsRequests() async throws {
         let harness = try Harness()
         let sermon = try harness.insertSermon(recordedAt: hoursAgo(2))
