@@ -56,7 +56,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Open risks / assumptions
 
-- TAB-119: the scripture analyzer drops a reference that follows another word ("in Romans 8:28"). The planner works around the line-break case only. The transcript fallback is therefore weak until the analyzer is fixed; that fix is a separate issue.
+- TAB-119: reminders depend on the summary carrying scripture. Two upstream gaps found on the first device test (2026-10-14) and filed: TAB-120, the summarize model returns narrative without the Scripture References section about a third of the time; TAB-121, the analyzer cannot read spoken references ("Joshua 14, verse 12") or a written one that follows another word ("in Romans 8:28"), so the transcript fallback is weak until it is fixed. Neither is in PR #84's scope.
 
 - App Review may exercise the app on a fresh Sign in with Apple account (trial state); the always-visible Premium row is what addresses that.
 - The auto-stop save handler skips the save if the stop event carries no session id. Unreachable while audio is present, but it should fall back rather than skip if that invariant ever changes.
@@ -68,7 +68,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-10-13 (TAB-119 PR #84 review rounds 1 and 2 addressed; device verification pending owner)
+- Updated: 2026-10-14 (TAB-119 PR #84 awaiting device check; TAB-120/121 filed from the first device test)
 - By: agent (Claude Code)
 - Branch/worktree: `claude/sermon-scripture-notifications-07g812`
 - Last known-good commit: 3a615c5 (main)
