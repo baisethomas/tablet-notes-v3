@@ -70,6 +70,41 @@ struct SermonServiceDeleteTests {
         )
     }
 
+    // MARK: - Scripture reminder cancels (TAB-119)
+
+    /// The list's swipe and context menu archive through the toggle, not
+    /// `archiveSermon`, so the cancel has to live on this path.
+    @Test func archivingThroughTheToggleCancelsThatSermonsReminders() async throws {
+        let modelContext = try makeModelContext()
+        let service = makeSermonService(modelContext: modelContext, syncService: nil)
+        let reminders = MockScriptureReminderScheduling()
+        service.setScriptureReminderScheduler(reminders)
+        let sermon = try insertSermon(modelContext: modelContext)
+
+        service.toggleSermonArchiveStatus(sermon)
+        for _ in 0..<20 where reminders.cancelledSermonIds.isEmpty {
+            await Task.yield()
+        }
+        #expect(reminders.cancelledSermonIds == [sermon.id])
+
+        // Unarchiving is not a cancel.
+        service.toggleSermonArchiveStatus(sermon)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(reminders.cancelledSermonIds == [sermon.id])
+    }
+
+    @Test func deletingCancelsThatSermonsReminders() async throws {
+        let modelContext = try makeModelContext()
+        let service = makeSermonService(modelContext: modelContext, syncService: nil)
+        let reminders = MockScriptureReminderScheduling()
+        service.setScriptureReminderScheduler(reminders)
+        let sermon = try insertSermon(modelContext: modelContext)
+
+        try await service.deleteSermon(sermon)
+
+        #expect(reminders.cancelledSermonIds == [sermon.id])
+    }
+
     private func insertSermon(
         modelContext: ModelContext,
         remoteId: String? = nil
