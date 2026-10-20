@@ -414,6 +414,27 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.pendingIdentifiers(for: older).count == 2)
     }
 
+    @Test func deletingTheOwnerAfterItReplacedAnOlderRunGivesTheOlderOneItsRunBack() async throws {
+        let harness = try Harness()
+        let older = try harness.insertSermon(title: "Saturday", recordedAt: hoursAgo(20))
+        let scheduler = harness.makeScheduler()
+        await scheduler.reconcile()
+        #expect(harness.pendingIdentifiers(for: older).count == 2)
+
+        let newer = try harness.insertSermon(title: "Sunday", recordedAt: hoursAgo(1))
+        await scheduler.reconcile()
+        #expect(harness.pendingIdentifiers(for: newer).count == 2)
+        #expect(harness.pendingIdentifiers(for: older).isEmpty)
+
+        await scheduler.cancelReminders(forSermonId: newer.id)
+        harness.modelContext.delete(newer)
+        try harness.modelContext.save()
+        await scheduler.reconcile()
+
+        #expect(harness.pendingIdentifiers(for: older).count == 2)
+        #expect(harness.center.pending.count == 2)
+    }
+
     @Test func turningOffAndOnDoesNotRepeatARun() async throws {
         let harness = try Harness()
         try harness.insertSermon(recordedAt: hoursAgo(2))

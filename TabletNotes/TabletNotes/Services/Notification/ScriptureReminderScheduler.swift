@@ -293,8 +293,10 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
             notificationCenter.removePendingRequests(withIdentifiers: others)
         }
 
-        scheduled.insert(sermon.id)
-        saveScheduledSermonIds(scheduled)
+        // The record holds the current owner only. Keeping superseded ids would
+        // make an older sermon read as "already scheduled" after the owner is
+        // deleted or archived, and it would never get its run back.
+        saveScheduledSermonIds([sermon.id])
     }
 
     private func isStillWanted(_ generation: Int) -> Bool {
