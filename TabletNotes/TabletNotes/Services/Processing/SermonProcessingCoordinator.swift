@@ -35,6 +35,10 @@ final class SermonProcessingCoordinator {
 
     var processingDispatcher: (any ProcessingJobDispatching)?
     var processingObserver: ProcessingObserver?
+    /// Scripture reminders (TAB-119). Reconciled after every sync pass because
+    /// every lifecycle hook (launch, foreground, auth, network, maintenance)
+    /// ends in one, and a pulled or locally completed summary is visible by then.
+    var scriptureReminderScheduler: (any ScriptureReminderScheduling)?
 
     private init() {}
 
@@ -201,10 +205,10 @@ final class SermonProcessingCoordinator {
     private func triggerSync() async {
         if let syncRunner {
             await syncRunner()
-            return
+        } else {
+            await syncService?.syncAllData()
         }
-
-        await syncService?.syncAllData()
+        await scriptureReminderScheduler?.reconcile()
     }
 
     func handleCompletedRecording(

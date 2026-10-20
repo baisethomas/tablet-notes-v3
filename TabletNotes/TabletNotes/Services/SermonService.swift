@@ -50,6 +50,8 @@ class SermonService {
     private let modelContext: ModelContext
     private let authManager: AuthenticationManager
     private var syncService: (any SyncServiceProtocol)?
+    /// Injected by the app root (TAB-119). Nil in tests and previews.
+    private var scriptureReminderScheduler: (any ScriptureReminderScheduling)?
     private var subscriptionService: (any SubscriptionServiceProtocol)?
     private var hasAttemptedInterruptedRecordingRecovery = false
     private var recoveredInterruptedSermonIDs: [UUID] = []
@@ -97,6 +99,10 @@ class SermonService {
     func setSyncService(_ syncService: any SyncServiceProtocol) {
         self.syncService = syncService
         print("[SermonService] SyncService injected")
+    }
+
+    func setScriptureReminderScheduler(_ scheduler: any ScriptureReminderScheduling) {
+        self.scriptureReminderScheduler = scheduler
     }
     
     @MainActor
@@ -789,6 +795,8 @@ class SermonService {
         sermon.isArchived = true
         markSermonForSync(sermon.id)
         try? modelContext.save()
+        let sermonId = sermon.id
+        Task { await scriptureReminderScheduler?.cancelReminders(forSermonId: sermonId) }
         
         // Trigger sync if user has sync enabled
         if let currentUser = authManager.currentUser, currentUser.canSync {
@@ -814,6 +822,11 @@ class SermonService {
     func toggleSermonArchiveStatus(_ sermon: Sermon) {
         sermon.isArchived.toggle()
         try? modelContext.save()
+        if sermon.isArchived {
+            // This is the path the list's swipe and context menu use (TAB-119).
+            let sermonId = sermon.id
+            Task { await scriptureReminderScheduler?.cancelReminders(forSermonId: sermonId) }
+        }
         applyFilters()
     }
     
@@ -902,6 +915,8 @@ class SermonService {
         // The cached transcript lives in UserDefaults, outside SwiftData, so it
         // survives the row delete unless removed explicitly (TAB-79 review).
         TranscriptSnapshotStore.remove(for: sermonId)
+        // Pending reminders would otherwise open a sermon that no longer exists (TAB-119).
+        await scriptureReminderScheduler?.cancelReminders(forSermonId: sermonId)
         if let index = sermons.firstIndex(where: { $0.id == sermonId }) {
             sermons.remove(at: index)
             modelContext.delete(sermonToDelete)
@@ -979,6 +994,9 @@ class SermonService {
             print("[SermonService] Session became unauthenticated without user sign-out — preserving local data")
             return
         }
+
+        // Reminders belong to the signed-in session; a sign-in later reschedules anything still eligible (TAB-119).
+        Task { await scriptureReminderScheduler?.resetForSignOut() }
 
         if hasUnsyncedLocalWork() {
             print("[SermonService] User signed out with unsynced local work — preserving local data (will be reclaimed on next sign-in or wiped on different-user sign-in)")

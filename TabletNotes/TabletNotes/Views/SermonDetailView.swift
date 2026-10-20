@@ -101,6 +101,8 @@ struct SermonDetailView: View {
     var authManager: AuthenticationManager
     let sermonID: UUID
     var onBack: (() -> Void)?
+    /// TAB-119. Nil hides the opt-in card (previews, until the app root wires it).
+    var scriptureReminders: (any ScriptureReminderScheduling)?
 
     @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: Tab = .summary
@@ -483,6 +485,13 @@ struct SermonDetailView: View {
                 default:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
+                            if let scriptureReminders,
+                               sermon.summaryStatus == "complete",
+                               !scriptureReminders.isEnabled,
+                               !scriptureReminders.hasSeenOptInPrompt {
+                                ScriptureReminderOptInCard(scheduler: scriptureReminders)
+                                    .padding(.horizontal)
+                            }
                             SummaryTextView(
                                 summaryText: summaryTextSnapshot,
                                 serviceType: sermon.serviceType

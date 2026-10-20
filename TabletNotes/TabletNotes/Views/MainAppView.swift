@@ -48,6 +48,9 @@ struct MainAppView: View {
     @State private var recordingSaveErrorMessage: String? = nil
     @State private var pendingRecordingSave: PendingRecordingSave? = nil
     private let processingCoordinator = SermonProcessingCoordinator.shared
+    /// Built by the app root (TAB-119); nil only in previews.
+    private let scriptureReminderScheduler: ScriptureReminderScheduler?
+    private let reminderTapRouter = ScriptureReminderTapRouter.shared
 
     private struct PendingRecordingSave {
         let audioURL: URL
@@ -64,8 +67,14 @@ struct MainAppView: View {
     /// but constructing a SermonService here still ran its side effects —
     /// fetch, interrupted-recording scan, auth observers — on a throwaway
     /// instance, mid-recording. Nothing with side effects may be built here.
-    init(modelContext: ModelContext, sermonService: SermonService, syncService: SyncService) {
+    init(
+        modelContext: ModelContext,
+        sermonService: SermonService,
+        syncService: SyncService,
+        scriptureReminderScheduler: ScriptureReminderScheduler? = nil
+    ) {
         self.modelContext = modelContext
+        self.scriptureReminderScheduler = scriptureReminderScheduler
         _sermonService = State(initialValue: sermonService)
         _syncService = State(initialValue: syncService)
         _backgroundSyncManager = StateObject(
@@ -286,12 +295,17 @@ struct MainAppView: View {
                     sermonService: sermonService,
                     syncService: syncService
                 )
+                processingCoordinator.scriptureReminderScheduler = scriptureReminderScheduler
 
                 checkTrialStatus()
+                openSermonFromReminderTapIfPending()
 
                 Task { @MainActor in
                     await processingCoordinator.handleAppLaunch()
                 }
+            }
+            .onChange(of: reminderTapRouter.pendingSermonId) { _, _ in
+                openSermonFromReminderTapIfPending()
             }
             .onChange(of: authManager.currentUser?.id) { _, newUserId in
                 if newUserId != nil {
@@ -462,6 +476,13 @@ struct MainAppView: View {
         }
     }
 
+    /// A scripture reminder tap opens its sermon (TAB-119). Checked on appear
+    /// as well as on change: a cold-start tap can land before this view exists.
+    private func openSermonFromReminderTapIfPending() {
+        guard let sermonId = reminderTapRouter.consumePendingSermonId() else { return }
+        currentScreen = .sermonDetail(id: sermonId)
+    }
+
     private func checkTrialStatus() {
         guard let user = authManager.currentUser else { return }
 
@@ -531,7 +552,8 @@ struct MainAppView: View {
                 sermonService: sermonService,
                 authManager: authManager,
                 sermonID: sermonID,
-                onBack: { currentScreen = .sermons }
+                onBack: { currentScreen = .sermons },
+                scriptureReminders: scriptureReminderScheduler
             )
         case .sermons:
             SermonListView(
@@ -558,7 +580,8 @@ struct MainAppView: View {
                 },
                 onNavigateToAccount: {
                     currentScreen = .account
-                }
+                },
+                scriptureReminders: scriptureReminderScheduler
             )
         case .account:
             AccountView(
