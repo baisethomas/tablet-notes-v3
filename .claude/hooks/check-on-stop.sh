@@ -25,7 +25,7 @@
 set -uo pipefail
 
 MAX_BLOCKS=3
-IOS_SIM_ID="2BAC53A3-EC5B-40DE-A981-7F7A637A555E"   # clean iOS 18.5 sim named in AGENTS.md
+IOS_SIM_ID="A476D5E8-216E-481B-ADFE-6EB2E52FBEAC"   # iPhone 16 Pro "26.2 tests", named in AGENTS.md (the 18.5 sim was deleted 2026-10-19)
 
 # shellcheck source=lib-payload.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib-payload.sh"
