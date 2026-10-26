@@ -25,7 +25,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- Nothing in flight. TAB-117 merged in PR #81; next work starts from the list below on a fresh branch.
+- TAB-122 job-less sermon reconciliation (this branch, cut from `main` @ 320fed0). Sermons with a non-terminal stage and no `processing_jobs` row were invisible to both the reaper (iterates jobs) and the client sweep (re-asks only for pending/failed), so they read "processing" forever; prod on 2026-10-25 had 19 transcription and 14 summary stages in that state across 7 users. Fix: `jobs-reaper-background` runs a step 0 before its job fetch that writes the missing queued row (same payload and idempotency key as `jobs.js`, `ON CONFLICT DO NOTHING`, capped at 10 per sweep, newest first, stored path re-authorized with `isOwnedObjectPath`, fails closed on any lookup error, isolated so it never stops the sweep). A sermon that already has a transcript gets its stage advanced instead of a re-billed job. Pure logic in `utils/joblessSermons.js`. Next: PR open, owner review, merge on the owner's say-so, then verify the five sermons named in TAB-122 gain job rows. Follow-ups filed: TAB-123 (widen the client sweep to `processing`/`preparing`), TAB-124 (refuse to upload recovered audio with no `moov` atom, then stop producing it), TAB-125 (daily health metric counts job-less and dead-job sermons).
+- TAB-119 (scripture reminders) lives on its own branch with PR #84 open; its state is in that branch's copy of this file.
 
 ## Next
 
@@ -48,6 +49,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
+- TAB-122 branch @ 01e28ac: `npm test` 267/267 (25 new in `joblessSermons.test.js`; seven guard mutations each fail at least one test), `node --check` on the reaper and the util. The reconciler's exact `or()` filter returned HTTP 200 and the expected status mix against prod read-only. Not yet exercised end to end: that happens on merge (auto-deploy) and is verified by re-querying the TAB-122 sermons.
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
 - Harness on `main` @ 0fd39d7 (TAB-116): `.claude/hooks/test-hooks.sh` 261/261 (upstream Ratchet assertions with the ordinary-push examples retargeted to a feature branch, plus the TabletNotes hard-stop/allow assertions: implicit pushes while `main` is checked out or tracked, ANSI-C quoted flags, process substitution, aliases behind global options); the stop gate run from the repo passes idle and runs `npm test` when an API file is present; `npm test` 235/235. No Swift changed, so no iOS build was required.
@@ -64,7 +66,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-09-15 (1.0.1 live)
-- By: agent (Claude Code, Fable; after Codex TAB-117)
-- Branch/worktree: `main`
+- Updated: 2026-10-25 (TAB-122 fix committed; PR opening)
+- By: agent (Claude Code, Fable)
+- Branch/worktree: `baise/tab-122-reconcile-jobless-sermons`
 - Last known-good commit: 3a615c5 (main)
