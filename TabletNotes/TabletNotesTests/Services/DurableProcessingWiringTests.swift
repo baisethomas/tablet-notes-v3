@@ -143,6 +143,31 @@ struct DurableProcessingWiringTests {
         #expect(dispatcher.lastError == nil)
     }
 
+    @Test func liveConfirmationExpiresAndADeliberateRetryClearsRemembrance() async {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let sermonId = UUID()
+        let mock = MockJobRequester(result: .success(
+            RemoteProcessingJob(id: "j", sermonLocalId: sermonId, kind: .transcription, status: .running, lastError: nil)
+        ))
+        let dispatcher = ProcessingJobDispatcher(client: mock, liveConfirmationTTL: 60, now: { clock })
+
+        #expect(dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: sermonId) == false)
+        _ = await dispatcher.dispatch(sermonLocalId: sermonId)
+        #expect(dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: sermonId))
+
+        clock = clock.addingTimeInterval(61)
+        #expect(dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: sermonId) == false)
+
+        _ = await dispatcher.dispatch(sermonLocalId: sermonId)
+        #expect(dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: sermonId))
+        // retry: true must reach the server even though the job is remembered.
+        mock.result = .success(
+            RemoteProcessingJob(id: "j", sermonLocalId: sermonId, kind: .transcription, status: .failed, lastError: "x")
+        )
+        _ = await dispatcher.dispatch(sermonLocalId: sermonId, retry: true)
+        #expect(dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: sermonId) == false)
+    }
+
     // MARK: - Coordinator gating
 
     final class SpyDispatcher: ProcessingJobDispatching {

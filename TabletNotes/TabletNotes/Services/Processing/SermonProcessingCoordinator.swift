@@ -344,7 +344,11 @@ final class SermonProcessingCoordinator {
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
                 sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed"
-            }
+                    || sermon.transcriptionStatus == "processing" || sermon.transcriptionStatus == "preparing"
+            },
+            // Newest first: if the hourly jobs limit bites mid-sweep, today's
+            // recording must win over a months-old stuck one.
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
         )
 
         guard let candidates = try? modelContext.fetch(descriptor) else { return }
@@ -365,10 +369,15 @@ final class SermonProcessingCoordinator {
         //             legacy queue is no longer pumped, so merely skipping these
         //             would strand the sermon pending forever.
         let legacy = legacyTranscriptionJobs(in: modelContext)
-        let pending = uploaded.filter { !legacy.running.contains($0.id) }
+        let dispatcher = durableDispatcher()
+        // Skip what the server already told us it owns (live job) or gave up on
+        // (exhausted): re-asking either burns the 20/hr jobs limit for nothing.
+        let pending = uploaded.filter {
+            !legacy.running.contains($0.id)
+                && !dispatcher.shouldSkipAutomaticDispatch(sermonLocalId: $0.id)
+        }
         guard !pending.isEmpty else { return }
 
-        let dispatcher = durableDispatcher()
         for sermon in pending {
             let adoptedJob = legacy.queued[sermon.id]
 
