@@ -343,15 +343,27 @@ final class SermonProcessingCoordinator {
         // done in memory below, over an already-small result set.
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
-                sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed"
-            }
+                sermon.transcriptionStatus == "pending"
+                    || sermon.transcriptionStatus == "failed"
+                    || sermon.transcriptionStatus == "processing"
+            },
+            // Newest first: if the jobs rate limit bites mid-sweep, it is the
+            // old backlog that waits, not the recording just made (TAB-123).
+            sortBy: [SortDescriptor(\Sermon.date, order: .reverse)]
         )
 
         guard let candidates = try? modelContext.fetch(descriptor) else { return }
 
         // Only sermons whose audio actually reached the server can be processed;
-        // the rest are waiting on a sync push that hasn't happened yet.
-        let uploaded = candidates.filter { $0.remoteId != nil }
+        // the rest are waiting on a sync push that hasn't happened yet. A
+        // `processing` sermon with no job row is re-asked too; POST /api/jobs
+        // returns the existing row otherwise. Sermons the server already
+        // reported exhausted are skipped so a spent backlog cannot drain the
+        // hourly jobs limit every sweep.
+        let dispatcherForCheck = durableDispatcher()
+        let uploaded = candidates.filter {
+            $0.remoteId != nil && !dispatcherForCheck.isExhausted($0.id)
+        }
         guard !uploaded.isEmpty else { return }
 
         // Exactly one pipeline may own a sermon, and the legacy queue's two
