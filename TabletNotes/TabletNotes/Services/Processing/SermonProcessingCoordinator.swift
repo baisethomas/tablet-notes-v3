@@ -344,14 +344,21 @@ final class SermonProcessingCoordinator {
         let descriptor = FetchDescriptor<Sermon>(
             predicate: #Predicate<Sermon> { sermon in
                 sermon.transcriptionStatus == "pending" || sermon.transcriptionStatus == "failed"
+                    || sermon.transcriptionStatus == "processing" || sermon.transcriptionStatus == "preparing"
             }
         )
 
         guard let candidates = try? modelContext.fetch(descriptor) else { return }
 
         // Only sermons whose audio actually reached the server can be processed;
-        // the rest are waiting on a sync push that hasn't happened yet.
-        let uploaded = candidates.filter { $0.remoteId != nil }
+        // the rest are waiting on a sync push that hasn't happened yet. Sermons
+        // the server already reported exhausted are not re-asked, and the rest go
+        // newest-first so a backlog cannot starve a fresh recording of the
+        // jobs rate limit.
+        let dispatcher = durableDispatcher()
+        let uploaded = candidates
+            .filter { $0.remoteId != nil && !dispatcher.isExhausted(sermonLocalId: $0.id) }
+            .sorted { $0.date > $1.date }
         guard !uploaded.isEmpty else { return }
 
         // Exactly one pipeline may own a sermon, and the legacy queue's two
@@ -368,7 +375,6 @@ final class SermonProcessingCoordinator {
         let pending = uploaded.filter { !legacy.running.contains($0.id) }
         guard !pending.isEmpty else { return }
 
-        let dispatcher = durableDispatcher()
         for sermon in pending {
             let adoptedJob = legacy.queued[sermon.id]
 

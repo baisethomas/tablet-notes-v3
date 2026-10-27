@@ -263,4 +263,85 @@ struct SermonProcessingCoordinatorTests {
         #expect(savedSermon?.transcriptionStatus == "complete")
         #expect(savedSermon?.transcript?.text == "Auto-started transcript")
     }
+
+    // MARK: - TAB-123 durable sweep predicate
+
+    @MainActor
+    private final class SweepSpy: ProcessingJobDispatching {
+        var dispatched: [UUID] = []
+        var exhausted: Set<UUID> = []
+
+        func dispatch(sermonLocalId: UUID, retry: Bool) async -> Bool {
+            dispatched.append(sermonLocalId)
+            return true
+        }
+
+        func isExhausted(sermonLocalId: UUID) -> Bool { exhausted.contains(sermonLocalId) }
+    }
+
+    @MainActor
+    private func sweep(
+        sermons: [Sermon],
+        configureSpy: (SweepSpy) -> Void = { _ in }
+    ) async throws -> SweepSpy {
+        let context = try makeModelContext()
+        for sermon in sermons { context.insert(sermon) }
+        try context.save()
+
+        let coordinator = SermonProcessingCoordinator.shared
+        coordinator.resetForTesting()
+        let spy = SweepSpy()
+        configureSpy(spy)
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { true }
+        coordinator.syncRunner = {}
+        let sermonService = SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults)
+        coordinator.configure(modelContext: context, sermonService: sermonService)
+
+        await coordinator.dispatchPendingDurableJobs()
+        coordinator.resetForTesting()
+        return spy
+    }
+
+    private func sermon(status: String, remoteId: String?, date: Date = Date()) -> Sermon {
+        Sermon(
+            title: "Sweep \(status)",
+            audioFileName: "\(UUID().uuidString).m4a",
+            date: date,
+            serviceType: "Sunday",
+            transcriptionStatus: status,
+            remoteId: remoteId
+        )
+    }
+
+    @MainActor
+    @Test func sweepReAsksForAProcessingSermonWithNoDurableJob() async throws {
+        let stuck = sermon(status: "processing", remoteId: "remote-1")
+
+        let spy = try await sweep(sermons: [stuck])
+
+        #expect(spy.dispatched == [stuck.id])
+    }
+
+    @MainActor
+    @Test func sweepReAsksForAPreparingSermonButNotOneWithoutARemoteId() async throws {
+        let preparing = sermon(status: "preparing", remoteId: "remote-2")
+        let notUploaded = sermon(status: "processing", remoteId: nil)
+
+        let spy = try await sweep(sermons: [preparing, notUploaded])
+
+        #expect(spy.dispatched == [preparing.id])
+    }
+
+    @MainActor
+    @Test func sweepSkipsSermonsTheServerReportedExhaustedAndGoesNewestFirst() async throws {
+        let now = Date()
+        let old = sermon(status: "processing", remoteId: "r-old", date: now.addingTimeInterval(-3_600))
+        let new = sermon(status: "pending", remoteId: "r-new", date: now)
+        let dead = sermon(status: "processing", remoteId: "r-dead", date: now.addingTimeInterval(-60))
+
+        let spy = try await sweep(sermons: [old, new, dead]) { $0.exhausted = [dead.id] }
+
+        #expect(spy.dispatched == [new.id, old.id])
+    }
 }

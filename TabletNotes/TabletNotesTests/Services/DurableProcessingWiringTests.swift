@@ -114,6 +114,23 @@ struct DurableProcessingWiringTests {
         #expect(mock.requested.map(\.1) == [true])
     }
 
+    @Test func dispatcherRemembersAnExhaustedAnswerUntilARetrySucceeds() async {
+        let sermonId = UUID()
+        var dead = RemoteProcessingJob(id: "job-dead", sermonLocalId: sermonId, kind: .transcription, status: .dead, lastError: nil)
+        dead.exhausted = true
+        let mock = MockJobRequester(result: .success(dead))
+        let dispatcher = ProcessingJobDispatcher(client: mock)
+
+        _ = await dispatcher.dispatch(sermonLocalId: sermonId)
+        #expect(dispatcher.isExhausted(sermonLocalId: sermonId))
+
+        mock.result = .success(
+            RemoteProcessingJob(id: "job-dead", sermonLocalId: sermonId, kind: .transcription, status: .queued, lastError: nil)
+        )
+        _ = await dispatcher.dispatch(sermonLocalId: sermonId, retry: true)
+        #expect(dispatcher.isExhausted(sermonLocalId: sermonId) == false)
+    }
+
     @Test func dispatchFailureIsReportedRatherThanSwallowed() async {
         let mock = MockJobRequester(result: .failure(ProcessingJobClientError.offline))
         let dispatcher = ProcessingJobDispatcher(client: mock)

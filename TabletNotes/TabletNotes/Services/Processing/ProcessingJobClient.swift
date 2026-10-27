@@ -30,6 +30,10 @@ struct RemoteProcessingJob: Codable, Sendable, Equatable {
     let kind: Kind
     let status: Status
     let lastError: String?
+    /// Set from the response envelope, not the job row: the server answers an
+    /// automatic dispatch for a `dead` job with `exhausted: true` and leaves it
+    /// alone. Not part of the job's own JSON, hence absent from `CodingKeys`.
+    var exhausted: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -156,9 +160,15 @@ struct ProcessingJobClient: ProcessingJobRequesting {
         }
 
         struct Envelope: Decodable {
-            struct Payload: Decodable { let job: RemoteProcessingJob }
+            struct Payload: Decodable {
+                let job: RemoteProcessingJob
+                let exhausted: Bool?
+            }
             let data: Payload
         }
-        return try JSONDecoder().decode(Envelope.self, from: data).data.job
+        let payload = try JSONDecoder().decode(Envelope.self, from: data).data
+        var job = payload.job
+        job.exhausted = payload.exhausted ?? false
+        return job
     }
 }

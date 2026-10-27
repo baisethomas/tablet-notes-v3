@@ -45,11 +45,14 @@ enum SermonStageStatus: String, CaseIterable, Sendable {
     /// `SermonProcessingCoordinator.dispatchPendingDurableJobs`, which must use
     /// string literals because SwiftData cannot call into Swift from a
     /// predicate. That predicate is an allowlist, so a status this build has
-    /// never heard of is excluded by construction.
+    /// never heard of is excluded by construction — except `preparing`, which
+    /// the predicate also lists (TAB-123) though it is not a case here.
+    /// `processing` is dispatchable because a sermon can be stranded there
+    /// with no server job; `POST /api/jobs` is idempotent, so it is cheap.
     var isDispatchable: Bool {
         switch self {
-        case .pending, .failed: return true
-        case .processing, .complete, .noSpeech, .failedPermanent, .tooShort: return false
+        case .pending, .failed, .processing: return true
+        case .complete, .noSpeech, .failedPermanent, .tooShort: return false
         }
     }
 

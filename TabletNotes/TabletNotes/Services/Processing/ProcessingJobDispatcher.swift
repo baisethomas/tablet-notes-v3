@@ -9,6 +9,15 @@ protocol ProcessingJobDispatching: AnyObject {
     /// stopped — automatic sweeps must leave it false (TAB-91).
     @discardableResult
     func dispatch(sermonLocalId: UUID, retry: Bool) async -> Bool
+
+    /// Whether the server has already answered `exhausted: true` for this
+    /// sermon. The sweep skips these so a dead job is not re-asked every pass
+    /// (it drained the 20/hr jobs limit once).
+    func isExhausted(sermonLocalId: UUID) -> Bool
+}
+
+extension ProcessingJobDispatching {
+    func isExhausted(sermonLocalId: UUID) -> Bool { false }
 }
 
 /// Client-side entry point to the durable pipeline (TAB-72).
@@ -28,6 +37,13 @@ final class ProcessingJobDispatcher: ProcessingJobDispatching {
     private var inFlight: Set<UUID> = []
 
     private(set) var lastError: String?
+    /// Sermons the server reported exhausted, for this process lifetime. A
+    /// deliberate retry that succeeds clears the entry; a relaunch re-asks once.
+    private var exhausted: Set<UUID> = []
+
+    func isExhausted(sermonLocalId: UUID) -> Bool {
+        exhausted.contains(sermonLocalId)
+    }
 
     init(client: any ProcessingJobRequesting = ProcessingJobClient()) {
         self.client = client
@@ -46,6 +62,11 @@ final class ProcessingJobDispatcher: ProcessingJobDispatching {
                 retry: retry
             )
             lastError = nil
+            if job.exhausted {
+                exhausted.insert(sermonLocalId)
+            } else {
+                exhausted.remove(sermonLocalId)
+            }
             print("[ProcessingJobDispatcher] Job \(job.id) is \(job.status.rawValue) for sermon \(sermonLocalId)")
             return true
         } catch {
