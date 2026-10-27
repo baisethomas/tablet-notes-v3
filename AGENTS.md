@@ -121,7 +121,7 @@ Every nontrivial completion summary should contain, in order:
 
 Full detail lives in `docs/OPERATING-MANUAL.md`; this is the index.
 
-- **Run everything (iOS):** `xcodebuild build -scheme TabletNotes -destination 'platform=iOS Simulator,id=2BAC53A3-EC5B-40DE-A981-7F7A637A555E'` (an iOS 18.5 simulator is required; run from `TabletNotes/`). The stop hook runs this automatically when Swift files changed.
+- **Run everything (iOS):** `xcodebuild build -scheme TabletNotes -destination 'platform=iOS Simulator,id=A476D5E8-216E-481B-ADFE-6EB2E52FBEAC'` (an iOS 18.5 simulator is required; run from `TabletNotes/`). The stop hook runs this automatically when Swift files changed.
 - **Run tests (iOS):** `xcodebuild test -scheme TabletNotes -destination '<same>' -only-testing:TabletNotesTests/<Suite>` — the suites your change touches, not the whole target. Use the simulator above, not one that has been used for manual recording (orphan audio in its container makes the SermonService suites fail).
 - **Run everything (backend):** `cd tablet-notes-api && npm test` (~1 s), plus `node --check` on every changed function. The stop hook runs `npm test` automatically when `tablet-notes-api/` changed.
 - **Known untested / high-risk modules:** `SermonService.swift` (recovery, cloud restore, orphan import — 1,600 lines, largest blast radius), `Services/Sync/` (two-phase engine; per-scope acks; push must never starve pull), `Services/Recording/` (deliberately not main-actor; recovery manifest written synchronously after capture starts), `Views/MainAppView.swift` (its init re-runs on every parent re-render — never construct services there), Netlify functions (no test harness of their own; logic must be extracted to `utils/` to be tested).

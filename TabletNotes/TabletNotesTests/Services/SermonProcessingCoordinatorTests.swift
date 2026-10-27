@@ -29,6 +29,145 @@ struct SermonProcessingCoordinatorTests {
         return ModelContext(container)
     }
 
+    // MARK: - Durable sweep (TAB-123)
+
+    @MainActor
+    private func seedSermon(
+        _ context: ModelContext,
+        status: String,
+        remoteId: String? = "remote",
+        date: Date = Date()
+    ) throws -> Sermon {
+        let sermon = Sermon(
+            title: "Seed \(status)",
+            audioFileName: "seed-\(UUID().uuidString).m4a",
+            date: date,
+            serviceType: "Sunday",
+            transcriptionStatus: status,
+            remoteId: remoteId
+        )
+        context.insert(sermon)
+        try context.save()
+        return sermon
+    }
+
+    @MainActor
+    private func configuredCoordinator(
+        _ context: ModelContext,
+        dispatcher: any ProcessingJobDispatching
+    ) -> SermonProcessingCoordinator {
+        let coordinator = SermonProcessingCoordinator.shared
+        coordinator.resetForTesting()
+        coordinator.processingDispatcher = dispatcher
+        coordinator.isDurableProcessingEnabled = { true }
+        coordinator.syncRunner = {}
+        coordinator.configure(
+            modelContext: context,
+            sermonService: SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults)
+        )
+        return coordinator
+    }
+
+    private func job(_ sermonId: UUID, _ status: RemoteProcessingJob.Status, exhausted: Bool = false) -> RemoteProcessingJob {
+        var job = RemoteProcessingJob(id: "job", sermonLocalId: sermonId, kind: .transcription, status: status, lastError: nil)
+        job.exhausted = exhausted
+        return job
+    }
+
+    @MainActor
+    @Test func sweepDispatchesProcessingAndPreparingSermonsWithARemoteId() async throws {
+        let context = try makeModelContext()
+        let processing = try seedSermon(context, status: "processing")
+        let preparing = try seedSermon(context, status: "preparing")
+        _ = try seedSermon(context, status: "processing", remoteId: nil)
+        _ = try seedSermon(context, status: "complete")
+
+        let spy = DurableProcessingWiringTests.SpyDispatcher()
+        let coordinator = configuredCoordinator(context, dispatcher: spy)
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(Set(spy.dispatched.map(\.0)) == [processing.id, preparing.id])
+        #expect(spy.dispatched.count == 2)
+        #expect(spy.dispatched.allSatisfy { $0.1 == false })
+    }
+
+    @MainActor
+    @Test func sweepDispatchesNewestSermonFirst() async throws {
+        let context = try makeModelContext()
+        let old = try seedSermon(context, status: "processing", date: Date().addingTimeInterval(-86_400))
+        let new = try seedSermon(context, status: "processing", date: Date())
+
+        let spy = DurableProcessingWiringTests.SpyDispatcher()
+        let coordinator = configuredCoordinator(context, dispatcher: spy)
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(spy.dispatched.map(\.0) == [new.id, old.id])
+    }
+
+    @MainActor
+    @Test func sweepLeavesAProcessingSermonWhoseLegacyJobIsRunning() async throws {
+        let context = try makeModelContext()
+        let sermon = try seedSermon(context, status: "processing")
+        context.insert(ProcessingJob(sermonId: sermon.id, kind: .transcription, status: .running))
+        try context.save()
+
+        let spy = DurableProcessingWiringTests.SpyDispatcher()
+        let coordinator = configuredCoordinator(context, dispatcher: spy)
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(spy.dispatched.isEmpty)
+    }
+
+    @MainActor
+    @Test func sweepDoesNotReAskAJobTheServerConfirmedLive() async throws {
+        let context = try makeModelContext()
+        let sermon = try seedSermon(context, status: "processing")
+        let mock = DurableProcessingWiringTests.MockJobRequester(result: .success(job(sermon.id, .submitted)))
+        let coordinator = configuredCoordinator(context, dispatcher: ProcessingJobDispatcher(client: mock))
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+        await coordinator.dispatchPendingDurableJobs()
+        await coordinator.dispatchPendingDurableJobs()
+
+        // First sweep is the repair request for an orphan; the rest are skipped.
+        #expect(mock.requested.count == 1)
+    }
+
+    @MainActor
+    @Test func sweepDoesNotReAskAnExhaustedJob() async throws {
+        let context = try makeModelContext()
+        let sermon = try seedSermon(context, status: "processing")
+        let mock = DurableProcessingWiringTests.MockJobRequester(result: .success(job(sermon.id, .dead, exhausted: true)))
+        let coordinator = configuredCoordinator(context, dispatcher: ProcessingJobDispatcher(client: mock))
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(mock.requested.count == 1)
+    }
+
+    @MainActor
+    @Test func sweepKeepsAskingWhileTheRequestFails() async throws {
+        let context = try makeModelContext()
+        _ = try seedSermon(context, status: "processing")
+        let mock = DurableProcessingWiringTests.MockJobRequester(result: .failure(ProcessingJobClientError.offline))
+        let coordinator = configuredCoordinator(context, dispatcher: ProcessingJobDispatcher(client: mock))
+        defer { coordinator.resetForTesting() }
+
+        await coordinator.dispatchPendingDurableJobs()
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(mock.requested.count == 2)
+    }
+
     @MainActor
     @Test func lifecycleHandlersBootstrapOnceAndRouteRefreshThroughCoordinator() async throws {
         let context = try makeModelContext()
