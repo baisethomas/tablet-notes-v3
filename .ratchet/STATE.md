@@ -44,7 +44,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 - The recovery manifest is the source of truth for which note session belongs to the audio being captured. Nothing may clear it or the session while a recording is live (D-20260913-2300).
 - Long-lived services are built once at the app root and injected; nothing with side effects is constructed in a SwiftUI view initializer (D-20260914-0000).
 - Netlify prod auto-deploys on merge to `main`; env-var changes need a manual `netlify deploy --prod`. Supabase migrations are owner-only.
-- Two test failures pre-exist on `main` (listed in `docs/OPERATING-MANUAL.md` §3). A simulator that has been used for manual recording carries orphan audio that makes the `SermonService*` suites fail there. The manual's iOS 18.5 simulator (2BAC53A3…) and the 18.5 runtime were deleted on 2026-10-19; the clean replacement is iPhone 16 Pro / iOS 26.2, id A476D5E8-216E-481B-ADFE-6EB2E52FBEAC. The manual's §3 still names the old id and needs a docs-only update in its own PR.
+- Two test failures pre-exist on `main` (listed in `docs/OPERATING-MANUAL.md` §3). A simulator that has been used for manual recording carries orphan audio that makes the `SermonService*` suites fail there. The clean simulator is iPhone 16 Pro / iOS 26.2, id A476D5E8-216E-481B-ADFE-6EB2E52FBEAC; the manual's §3, `AGENTS.md` and the stop hook all name it as of 57e851a (the old 18.5 simulator and runtime were deleted on 2026-10-19). The manual's §3 still says "find another 18.5 one" as the fallback wording; any 18.5-or-newer simulator works.
 - Device diagnosis: the app's `NotesLog` category is readable from a phone log stream over USB; the recipe is in the owner's notes and the TAB-113/114 PRs.
 
 ## Verification status
