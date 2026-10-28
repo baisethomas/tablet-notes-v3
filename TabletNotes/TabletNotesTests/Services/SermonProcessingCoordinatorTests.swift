@@ -263,4 +263,86 @@ struct SermonProcessingCoordinatorTests {
         #expect(savedSermon?.transcriptionStatus == "complete")
         #expect(savedSermon?.transcript?.text == "Auto-started transcript")
     }
+
+    // MARK: - Durable sweep (TAB-123)
+
+    @MainActor
+    private final class SweepSpyDispatcher: ProcessingJobDispatching {
+        var dispatched: [UUID] = []
+        var exhausted: Set<UUID> = []
+
+        func dispatch(sermonLocalId: UUID, retry: Bool) async -> Bool {
+            dispatched.append(sermonLocalId)
+            return true
+        }
+
+        func isExhausted(_ sermonLocalId: UUID) -> Bool { exhausted.contains(sermonLocalId) }
+    }
+
+    @MainActor
+    private func sweepSermon(
+        _ context: ModelContext,
+        title: String,
+        status: String,
+        remoteId: String?,
+        date: Date = Date()
+    ) -> Sermon {
+        let sermon = Sermon(
+            title: title,
+            audioFileName: "\(title).m4a",
+            date: date,
+            serviceType: "Sunday",
+            transcriptionStatus: status,
+            remoteId: remoteId
+        )
+        context.insert(sermon)
+        try? context.save()
+        return sermon
+    }
+
+    @MainActor
+    @Test func sweepReAsksForAProcessingSermonWithARemoteIdAndNoDurableJob() async throws {
+        let context = try makeModelContext()
+        let coordinator = SermonProcessingCoordinator.shared
+        defer { coordinator.resetForTesting() }
+        coordinator.resetForTesting()
+
+        let spy = SweepSpyDispatcher()
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { true }
+        coordinator.syncRunner = {}
+        coordinator.configure(modelContext: context, sermonService: SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults))
+
+        let stuck = sweepSermon(context, title: "stuck", status: "processing", remoteId: "remote-stuck")
+        _ = sweepSermon(context, title: "not-uploaded", status: "processing", remoteId: nil)
+        _ = sweepSermon(context, title: "done", status: "complete", remoteId: "remote-done")
+
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(spy.dispatched == [stuck.id])
+    }
+
+    @MainActor
+    @Test func sweepSkipsExhaustedSermonsAndDispatchesNewestFirst() async throws {
+        let context = try makeModelContext()
+        let coordinator = SermonProcessingCoordinator.shared
+        defer { coordinator.resetForTesting() }
+        coordinator.resetForTesting()
+
+        let spy = SweepSpyDispatcher()
+        coordinator.processingDispatcher = spy
+        coordinator.isDurableProcessingEnabled = { true }
+        coordinator.syncRunner = {}
+        coordinator.configure(modelContext: context, sermonService: SermonService(modelContext: context, recoveryStore: isolated.store, userDefaults: isolated.defaults))
+
+        let now = Date()
+        let oldest = sweepSermon(context, title: "oldest", status: "pending", remoteId: "r1", date: now.addingTimeInterval(-300))
+        let spent = sweepSermon(context, title: "spent", status: "processing", remoteId: "r2", date: now.addingTimeInterval(-200))
+        let newest = sweepSermon(context, title: "newest", status: "processing", remoteId: "r3", date: now)
+        spy.exhausted = [spent.id]
+
+        await coordinator.dispatchPendingDurableJobs()
+
+        #expect(spy.dispatched == [newest.id, oldest.id])
+    }
 }
