@@ -497,6 +497,26 @@ struct ScriptureReminderSchedulerTests {
         #expect(harness.center.pending.isEmpty)
     }
 
+    @Test func deletingDuringTheAuthorizationLookupAddsNothing() async throws {
+        let harness = try Harness()
+        let sermon = try harness.insertSermon(recordedAt: hoursAgo(2))
+        // The reconcile's first await; the cancel runs to completion while the
+        // reconcile is suspended there and the sermon row still exists.
+        harness.center.nextAuthorizationLookupDelayNanoseconds = 300_000_000
+        let scheduler = harness.makeScheduler()
+
+        async let pass: Void = scheduler.reconcile()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(harness.verses.requestedReferences.isEmpty)
+        await scheduler.cancelReminders(forSermonId: sermon.id)
+        await pass
+
+        #expect(harness.center.addedIdentifiers.isEmpty)
+        #expect(harness.center.pending.isEmpty)
+        let recorded = harness.defaults.stringArray(forKey: ScriptureReminderScheduler.scheduledSermonIdsDefaultsKey) ?? []
+        #expect(recorded.isEmpty)
+    }
+
     @Test func signOutDuringTheFinalPendingLookupLeavesNoRecordAndNoRequests() async throws {
         let harness = try Harness()
         try harness.insertSermon(recordedAt: hoursAgo(2))

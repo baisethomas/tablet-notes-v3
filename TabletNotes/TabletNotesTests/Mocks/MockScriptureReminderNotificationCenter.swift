@@ -16,6 +16,9 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
     /// Delays the next `pendingRequestIdentifiers()` call only, so a test can
     /// run a cancel to completion while one reconcile is suspended there.
     var nextPendingLookupDelayNanoseconds: UInt64 = 0
+    /// Delays the next `authorizationStatus()` call only: the reconcile's first
+    /// await, before it has looked at any sermon.
+    var nextAuthorizationLookupDelayNanoseconds: UInt64 = 0
 
     private(set) var pending: [UNNotificationRequest] = []
     private(set) var addedIdentifiers: [String] = []
@@ -24,7 +27,12 @@ final class MockScriptureReminderNotificationCenter: ScriptureReminderNotificati
     struct AddFailed: Error {}
 
     func authorizationStatus() async -> UNAuthorizationStatus {
-        status
+        if nextAuthorizationLookupDelayNanoseconds > 0 {
+            let delay = nextAuthorizationLookupDelayNanoseconds
+            nextAuthorizationLookupDelayNanoseconds = 0
+            try? await Task.sleep(nanoseconds: delay)
+        }
+        return status
     }
 
     func requestAuthorization() async throws -> Bool {

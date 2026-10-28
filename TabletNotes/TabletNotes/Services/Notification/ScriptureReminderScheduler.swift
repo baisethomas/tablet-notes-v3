@@ -148,8 +148,8 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     /// Serialises overlapping `reconcile()` calls (launch and foreground can
     /// arrive together) so two passes never schedule the same sermon twice.
     @ObservationIgnored private var inFlight: Task<Void, Never>?
-    /// Bumped by every cancel path. A reconcile that started before the bump
-    /// re-checks it after each await so it never adds requests behind a cancel.
+    /// Bumped by every cancel path. A reconcile snapshots it before its first
+    /// await and re-checks it after each one, so it never adds requests behind a cancel.
     @ObservationIgnored private var cancellationGeneration = 0
 
     init(
@@ -230,9 +230,14 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
     }
 
     private func reconcileNow() async {
+        // Captured before the first await. A delete or archive cancel that lands
+        // during the authorization lookup bumps the generation; snapshotting it
+        // afterwards would hide that cancel and let the still-present sermon
+        // (its row goes a moment later) get a run.
+        let generation = cancellationGeneration
         guard isEnabled else { return }
         guard await isAuthorized() else { return }
-        let generation = cancellationGeneration
+        guard isStillWanted(generation) else { return }
 
         let eligible = eligibleSermons()
         var scheduled = scheduledSermonIds()
