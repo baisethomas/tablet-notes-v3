@@ -25,6 +25,9 @@ struct TabletNotesApp: App {
     /// then deleted the live recording's manifest and cleared its notes.
     let sermonService: SermonService
     let syncService: SyncService
+    /// Scripture reminders (TAB-119): built here, injected into the views and
+    /// into SermonService for the delete/archive/sign-out cancels.
+    let scriptureReminderScheduler: ScriptureReminderScheduler
     @StateObject private var deepLinkHandler = DeepLinkHandler()
     
     init() {
@@ -97,11 +100,21 @@ struct TabletNotesApp: App {
             supabaseService: SupabaseService.shared,
             authService: AuthenticationManager.shared
         )
+        scriptureReminderScheduler = ScriptureReminderScheduler(
+            modelContext: modelContext,
+            verseFetcher: BibleVerseTextFetcher(bibleService: BibleAPIService())
+        )
+        sermonService.setScriptureReminderScheduler(scriptureReminderScheduler)
     }
 
     var body: some Scene {
         WindowGroup {
-            MainAppView(modelContext: modelContext, sermonService: sermonService, syncService: syncService)
+            MainAppView(
+                modelContext: modelContext,
+                sermonService: sermonService,
+                syncService: syncService,
+                scriptureReminderScheduler: scriptureReminderScheduler
+            )
                 .requiresAuthentication()
                 .environment(\.authManager, AuthenticationManager.shared)
                 .environmentObject(deepLinkHandler)

@@ -56,9 +56,9 @@ Root-level `*.sql` / `SYNC_*.md` files in `TabletNotes/` are historical artifact
 
 ## 3. Commands (use these exactly)
 
-**iOS build check** (an iOS 18.5 simulator is required; 18.4 fails the deployment-target check):
+**iOS build check** (an iOS 18.5-or-newer simulator is required; 18.4 fails the deployment-target check; the current one is the iPhone 16 Pro named "26.2 tests"):
 ```bash
-xcodebuild build -scheme TabletNotes -destination 'platform=iOS Simulator,id=2BAC53A3-EC5B-40DE-A981-7F7A637A555E'
+xcodebuild build -scheme TabletNotes -destination 'platform=iOS Simulator,id=A476D5E8-216E-481B-ADFE-6EB2E52FBEAC'
 ```
 If that simulator ID is gone, find another 18.5 one: `xcrun simctl list devices available`.
 

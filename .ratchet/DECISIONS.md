@@ -124,3 +124,39 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** Fresh Codex agents read `CODEX.md` through the canonical read order, apply hard stops even without an intercepting hook, and run verification explicitly. The routing table guides only delegation already authorized by the user or another applicable instruction.
 - **Revisit when:** Codex gains a native adapter convention, automatic support for the committed hooks, different available model ids, or root-session model switching.
 - **Approved by:** owner (requested the Codex equivalent on 2026-09-15 UTC)
+
+### D-20260924-1930-scripture-reminders-local-reconciler — Scripture reminders are on-device local notifications, scheduled by an idempotent reconciler, with the preference in UserDefaults
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-09-24
+- **Decision:** TAB-119 reminders use `UNCalendarNotificationTrigger` scheduled on device, with no server component. A single idempotent `reconcile()` schedules eligible sermons: summary complete, not archived, recorded within the last 48 hours, not yet scheduled. A sermon is marked scheduled only after every request is added. The feature is free and has one global opt-in. The preference lives in `UserDefaults`, not on the `UserNotificationSettings` model. The message line comes from the summary with no AI call, and must be a complete, meaningful sentence; otherwise it falls back to the sermon title.
+- **Why:** The content is already on device when the summary completes, so local scheduling needs no deploy, migration, or AI cost. There are several summary completion paths (legacy retry, durable pipeline via sync), so a reconciler covers all of them without editing `SummaryRetryService` or the sync engine. The 48-hour window keeps cloud restores from scheduling old sermons. Keeping the preference in `UserDefaults` avoids a migration and a change to the Supabase settings contract. The owner's goal is daily engagement.
+- **Rejected / alternatives:** Server push (APNs plus a cron): needs new infrastructure and deploy debt for no v1 benefit. A hook in each completion path: fragile and touches high-risk modules. An AI-generated devotional line: per-sermon cost and a new endpoint; the owner accepted summary-derived lines. Premium gating: the owner chose free.
+- **Consequences:** Reminders exist only on the device that processed or synced the sermon within 48 hours. The opt-in does not sync across devices. At most one sermon's reminder run is pending at a time.
+- **Revisit when:** The owner wants configurable time/count, AI-written lines, or cross-device preference sync (the last would need a `@Model` or Supabase change and a migration call).
+- **Approved by:** owner (answers to the plan questions, 2026-09-24)
+
+### D-20261013-1100-scripture-reminder-week-owner — The newest eligible sermon with a plan owns the reminder week; only the scheduled sermon is recorded
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-10-13
+- **Decision:** `ScriptureReminderScheduler.reconcile()` selects the newest eligible sermon whose planner output is non-empty. If that sermon is already recorded as scheduled, nothing changes (older sermons never replace a newer run). If it is not, its run is added, older runs are removed only after the new run is fully in place, and only that sermon's id is recorded. A sermon with no scripture is skipped and never recorded. Turning the feature off keeps the record (off/on does not repeat a run); a user-initiated sign-out clears it. Every cancel path bumps a generation that an in-flight reconcile re-checks after each await, so nothing is added behind a cancel.
+- **Why:** PR #84 review (Ternary, Codex). The first cut recorded every eligible sermon as scheduled when one was, which meant a scripture-less newest sermon wiped the previous run and a deleted newest sermon left the week empty; and opt-out erased the record, so off/on re-ran the same sermon. Refines D-20260924-1930 without changing its "one run pending at a time" rule.
+- **Rejected / alternatives:** Keeping the "mark all eligible" supersede rule and documenting delete-then-nothing: rejected, the user loses the week for no reason. Serialising cancels by awaiting the in-flight reconcile: rejected in favour of the generation check, which also covers a cancel that lands between adds.
+- **Consequences:** After the newest sermon is deleted or archived, the next sync pass schedules the next eligible sermon. A summary that gains scripture later gets its run. The scheduled-id record is per install and survives opt-out.
+- **Revisit when:** The owner wants runs for several sermons in one week, or configurable count/time.
+- **Approved by:** agent (medium impact, within the TAB-119 scope); surfaced in the PR #84 review round.
+
+### D-20261028-0900-scripture-reminders-anchored-to-recording-day — The reminder run is counted from the sermon's recording date; mornings already past are dropped
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-10-28
+- **Decision:** `ScriptureReminderPlanner.plan` takes the sermon's recording date (`Sermon.date`) as the anchor of the run: 8:00 local time on days 1, 3, 5 and 7 after the recording day. Any slot whose fire time is at or before the planning time is dropped. Scriptures keep their priority order over the remaining slots (the main scripture takes the earliest morning left) and `index` runs sequentially over the kept reminders, so identifiers have no gaps and the DEBUG delay override still fires them seconds apart. When every slot has passed the plan is empty, and the scheduler skips the sermon without recording it. The 48-hour eligibility window is unchanged.
+- **Why:** PR #84 review round 4 (Ternary): the planner anchored the run to the planning time, so a summary finishing late in the 48-hour window pushed the last reminder to about nine days after the sermon. The owner's intent (plan of 2026-09-24) is a run inside the sermon's week. Of the two readings, the owner chose option A: a late summary gets fewer reminders, but they stay in the week the sermon belongs to.
+- **Rejected / alternatives:** Option B, shifting the whole run to start the morning after the summary completes: rejected by the owner, since it detaches the reminders from the week of the sermon. Keeping four reminders by compressing them into the remaining days: rejected, the every-other-morning cadence is the product decision.
+- **Consequences:** A sermon recorded on Sunday and summarised Monday afternoon gets three reminders (Tuesday, Thursday, Saturday). A sermon whose summary completes after the seventh morning gets none and is never recorded as scheduled; if it is still inside the 48-hour window on a later pass it is re-planned then. Tests in `ScriptureReminderPlannerTests` pin the same-day, next-afternoon, 07:59/08:00/08:01 boundary, month-boundary and DST cases.
+- **Revisit when:** The owner wants a configurable time or count, or a catch-up rule for late summaries.
+- **Approved by:** owner (2026-10-28, option A)
