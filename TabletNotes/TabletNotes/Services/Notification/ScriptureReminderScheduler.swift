@@ -378,10 +378,13 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
 
     // MARK: Requests
 
+    /// The run is anchored to the recording date, not to when the summary
+    /// finished: a late summary gets the mornings still left in the sermon's week.
     private func plan(for sermon: Sermon) -> [PlannedScriptureReminder] {
         planner.plan(
             summaryText: sermon.summary?.text ?? "",
             transcriptText: sermon.transcript?.text,
+            recordedAt: sermon.date,
             now: now(),
             calendar: calendar
         )
@@ -408,6 +411,8 @@ final class ScriptureReminderScheduler: ScriptureReminderScheduling {
         #if DEBUG
         // Manual verification only: SCRIPTURE_REMINDER_DEBUG_DELAY_SECONDS=20 fires
         // the run 20s, 40s, 60s... after scheduling instead of on the planned mornings.
+        // `index` is sequential over the kept reminders, so the spacing holds even
+        // when the planner dropped slots that had already passed.
         if let raw = ProcessInfo.processInfo.environment["SCRIPTURE_REMINDER_DEBUG_DELAY_SECONDS"],
            let seconds = TimeInterval(raw), seconds >= 1 {
             return UNTimeIntervalNotificationTrigger(timeInterval: seconds * TimeInterval(reminder.index + 1), repeats: false)

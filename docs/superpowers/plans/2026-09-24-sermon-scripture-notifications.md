@@ -43,7 +43,7 @@ Why a reconciler: it covers every completion path (legacy, durable, arriving via
 `ScriptureReminderPlanner` is a pure function: (sermon title, summary text, transcript text, recording date, preferences) in, `[PlannedReminder]` out. No I/O, so it gets thorough tests.
 
 - **Scripture selection:** parse the summary's "Main Scripture Text" section first, then its "Scripture References" section, then the rest of the summary, then the transcript. Pass each through `ScriptureAnalysisService`, dedupe, and keep first-seen order so the main text leads. Cap at the number of reminders in the week.
-- **Schedule:** default is the day after recording, then every other day, for up to 4 reminders over 7 days, at 8:00 local time. Fewer scriptures means fewer reminders. No scriptures means no reminders; a generic "revisit your notes" message is not in scope.
+- **Schedule:** anchored to the recording day: 8:00 local time on days 1, 3, 5 and 7 after it, for up to 4 reminders over the sermon's week. A slot at or before the time the plan is built is dropped, so a summary that finishes late in the 48-hour window gets fewer reminders rather than a run that drifts past the week (owner decision 2026-10-28, `D-20261028-0900`). Scriptures keep their priority order over the remaining mornings, and reminder indexes stay sequential. Fewer scriptures means fewer reminders. No scriptures, or no morning left, means no reminders; a generic "revisit your notes" message is not in scope.
 - **Message line:** taken from the summary locally, with no AI call. The owner's condition is that it must be meaningful. Candidates are complete sentences from the key points and application bullets, one per reminder, never repeated. Headings, section labels, boilerplate ("In this sermon…"), bare references and fragments are rejected. A sentence is trimmed at a sentence or clause boundary, never mid-word. If no candidate qualifies, the line falls back to the sermon title.
 - **Content:** title is `"<Reference> · <Sermon title>"`, body is the verse text (truncated around 180 characters) followed by the message line. If verse text can't be fetched (offline, API error), the body is the reference plus the message line, and the reminder still goes out.
 
@@ -89,7 +89,7 @@ A `UNUserNotificationCenterDelegate` set at the app root:
 
 ## Owner decisions (2026-09-24)
 
-1. **Cadence:** 4 reminders over 7 days at 8:00 AM, starting the next morning. The time and count are not configurable in v1.
+1. **Cadence:** 4 reminders over 7 days at 8:00 AM, starting the morning after the recording day. The time and count are not configurable in v1. (2026-10-28: the run is counted from the recording date, and mornings that have already passed when the summary finishes are dropped; see `D-20261028-0900`.)
 2. **Message:** the line comes from the summary, and it must be meaningful (see step 3). No AI endpoint.
 3. **Free** for all users. No entitlement or tier logic is touched.
 4. **One global opt-in.** Every new sermon is scheduled automatically after that. The goal is daily engagement and lower churn.

@@ -16,7 +16,7 @@ struct PlannedScriptureReminder: Equatable {
 /// with each, and which mornings they fire. Pure: no I/O and no notification
 /// center, so all of the content rules are unit-tested here.
 struct ScriptureReminderPlanner {
-    /// Days after the planning day on which reminders fire: four over one week.
+    /// Days after the recording day on which reminders fire: four over one week.
     static let dayOffsets = [1, 3, 5, 7]
     static let deliveryHour = 8
     /// Longer sentences are skipped rather than truncated mid-thought.
@@ -31,10 +31,21 @@ struct ScriptureReminderPlanner {
 
     /// Plans up to four reminders. Returns an empty array when the sermon has no
     /// scripture references: a reminder without a scripture is not sent.
-    /// - Parameter now: the planning time; the first reminder fires the next morning.
+    ///
+    /// The run is anchored to the recording day: 8:00 on days 1, 3, 5 and 7 after
+    /// it. A slot whose time is at or before `now` is dropped, so a summary that
+    /// finishes late in the eligibility window gets fewer reminders rather than
+    /// a run that drifts past the sermon's week. Scriptures keep their priority
+    /// order over the slots that remain (the main scripture takes the earliest
+    /// morning left), and `index` runs 0... over the kept reminders so
+    /// identifiers have no gaps. Every slot passed means an empty plan.
+    /// - Parameters:
+    ///   - recordedAt: the sermon's recording date, the anchor of the run.
+    ///   - now: the planning time; slots at or before it are dropped.
     func plan(
         summaryText: String,
         transcriptText: String?,
+        recordedAt: Date,
         now: Date,
         calendar: Calendar = .current
     ) -> [PlannedScriptureReminder] {
@@ -43,19 +54,29 @@ struct ScriptureReminderPlanner {
         guard !references.isEmpty else { return [] }
 
         let messages = meaningfulMessages(in: document)
-        let startOfToday = calendar.startOfDay(for: now)
+        let slots = Self.remainingSlots(recordedAt: recordedAt, now: now, calendar: calendar)
 
-        return references.enumerated().compactMap { index, reference in
-            guard let day = calendar.date(byAdding: .day, value: Self.dayOffsets[index], to: startOfToday),
-                  let fireDate = calendar.date(bySettingHour: Self.deliveryHour, minute: 0, second: 0, of: day) else {
-                return nil
-            }
+        return zip(references, slots).enumerated().map { index, pair in
+            let (reference, fireDate) = pair
             return PlannedScriptureReminder(
                 index: index,
                 reference: reference,
                 message: index < messages.count ? messages[index] : nil,
                 fireDateComponents: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
             )
+        }
+    }
+
+    /// The run's delivery times that are still ahead of `now`, earliest first.
+    static func remainingSlots(recordedAt: Date, now: Date, calendar: Calendar) -> [Date] {
+        let recordingDay = calendar.startOfDay(for: recordedAt)
+        return dayOffsets.compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: recordingDay),
+                  let fireDate = calendar.date(bySettingHour: deliveryHour, minute: 0, second: 0, of: day),
+                  fireDate > now else {
+                return nil
+            }
+            return fireDate
         }
     }
 

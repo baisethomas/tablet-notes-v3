@@ -22,8 +22,21 @@ struct ScriptureReminderPlannerTests {
 
     private static let sunday = date(2026, 9, 27, 11, 30)
 
-    private func plan(_ summary: String, transcript: String? = nil, now: Date = sunday) -> [PlannedScriptureReminder] {
-        planner.plan(summaryText: summary, transcriptText: transcript, now: now, calendar: Self.calendar)
+    /// `recordedAt` defaults to `now`: the sermon was recorded and summarised
+    /// the same day, which is the common case.
+    private func plan(
+        _ summary: String,
+        transcript: String? = nil,
+        recordedAt: Date? = nil,
+        now: Date = sunday
+    ) -> [PlannedScriptureReminder] {
+        planner.plan(
+            summaryText: summary,
+            transcriptText: transcript,
+            recordedAt: recordedAt ?? now,
+            now: now,
+            calendar: Self.calendar
+        )
     }
 
     private func references(_ reminders: [PlannedScriptureReminder]) -> [String] {
@@ -231,6 +244,88 @@ struct ScriptureReminderPlannerTests {
     @Test func lateNightPlanningStillStartsTheNextMorning() {
         let reminders = plan(Self.fourReferences, now: Self.date(2026, 9, 27, 23, 50))
         #expect(fireComponents(reminders).first == Self.morning(2026, 9, 28))
+    }
+
+    // MARK: Anchored to the recording day (D-20261028-0900)
+
+    @Test func sameDaySummaryKeepsTheFullSchedule() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 9, 27, 15))
+        #expect(fireComponents(reminders) == [
+            Self.morning(2026, 9, 28), Self.morning(2026, 9, 30),
+            Self.morning(2026, 10, 2), Self.morning(2026, 10, 4)
+        ])
+        #expect(reminders.map(\.index) == [0, 1, 2, 3])
+    }
+
+    @Test func aSummaryFinishingTheNextAfternoonSkipsTheMorningThatPassed() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 9, 28, 14))
+        #expect(fireComponents(reminders) == [
+            Self.morning(2026, 9, 30), Self.morning(2026, 10, 2), Self.morning(2026, 10, 4)
+        ])
+        // The main scripture takes the earliest remaining morning; the fourth is dropped.
+        #expect(references(reminders) == ["Genesis 1:1", "Exodus 3:14", "Psalm 46:10"])
+        #expect(reminders.map(\.index) == [0, 1, 2])
+    }
+
+    @Test func aSummaryFinishingJustBeforeEightOnDayOneKeepsThatMorning() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 9, 28, 7, 59))
+        #expect(fireComponents(reminders).first == Self.morning(2026, 9, 28))
+        #expect(reminders.count == 4)
+    }
+
+    @Test func aSummaryFinishingAtEightOnDayOneDropsThatMorning() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 9, 28, 8, 0))
+        #expect(fireComponents(reminders).first == Self.morning(2026, 9, 30))
+        #expect(reminders.count == 3)
+    }
+
+    @Test func aSummaryFinishingJustAfterEightOnDayOneDropsThatMorning() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 9, 28, 8, 1))
+        #expect(fireComponents(reminders).first == Self.morning(2026, 9, 30))
+        #expect(reminders.count == 3)
+    }
+
+    @Test func messagesFollowTheKeptRemindersInOrder() {
+        let summary = """
+        Application
+        Write down one promise of God and read it aloud each morning.
+        Call one person this week who needs to hear that they are not forgotten.
+
+        Scripture References
+        Genesis 1:1
+        Exodus 3:14
+        Psalm 46:10
+        """
+        let reminders = plan(summary, recordedAt: Self.sunday, now: Self.date(2026, 9, 28, 14))
+        #expect(reminders.map(\.message) == [
+            "Write down one promise of God and read it aloud each morning.",
+            "Call one person this week who needs to hear that they are not forgotten.",
+            nil
+        ])
+    }
+
+    @Test func aLateSummaryStaysAnchoredToTheRecordingDayAcrossAMonthBoundary() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.date(2026, 1, 30, 10), now: Self.date(2026, 1, 31, 16))
+        #expect(fireComponents(reminders) == [
+            Self.morning(2026, 2, 2), Self.morning(2026, 2, 4), Self.morning(2026, 2, 6)
+        ])
+    }
+
+    @Test func aLateSummaryStaysAnchoredToTheRecordingDayAcrossTheDaylightSavingChange() {
+        // US daylight saving time ends on 2026-11-01.
+        let reminders = plan(Self.fourReferences, recordedAt: Self.date(2026, 10, 30, 11), now: Self.date(2026, 10, 31, 20))
+        #expect(fireComponents(reminders) == [
+            Self.morning(2026, 11, 2), Self.morning(2026, 11, 4), Self.morning(2026, 11, 6)
+        ])
+        for components in reminders.map(\.fireDateComponents) {
+            let fireDate = Self.calendar.date(from: components)!
+            #expect(Self.calendar.component(.hour, from: fireDate) == 8)
+        }
+    }
+
+    @Test func aSummaryAfterTheLastMorningMeansNoReminders() {
+        let reminders = plan(Self.fourReferences, recordedAt: Self.sunday, now: Self.date(2026, 10, 4, 9))
+        #expect(reminders.isEmpty)
     }
 
     // MARK: - Messages

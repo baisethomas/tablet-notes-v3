@@ -131,6 +131,23 @@ struct ScriptureReminderSchedulerTests {
         #expect(trigger.repeats == false)
     }
 
+    @Test func aLateSummaryIsAnchoredToTheRecordingDayNotToNow() async throws {
+        let harness = try Harness()
+        // Recorded Saturday afternoon; the summary completes Sunday late morning,
+        // after Sunday's 8:00 has passed. The run continues on Tuesday and
+        // Thursday, with the identifiers still numbered from 0.
+        let sermon = try harness.insertSermon(recordedAt: hoursAgo(20))
+
+        await harness.makeScheduler().reconcile()
+
+        #expect(harness.pendingIdentifiers(for: sermon) == [
+            ScriptureReminderScheduler.identifier(sermonId: sermon.id, index: 0),
+            ScriptureReminderScheduler.identifier(sermonId: sermon.id, index: 1)
+        ])
+        let days = harness.center.pending.compactMap { ($0.trigger as? UNCalendarNotificationTrigger)?.dateComponents.day }
+        #expect(days == [29, 1])
+    }
+
     @Test func reconcileTwiceSchedulesOnce() async throws {
         let harness = try Harness()
         try harness.insertSermon(recordedAt: hoursAgo(2))
