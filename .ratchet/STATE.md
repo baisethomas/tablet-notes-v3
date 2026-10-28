@@ -18,6 +18,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Completed
 
+- TAB-119 weekly scripture reminders merged to `main` @ 1f6e8f3 (PR #84, squash, 2026-10-28) after four review rounds. Local notifications scheduled by an idempotent reconciler (`Services/Notification/`), anchored to the recording day (D-20260924-1930, D-20261013-1100, D-20261028-0900). Client-only; lands in the next build. **Device verification is still pending the owner** (permission prompt, banners, tap routing; the manual script is in the PR body).
 - TAB-117: added a thin `CODEX.md` adapter that maps the repository's existing risk tiers to Codex models while keeping `AGENTS.md` canonical.
 - 1.0 approved and live. The paywall is reachable from the Account tab and Settings in every entitlement state, including the trial (TAB-111, TAB-112).
 - Recording notes are now preserved across backgrounding and stop paths (TAB-113, TAB-114; device-verified). History and evidence are in those issues and PRs #76/#77.
@@ -25,7 +26,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- TAB-119 weekly scripture reminders (branch `claude/sermon-scripture-notifications-07g812`). The owner has approved the plan at `docs/superpowers/plans/2026-09-24-sermon-scripture-notifications.md`. Step 1, the pure planner (`Services/Notification/ScriptureReminderPlanner.swift` plus `TabletNotesTests/Services/ScriptureReminderPlannerTests.swift`), is verified (31/31). Step 2, the scheduler, is written and verified: `Services/Notification/ScriptureReminderScheduler.swift` (protocols `ScriptureReminderNotificationCenter`, `ScriptureVerseFetching`, `ScriptureReminderScheduling`; the live `BibleVerseTextFetcher`) plus `TabletNotesTests/Services/ScriptureReminderSchedulerTests.swift` and `Mocks/MockScriptureReminderNotificationCenter.swift` (18/18; the partial-failure rollback test was mutation-checked). The scheduler takes its notification center and verse fetcher as required init arguments (default arguments are evaluated nonisolated, and `BibleAPIService.init` is main-actor), so the app root builds `BibleVerseTextFetcher(bibleService:)` in step 4. Steps 3 and 4 are done. Permission and the opt-in flag live on the scheduler; `Views/Components/ScriptureReminderViews.swift` holds the Settings row and the opt-in card. Wiring: the scheduler and `BibleVerseTextFetcher` are built once in `TabletNotesApp.init` after the store code (the reset/restore flow is untouched) and passed through `MainAppView` to `SettingsView` and `SermonDetailView`; `SermonProcessingCoordinator` reconciles at the end of every sync pass (the one choke point all lifecycle hooks share), and `SermonService` cancels on delete, archive and user-initiated sign-out through a settable optional. Taps go through `ScriptureReminderTapRouter` (process-wide, installed as the notification delegate in `AppDelegate` before launch finishes) and `MainAppView` routes to the sermon on appear and on change. A DEBUG-only env override `SCRIPTURE_REMINDER_DEBUG_DELAY_SECONDS` fires the run seconds apart for manual checks. **On-device verification is pending the owner**: the simulator has no signed-in session for real summaries, its seeded sermons are outside the 48-hour window, and the permission prompt and the tap need a finger. PR #84 is open with the manual script in its body. Review round 1 (Ternary + Codex, 2026-10-13) is addressed on the branch: the cancel-vs-reconcile race (generation check), the scripture-less-newest-sermon and delete-the-newest cases (the week-owner rule, D-20261013-1100), opt-out preserving the schedule record, and the archive cancel moved to `toggleSermonArchiveStatus`, which is the path the list actually calls. One Ternary finding was argued as incorrect in the PR (older runs are removed only after the add loop completes). Round 2 (Ternary) closed the last unguarded await before the record is written. Round 3 (Ternary) made the schedule record hold the current owner only, so an older sermon regains its run after the newer owner is deleted. Round 4 (Ternary, 2026-10-20) is addressed in two commits: the cancellation generation is snapshotted before the reconcile's first await and re-checked after the authorization lookup (a delete or archive cancel during that await was missed); and the reminder run is now counted from the sermon's recording date with mornings already past dropped, per the owner's 2026-10-28 decision (D-20261028-0900; the plan doc's schedule line is updated). The owner reviews, runs the device check, and merges on their say-so.
+- Nothing on `main`. In flight on its own branch: TAB-122 job-less sermon reconciliation (`baise/tab-122-reconcile-jobless-sermons`, PR pending owner review); its state is in that branch's copy of this file.
 
 ## Next
 
@@ -48,7 +49,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
-- TAB-119 branch after review round 4 (2026-10-27): `xcodebuild build` exit 0; `ScriptureReminderPlannerTests` 40/40 (nine new recording-day anchor tests; six fail with the past-slot drop removed), `ScriptureReminderSchedulerTests` 35/35 (the four race tests, the replacement-then-delete test and the late-summary anchor test each proven to fail with their guard or fix disabled), `SermonServiceDeleteTests` 7/7, `SermonServiceAuthWipeTests` 5/5, `SermonProcessingCoordinatorTests` 4/4, `DurableProcessingWiringTests` 13/13, `CompletedSermonReprocessingGuardTests` 13/13: 117/117, run on an iPhone 16 Pro / iOS 26.2 simulator (A476D5E8-216E-481B-ADFE-6EB2E52FBEAC) because the manual's 18.5 simulator and runtime were deleted while freeing disk space on 2026-10-19. Device verification still pending the owner.
+- `main` @ 1f6e8f3 (TAB-119 merge; verified on the branch head 13cb373 that was squashed): `xcodebuild build` exit 0; `ScriptureReminderPlannerTests` 40/40 (nine new recording-day anchor tests; six fail with the past-slot drop removed), `ScriptureReminderSchedulerTests` 35/35 (the four race tests, the replacement-then-delete test and the late-summary anchor test each proven to fail with their guard or fix disabled), `SermonServiceDeleteTests` 7/7, `SermonServiceAuthWipeTests` 5/5, `SermonProcessingCoordinatorTests` 4/4, `DurableProcessingWiringTests` 13/13, `CompletedSermonReprocessingGuardTests` 13/13: 117/117, run on an iPhone 16 Pro / iOS 26.2 simulator (A476D5E8-216E-481B-ADFE-6EB2E52FBEAC) because the manual's 18.5 simulator and runtime were deleted while freeing disk space on 2026-10-19. Device verification still pending the owner.
 
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
 - `main` @ d2ac566 (the 1.0.1 archive point): iOS build green on the clean simulator; note/recording suites green (TAB-113: 60/60, TAB-114: 18/18); `npm test` 235/235.
@@ -64,11 +65,11 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Integration note
 
-- Reconciled after the TAB-117 merge (2026-09-15). Nothing else is in flight; unrelated working-tree changes were left untouched.
+- Reconciled after the TAB-119 merge (2026-10-28). The squash carried the branch's copy of this file onto `main`; this pass moves TAB-119 to Completed and notes the TAB-122 branch as the only work in flight. The simulator named in `AGENTS.md`, the manual and the stop hook is now the iPhone 16 Pro / iOS 26.2 sim (57e851a, part of the squash).
 
 ## Last handoff
 
-- Updated: 2026-10-27 (TAB-119 PR #84 review round 4 addressed; device check still pending owner)
+- Updated: 2026-10-28 (TAB-119 merged; STATE reconciled on `main`)
 - By: agent (Claude Code, Fable)
-- Branch/worktree: `claude/sermon-scripture-notifications-07g812`
-- Last known-good commit: 3a615c5 (main)
+- Branch/worktree: `main` (reconcile via `baise/ops-state-after-tab-119-merge`)
+- Last known-good commit: 1f6e8f3 (main)
