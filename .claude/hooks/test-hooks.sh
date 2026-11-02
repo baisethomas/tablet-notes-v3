@@ -11,6 +11,17 @@ cd "$(dirname "$0")"
 pass=0
 fail=0
 
+# stage_stop_hook <dir>/ — copy the stop hook and its library into a scratch dir
+# with CHECKS pinned to the npm commands these tests drive through a fake
+# package.json. The real hook's CHECKS line is whatever the repo filled in, and
+# that must not decide whether this suite passes.
+stage_stop_hook() {
+  local dir="${1%/}"
+  sed 's/^CHECKS=.*/CHECKS=("npm run lint --silent" "npm test --silent")/' ./check-on-stop.sh > "$dir/check-on-stop.sh"
+  chmod +x "$dir/check-on-stop.sh"
+  cp ./lib-payload.sh "$dir/"
+}
+
 # JSON-encode a string without assuming jq: the hooks support node as a parser,
 # so the suite that validates them must run in a node-only environment too.
 json_str() {
@@ -51,6 +62,31 @@ assert_guard() {
 }
 
 echo "== destructive-command guard: must BLOCK (exit 2) =="
+assert_guard 2 'cd repo && git branch -d feature'
+assert_guard 2 'git branch -D feature && echo gone'
+assert_guard 2 'true; git push --force; true'
+assert_guard 2 'ls | xargs rm -rf'
+# A quoted or escaped operator is argument text, not a command boundary.
+assert_guard 2 'git push "topic&note" --force'
+assert_guard 2 "git push 'origin;stillarg' --force"
+assert_guard 2 'git branch "a;b" -d feature'
+assert_guard 2 'rm "a|b" -rf'
+assert_guard 2 'git push a\;b --force'
+assert_guard 2 'git push "unbalanced --force'
+# The segmenter's internal delimiter is a legal input byte; it must not split anything.
+assert_guard 2 $'git push \x1f --force'
+assert_guard 2 $'git branch \x1f -D old'
+# An operator inside a process substitution or subshell is not a command boundary.
+assert_guard 2 'git push >(echo a;echo b) --force'
+assert_guard 2 'git push <(a|b) --force'
+assert_guard 2 $'git push <(a\n b) --force'
+assert_guard 2 'git push origin >(a;b) --delete main'
+assert_guard 2 'git reset >(a;b) --hard'
+assert_guard 2 'git branch >(a;b) -D main'
+assert_guard 2 'rm >(echo a;echo b) -rf x'
+assert_guard 2 'git push (a;b --force'
+assert_guard 2 'psql -c "$Q"'
+assert_guard 2 'true && PSQL -f "$F"'
 # Flag immediately after the subcommand (the only forms the original regex caught)
 assert_guard 2 'git push --force'
 assert_guard 2 'git push -f'
@@ -91,6 +127,17 @@ echo "== destructive-command guard: must ALLOW (exit 0) =="
 # TabletNotes: pushes that target main are a project hard stop (see the TabletNotes
 # section at the end), so the "ordinary push" examples below use a feature branch.
 assert_guard 0 'git push origin feature'
+# Flags belong to the command they follow, not to the whole line.
+assert_guard 0 'git branch --show-current && ls -d .claude'
+assert_guard 0 'git push origin feature && rm -f tmp.txt'
+assert_guard 0 'git reset; echo --hard'
+assert_guard 0 'git clean -n | grep -f patterns'
+assert_guard 0 'rm -r build && touch -f marker'
+assert_guard 0 'git push origin feature && echo "$HOME"'
+assert_guard 0 'echo psql && echo "$HOME"'
+assert_guard 0 'echo mysql; echo "$PWD"'
+assert_guard 0 'diff <(git show a) <(git show b)'
+assert_guard 0 '(git branch --show-current) && ls -d .claude'
 assert_guard 0 'git push'
 assert_guard 0 'git status'
 assert_guard 0 'npm test'
@@ -319,7 +366,7 @@ if [ $? -eq 2 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: l
 
 # The stop gate does not need the payload: it must still run the checks.
 noparser_stopdir=$(mktemp -d)
-cp ./check-on-stop.sh ./lib-payload.sh "$noparser_stopdir/"
+stage_stop_hook "$noparser_stopdir/"
 printf '{"name":"f","version":"1.0.0","scripts":{"lint":"exit 1","test":"exit 1"}}' > "$noparser_stopdir/package.json"
 # Isolate the gate's counter: it lives under TMPDIR and persists between runs,
 # so a shared location would carry a previous run's count into this assertion.
@@ -330,7 +377,7 @@ rm -rf "$noparser_state" "$noparser_stopdir" "$shimdir"
 
 echo "== stop gate: must re-check even when stop_hook_active is set =="
 stopdir=$(mktemp -d)
-cp ./check-on-stop.sh ./lib-payload.sh "$stopdir/"
+stage_stop_hook "$stopdir/"
 stopstate=$(mktemp -d)   # per-run counter state, see note above
 assert_stop() {
   local expected="$1" payload="$2" label="$3" actual
@@ -361,10 +408,56 @@ assert_stop 2 "{\"session_id\":\"${sid}c\"}" 'cap attempt 3'
 assert_stop 0 "{\"session_id\":\"${sid}c\"}" 'cap released on attempt 4'
 rm -rf "$stopstate"
 
+echo "== stop gate: project memory left as a template is not done =="
+memdir=$(mktemp -d); stage_stop_hook "$memdir/"
+memstate=$(mktemp -d)
+printf '{"name":"f","version":"1.0.0","scripts":{"lint":"echo ok","test":"echo ok"}}' > "$memdir/package.json"
+assert_mem() {
+  local expected="$1" label="$2" actual
+  echo "{\"session_id\":\"mem$$-$RANDOM\"}" | TMPDIR="$memstate" CLAUDE_PROJECT_DIR="$memdir" "$memdir/check-on-stop.sh" >/dev/null 2>&1
+  actual=$?
+  if [ "$actual" -eq "$expected" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); printf 'FAIL: expected exit %s, got %s for: %s\n' "$expected" "$actual" "$label"; fi
+}
+assert_mem 0 'no .ratchet directory: nothing to check'
+mkdir -p "$memdir/.ratchet"
+printf '# State\n## Objective\nFILL-ME\n' > "$memdir/.ratchet/STATE.md"
+assert_mem 2 'STATE.md still has FILL-ME'
+printf '# State\n## Objective\nShip the thing\n' > "$memdir/.ratchet/STATE.md"
+assert_mem 0 'STATE.md filled in'
+printf '# State\n## Objective\nShip the thing\n## Last handoff\n- Updated: YYYY-MM-DD\n' > "$memdir/.ratchet/STATE.md"
+assert_mem 2 'STATE.md handoff date left as the YYYY-MM-DD placeholder'
+printf '# State\n## Objective\nShip the thing\n## Last handoff\n- Updated: 2026-10-27\n' > "$memdir/.ratchet/STATE.md"
+assert_mem 0 'STATE.md handoff date filled in'
+printf '# State\n## Objective\nShip the thing\n## Important context\n- The upstream API wants dates as YYYY-MM-DD, not epoch\n## Last handoff\n- Updated: 2026-10-27\n' > "$memdir/.ratchet/STATE.md"
+assert_mem 0 'YYYY-MM-DD as ordinary prose in STATE.md is not a placeholder'
+printf '## Decision format\n- **Date:** YYYY-MM-DD\n## Decisions\n### D-1 — use X\n- **Date:** 2026-10-27\n- **Why:** the export format is YYYY-MM-DD and the old code used epoch\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 0 'YYYY-MM-DD as ordinary prose in a recorded decision is not a placeholder'
+printf '## Decision format\n- **Date:** YYYY-MM-DD\n## Decisions\n### D-1 — use X\n- **Date:** 2026-10-27\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 0 'YYYY-MM-DD in the DECISIONS.md format example is the template, not a gap'
+printf '## Decision format\n- **Date:** YYYY-MM-DD\n## Decisions\n### D-1 — use X\n- **Date:** YYYY-MM-DD\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 2 'YYYY-MM-DD inside a recorded decision'
+rm -f "$memdir/.ratchet/DECISIONS.md"
+printf '## Decision format\n### D-YYYYMMDD — FILL-ME: title\n- **Decision:** FILL-ME\n## Decisions\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 0 'FILL-ME in the DECISIONS.md format example is the template, not a gap'
+printf '## Decision format\n- **Decision:** FILL-ME\n## Decisions\n### D-1 — use X\n- **Why:** FILL-ME\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 2 'FILL-ME inside a recorded decision'
+printf '## Decisions\n### D-1 — use X\n- **Why:** because\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 0 'decisions filled in'
+# A renamed heading must not hide the placeholders; without the marker, check the whole file.
+printf '## Accepted decisions\n### D-1 — use X\n- **Why:** FILL-ME\n' > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 2 'FILL-ME with the Decisions heading renamed'
+# A ledger larger than a pipe buffer with the placeholder at the top: grep must not
+# exit early and turn the match into a pipefail false negative.
+{ printf '## Decisions\n- **Why:** FILL-ME\n'; yes 'line of recorded decision text' | head -n 8000; } > "$memdir/.ratchet/DECISIONS.md"
+assert_mem 2 'FILL-ME at the top of a 200 KB ledger'
+out=$(echo '{"session_id":"memmsg'$$'"}' | TMPDIR="$memstate" CLAUDE_PROJECT_DIR="$memdir" sh -c 'printf "## Objective\nFILL-ME\n" > "$CLAUDE_PROJECT_DIR/.ratchet/STATE.md"; "$CLAUDE_PROJECT_DIR/check-on-stop.sh"' 2>&1)
+printf '%s' "$out" | grep -q "STATE.md" && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: the block message should name the file with the leftover FILL-ME"; }
+rm -rf "$memdir" "$memstate"
+
 echo "== stop gate: an unpersistable counter must not trap the session =="
 # Without state the cap can never be reached, so the fallback bound applies.
 trapdir=$(mktemp -d)
-cp ./check-on-stop.sh ./lib-payload.sh "$trapdir/"
+stage_stop_hook "$trapdir/"
 printf '{"name":"f","version":"1.0.0","scripts":{"lint":"exit 1","test":"exit 1"}}' > "$trapdir/package.json"
 rodir=$(mktemp -d); chmod 500 "$rodir"
 trapstop() {
@@ -396,6 +489,12 @@ for payload in '{"tool_input":{"file_path":"README.md"}}' '{}'; do
   echo "$payload" | ./lint-edited-file.sh >/dev/null 2>&1
   [ $? -eq 0 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: should exit 0 for $payload"; }
 done
+
+# Upstream Ratchet 1.2.0 tests its per-stack lint table (ruff, shellcheck,
+# swiftlint, eslint via npx) here. This repo's lint hook is the TabletNotes
+# adaptation (`node --check` on tablet-notes-api JS only, missing node reported
+# rather than skipped), so its assertions live in the TabletNotes section at
+# the end of this file instead.
 
 echo "== guard: works on a node-only install (jq genuinely absent) =="
 # The hooks document node as a supported parser, so the suite must prove that
@@ -434,7 +533,7 @@ fi
 echo "== stop gate: unreachable project dir must not read as success =="
 # Releasing here would report verification for checks that never ran.
 badproj=$(mktemp -d); baddir="$badproj/does-not-exist"
-gatedir=$(mktemp -d); cp ./check-on-stop.sh ./lib-payload.sh "$gatedir/"
+gatedir=$(mktemp -d); stage_stop_hook "$gatedir/"
 badstate=$(mktemp -d)
 echo '{"session_id":"badcwd"}' | TMPDIR="$badstate" CLAUDE_PROJECT_DIR="$baddir" "$gatedir/check-on-stop.sh" >/dev/null 2>&1
 [ $? -eq 2 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: unreachable project dir should block"; }
@@ -444,7 +543,7 @@ rm -rf "$badproj" "$gatedir" "$badstate"
 
 echo "== stop gate: a swapped counter symlink must not be written through =="
 # rename(2) replaces the entry; a redirect would follow the symlink instead.
-symproj=$(mktemp -d); cp ./check-on-stop.sh ./lib-payload.sh "$symproj/"
+symproj=$(mktemp -d); stage_stop_hook "$symproj/"
 printf '{"name":"f","version":"1.0.0","scripts":{"lint":"exit 1","test":"exit 1"}}' > "$symproj/package.json"
 symstate=$(mktemp -d)
 victim=$(mktemp); printf 'PRECIOUS\n' > "$victim"
@@ -464,7 +563,7 @@ echo "== stop gate: a loose state dir must be tightened before use =="
 # A pre-existing world-writable dir must not be used as-is. Refusal on FOREIGN
 # ownership cannot be exercised here (the suite runs as the owning user), so
 # this asserts the part that is observable: perms end up private.
-looseproj=$(mktemp -d); cp ./check-on-stop.sh ./lib-payload.sh "$looseproj/"
+looseproj=$(mktemp -d); stage_stop_hook "$looseproj/"
 printf '{"name":"f","version":"1.0.0","scripts":{"lint":"exit 1","test":"exit 1"}}' > "$looseproj/package.json"
 loosestate=$(mktemp -d)
 loosedir="$loosestate/claude-stop-gate.$(id -u)"
@@ -478,7 +577,7 @@ else
   fail=$((fail + 1)); echo "FAIL: loose state dir not tightened (exit=$code perms=$perm_after)"
 fi
 # A state dir that cannot be made private is dropped rather than used.
-nodir=$(mktemp -d); cp ./check-on-stop.sh ./lib-payload.sh "$nodir/"
+nodir=$(mktemp -d); stage_stop_hook "$nodir/"
 printf '{"name":"f","version":"1.0.0","scripts":{"lint":"exit 1","test":"exit 1"}}' > "$nodir/package.json"
 nostate=$(mktemp -d)
 : > "$nostate/claude-stop-gate.$(id -u)"   # a regular file where the dir belongs
@@ -548,6 +647,11 @@ assert_guard 2 'git push --dry-run origin main'
 assert_guard 2 'supabase migration new add_table'
 assert_guard 2 'git push --all origin'
 assert_guard 2 'git push origin --mirror'
+# Per-command matching (Ratchet 1.2.0) must still see the flag next to its command.
+assert_guard 2 'true && git push origin main'
+assert_guard 2 'cd tablet-notes-api; netlify deploy --prod'
+assert_guard 2 'git push "origin;x" main'
+assert_guard 2 'echo ok | git push origin HEAD:main'
 
 echo "== guard (TabletNotes): ANSI-C / locale quoting must not hide a flag =="
 # `$'--force'` expands to --force; the `$` is not an expansion marker there.
@@ -604,6 +708,12 @@ assert_guard 0 'xcrun simctl boot 2BAC53A3-EC5B-40DE-A981-7F7A637A555E'
 assert_guard 0 'xcrun simctl install 2BAC53A3-EC5B-40DE-A981-7F7A637A555E /path/App.app'
 assert_guard 0 'git push -u origin baise/tab-116-adopt-ratchet-harness'
 assert_guard 0 'git push origin baise/tab-116-adopt-ratchet-harness'
+# A flag or refspec in a LATER command is not part of the push/deploy (Ratchet
+# 1.2.0 per-command matching; these were false positives before it).
+assert_guard 0 'git push origin feature && git fetch origin main'
+assert_guard 0 'git push -u origin feature; git checkout main'
+assert_guard 0 'netlify deploy --alias preview-1 && echo --prod'
+assert_guard 0 'git push origin feature && git branch --all'
 assert_guard 0 'git pull --ff-only origin main'
 assert_guard 0 'git checkout main && git pull -q --ff-only origin main'
 assert_guard 0 'git fetch origin main'

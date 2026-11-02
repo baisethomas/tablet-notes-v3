@@ -26,7 +26,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- Nothing on `main`. In flight on its own branch: TAB-122 job-less sermon reconciliation (`baise/tab-122-reconcile-jobless-sermons`, PR pending owner review); its state is in that branch's copy of this file.
+- This branch (`claude/ratchet-plugin-marketplace-update-x1g9wa`): upgrade the per-repo Ratchet drop-ins from the 2026-08-22 release (pre-1.0.0, no version marker) to Ratchet 1.2.0 (D-20261102-2110). Hand-merged on the branch; **each file still needs the owner's yes before merge**, per the `ratchet-upgrade` skill. Not installed on purpose: `.agents/skills/` (Ratchet's skills come from the Claude Code plugin here) and the `_purpose` annotations in `.claude/settings.json` (comment-only).
+- Also in flight on its own branch: TAB-122 job-less sermon reconciliation (`baise/tab-122-reconcile-jobless-sermons`, PR pending owner review); its state is in that branch's copy of this file.
 
 ## Next
 
@@ -46,9 +47,11 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 - Netlify prod auto-deploys on merge to `main`; env-var changes need a manual `netlify deploy --prod`. Supabase migrations are owner-only.
 - Two test failures pre-exist on `main` (listed in `docs/OPERATING-MANUAL.md` §3). A simulator that has been used for manual recording carries orphan audio that makes the `SermonService*` suites fail there. The clean simulator is iPhone 16 Pro / iOS 26.2, id A476D5E8-216E-481B-ADFE-6EB2E52FBEAC; the manual's §3, `AGENTS.md` and the stop hook all name it as of 57e851a (the old 18.5 simulator and runtime were deleted on 2026-10-19). The manual's §3 still says "find another 18.5 one" as the fallback wording; any 18.5-or-newer simulator works.
 - Device diagnosis: the app's `NotesLog` category is readable from a phone log stream over USB; the recipe is in the owner's notes and the TAB-113/114 PRs.
+- Ratchet files carry a `ratchet-version` marker from 1.2.0 on. The next upgrade runs `ratchet-upgrade` against the Ratchet checkout's `drop-in/` with no `--base`; the owner's edits in the hooks (ANSI-C quoting, `-C`/`--git-dir` alias globals, process-substitution eval, the TabletNotes hard stops) and in the contract are what the three-way merge must keep.
 
 ## Verification status
 
+- This branch (Ratchet 1.2.0 upgrade): `.claude/hooks/test-hooks.sh` 315 passed / 1 failed; the one failure (`unwritable state: retry releases rather than trapping`) also fails on the untouched base in this environment because the suite ran as root, where a mode-500 directory stays writable. Six regressions found and fixed before commit: the ANSI-C quoting fix had to be carried into 1.2.0's new per-segment path. Four new allow assertions (a `main` refspec or `--prod` in a *later* command) were confirmed blocked by the pre-upgrade guard. The stop gate run against the real `.ratchet/` files passes the new placeholder check. No Swift or API files changed, so no iOS build or `npm test` was required.
 - `main` @ 1f6e8f3 (TAB-119 merge; verified on the branch head 13cb373 that was squashed): `xcodebuild build` exit 0; `ScriptureReminderPlannerTests` 40/40 (nine new recording-day anchor tests; six fail with the past-slot drop removed), `ScriptureReminderSchedulerTests` 35/35 (the four race tests, the replacement-then-delete test and the late-summary anchor test each proven to fail with their guard or fix disabled), `SermonServiceDeleteTests` 7/7, `SermonServiceAuthWipeTests` 5/5, `SermonProcessingCoordinatorTests` 4/4, `DurableProcessingWiringTests` 13/13, `CompletedSermonReprocessingGuardTests` 13/13: 117/117, run on an iPhone 16 Pro / iOS 26.2 simulator (A476D5E8-216E-481B-ADFE-6EB2E52FBEAC) because the manual's 18.5 simulator and runtime were deleted while freeing disk space on 2026-10-19. Device verification still pending the owner.
 
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
@@ -69,7 +72,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-10-28 (TAB-119 merged; STATE reconciled on `main`)
+- Updated: 2026-11-02 (Ratchet 1.2.0 upgrade staged on the branch; awaiting the owner's per-file yes)
 - By: agent (Claude Code, Fable)
-- Branch/worktree: `main` (reconcile via `baise/ops-state-after-tab-119-merge`)
-- Last known-good commit: 1f6e8f3 (main)
+- Branch/worktree: `claude/ratchet-plugin-marketplace-update-x1g9wa`
+- Last known-good commit: 431c343 (main)

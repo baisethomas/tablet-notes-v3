@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# ratchet-version: 1.2.0
 # PostToolUse(Edit|Write) hook (Ratchet): check the file that was just edited so
-# the error lands in-loop, whether or not the model would have checked.
+# the error lands in-loop, whether or not the model would have checked. A
+# mapped file type whose checker is missing is reported, never silently skipped.
 #
 # TabletNotes adaptation of drop-in/hooks/lint-edited-file.sh. This repo has no
 # ESLint config and no SwiftLint, and a per-edit xcodebuild is far too slow, so:

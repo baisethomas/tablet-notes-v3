@@ -127,7 +127,9 @@ Summarize using exactly these four sections:
   were viable.
 - VERIFIED: everything you checked, binned as RAN (with actual output) /
   READ (code inspected, not executed) / ASSUMED (environment, versions,
-  external behavior). If the ASSUMED bin is empty, look harder — it never is.
+  external behavior) / INCONCLUSIVE (ran, but flaked, died part-way, or
+  gave no verdict — never counted as passing). If the ASSUMED bin is empty,
+  look harder — it never is.
 - LEFT: untested paths, follow-ups, and anything you noticed but
   deliberately didn't touch, with the one command I should run myself.
 ```

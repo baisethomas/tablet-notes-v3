@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ratchet-version: 1.2.0
 # Shared payload parsing for the hooks. Sourced, not executed.
 #
 # Hooks receive their event as JSON on stdin. Parsing it needs jq or node, and

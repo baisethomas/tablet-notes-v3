@@ -1,13 +1,16 @@
 # CODEX.md — Codex Adapter
+<!-- ratchet-version: 1.2.0 -->
 
 <!--
 AGENTS.md is the canonical model-agnostic operating contract (Ratchet). This file only adds
 Codex specifics. Do not duplicate universal rules here; if this file and AGENTS.md ever disagree,
 AGENTS.md wins and the conflict is a configuration error to report.
+Codex auto-loads AGENTS.md, not this file: keep the "Tool adapters" line in AGENTS.md so it is read.
 -->
 
-Codex loads `AGENTS.md` automatically for work in this repository; its read order points here after
-the operating manual. This file is the Codex-specific adapter, not a second operating contract.
+Codex loads `AGENTS.md` automatically for work in this repository; its read order and its
+tool-adapter line point here. This file is the Codex-specific adapter, not a second operating
+contract.
 
 ## Codex specifics
 
@@ -15,39 +18,39 @@ the operating manual. This file is the Codex-specific adapter, not a second oper
   calls. Treat the hard stops in `AGENTS.md` as policy even when no guard intercepts a command, and
   run the manual's required verification explicitly rather than assuming a stop hook ran it.
 - Codex task context and any harness-managed memory are not model-agnostic project memory. Durable,
-  shareable state belongs in `.ratchet/`; sensitive private pointers do not.
-- Use the repo skills in `.claude/skills/` when their workflow matches the task. Their directory name
-  is historical, not an instruction to ignore them outside Claude Code.
+  shareable state belongs in `.ratchet/` under the rules in `AGENTS.md`; sensitive private pointers
+  do not.
+- Codex discovers repo skills in `.agents/skills/`, not `.claude/skills/`. This repo keeps its
+  skills (`ship-linear-issue`, `sim-verify`, `deploy-api`) under `.claude/skills/` and Ratchet's own
+  skills come from the Claude Code plugin, so Codex will not load either on its own: read the
+  matching `SKILL.md` directly when the task matches, and report the gap.
+- When a skill step needs something Codex does not have — a hook, the Agent tool's `model` or
+  `effort` parameter, a Claude-only command — do not stop, ask, or retry. Do the step's intent by
+  hand where you can (run the check yourself, read the skill directly), put one line in the reply,
+  `Skipped in Codex: <step>. <reason>.`, and go on. If a later step needs what the skipped step
+  would have produced, leave a named placeholder and say so in that line.
+- Treat any conflict between this file and `AGENTS.md` as a configuration error. `AGENTS.md` wins;
+  report the conflict.
 
 ## Model routing
 
-The session that talks to the owner is the **orchestrator**. Its model is selected by the host or
-owner; it cannot switch itself to the model named below. The table routes subagents only when the
-user or another applicable instruction has expressly authorized delegation—it does not itself grant
-that authority. Delegate only bounded work and own the result: re-run checks or read the evidence
-directly; never accept a subagent's "done" on trust. `AGENTS.md` and the manual bind every tier
-equally; a faster model gets a shorter leash, not a looser contract.
+Tiers, what each owns, and the routing rules are defined in `AGENTS.md` → Delegation and model
+tiers. This table only says which model fills each tier here (D-20260915-0625 in
+`.ratchet/DECISIONS.md`). The orchestrator's model is selected by the Codex host or the owner; it
+cannot switch itself to the model named below. The table routes subagents only when the user or
+another applicable instruction has expressly authorized delegation — it does not itself grant that
+authority.
 
-Model availability varies by Codex host. Use the named model when available; otherwise use the
-strongest available model appropriate to the same tier and state the substitution.
+| Tier | Model |
+|---|---|
+| Orchestrate | **Host-selected; prefer gpt-6-astra** |
+| Operate, high risk | **gpt-6-astra** |
+| Operate, routine | **gpt-5.6-terra** |
+| Git & docs | **gpt-5.6-luna** |
 
-| Tier | Model | Owns | Never |
-|---|---|---|---|
-| Orchestrate | **Host-selected; prefer gpt-6-astra** | The conversation with the owner; plans and blast-radius calls; root-cause diagnosis of prod or device symptoms; anything in hard-stop territory; cross-cutting changes spanning the sync engine, recording pipeline, and `SermonService`; medium/high-impact `DECISIONS.md` entries; arguing or accepting review findings; the final Ratchet report. | Delegates a decision it should make itself. |
-| Implement, high risk | **gpt-6-astra** | Code in `SermonService.swift`, `Services/Sync/`, `Services/Recording/`, `Services/Notes/`, `Views/MainAppView.swift`, and any Netlify function or `utils/` module that writes prod data; concurrency or actor-isolation changes; test-first bug fixes that must prove reproduce-revert-restore; migration proposals (never execution). | Merges, deploys, executes migrations, or edits `.pbxproj` by hand. |
-| Implement, routine | **gpt-5.6-terra** | Views outside `MainAppView`; components; `utils/` modules with a test suite; well-specified refactors within one file; new tests for described behavior; PR body drafts; `docs/OPERATING-MANUAL.md` or `AGENTS.md` wording changes. | Touches the high-risk modules above, resolves merge conflicts, or changes a shared contract. |
-| Chores | **gpt-5.6-luna** | Git mechanics with fully specified inputs; `.ratchet/STATE.md` refreshes; Linear comments and issue-link updates; typo and formatting fixes in docs; read-only lookups and greps; running a named check and reporting its output verbatim. | Edits code or project files, resolves conflicts, writes `DECISIONS.md` entries, or interprets a failing test. |
-
-Rules of thumb:
-
-- **Route by blast radius, not by apparent size.** A one-line change in `SermonService` is high-risk
-  work; a fifty-line new settings row is routine implementation.
-- **Escalate on the second failure.** If a routine or chores task fails verification twice, or turns
-  out to touch a hard stop, return it to the orchestrator or the next tier up with the failure
-  attached. Never retry a weaker model into the same wall.
-- **Reviews go up a tier.** A hostile diff review (see `docs/ratchet/review-prompts.md` §5) uses a
-  model at least as strong as the one that wrote the diff, in a fresh context.
-- **Verification is tier-independent.** Repository checks, guards, and the manual's quality bar apply
-  to every model equally.
-- **When unsure, use `gpt-6-astra`.** The cost of a wrong cheap answer in this repo is a lost
-  recording, not a wasted token.
+Model availability varies by Codex host. Use only identifiers the host exposes as available to this
+session; a public announcement does not establish access. Use the named model when available;
+otherwise use the strongest available model appropriate to the same tier and state the
+substitution, as `AGENTS.md` requires. Report a mismatch between the preferred and active
+orchestrator model without claiming to change it. When unsure, use `gpt-6-astra`: the cost of a
+wrong cheap answer in this repo is a lost recording, not a wasted token.

