@@ -10,6 +10,32 @@ const {
   triageSupportContext,
   verifyHelpScoutSignature
 } = require('../supportAutomation');
+const { parseSupportInboxRoutes } = require('../supportInboxRouting');
+
+const TAB_TEAM_ID = '38abf509-9400-4268-a35d-cb64cc6db607';
+const LOO_TEAM_ID = '60112c28-9f70-4fc3-9e06-d5963b476947';
+const GRANTED_AI_PROJECT_ID = 'fea7755f-3b05-4822-aaad-f298550d3a1c';
+
+const productionInboxRoutes = parseSupportInboxRoutes(JSON.stringify({
+  360464: {
+    productName: 'Tablet Notes',
+    mailboxName: 'TabletNotes-support',
+    supportEmail: 'support@tabletnotes.io',
+    identityAliases: ['TabletNotes'],
+    supportSignature: 'Tablet Notes Support',
+    agentGuidance: 'Tablet Notes is an iOS and iPadOS note-taking and recording app. Prioritize lost recordings, transcription or data loss, crashes, and App Store launch issues.',
+    linearTeamId: TAB_TEAM_ID
+  },
+  371514: {
+    productName: 'Granted AI',
+    mailboxName: 'Granted AI Support',
+    supportEmail: 'support@grantedai.app',
+    supportSignature: 'Granted AI Support',
+    agentGuidance: 'Use only details present in the ticket. Do not assume iOS, App Store, recording, or Tablet Notes workflows.',
+    linearTeamId: LOO_TEAM_ID,
+    linearProjectId: GRANTED_AI_PROJECT_ID
+  }
+}));
 
 const sampleConversation = {
   id: 123,
@@ -405,4 +431,187 @@ test('falls back to deterministic triage when the support agent fails', async ()
   assert.equal(result.triage.category, 'bug');
   assert.equal(result.agentError, 'model unavailable');
   assert.match(result.draftReply, /We're looking into this/);
+});
+
+function crashConversationForMailbox(mailboxId, mailboxName, subject) {
+  return {
+    ...sampleConversation,
+    subject,
+    mailbox: { id: mailboxId, name: mailboxName }
+  };
+}
+
+async function captureIssuePayload(mailboxId, mailboxName, subject) {
+  let issueInput = null;
+  const helpScoutClient = {
+    getConversation: async () => crashConversationForMailbox(mailboxId, mailboxName, subject),
+    createDraftReply: async () => ({ id: 999 }),
+    createNote: async () => ({ id: 1000 })
+  };
+  const linearClient = {
+    createIssue: async (input) => {
+      issueInput = input;
+      return { id: 'issue-uuid', identifier: 'ISSUE-1' };
+    }
+  };
+
+  const result = await runSupportWorkflow({
+    eventName: 'convo.created',
+    payload: { id: 123 },
+    helpScoutClient,
+    linearClient,
+    config: { inboxRoutes: productionInboxRoutes }
+  });
+
+  return { result, issueInput };
+}
+
+test('routes mailbox 371514 to the LOO team and Granted AI project', async () => {
+  const { result, issueInput } = await captureIssuePayload(
+    371514,
+    'Granted AI Support',
+    'App crashes during setup'
+  );
+
+  assert.equal(result.processed, true);
+  assert.equal(result.route.linearTeamId, LOO_TEAM_ID);
+  assert.equal(result.route.linearProjectId, GRANTED_AI_PROJECT_ID);
+  assert.equal(issueInput.teamId, LOO_TEAM_ID);
+  assert.equal(issueInput.projectId, GRANTED_AI_PROJECT_ID);
+});
+
+test('routes mailbox 360464 to the TAB team with no Granted AI project', async () => {
+  const { result, issueInput } = await captureIssuePayload(
+    360464,
+    'TabletNotes-support',
+    'App crashes after recording'
+  );
+
+  assert.equal(result.processed, true);
+  assert.equal(result.route.linearTeamId, TAB_TEAM_ID);
+  assert.equal(result.route.linearProjectId, undefined);
+  assert.equal(issueInput.teamId, TAB_TEAM_ID);
+  assert.equal(issueInput.projectId, undefined);
+  assert.notEqual(issueInput.projectId, GRANTED_AI_PROJECT_ID);
+});
+
+test('does not cross-route a Tablet Notes ticket onto LOO or the Granted AI project', async () => {
+  const { issueInput } = await captureIssuePayload(
+    360464,
+    'TabletNotes-support',
+    'App crashes after recording'
+  );
+
+  assert.notEqual(issueInput.teamId, LOO_TEAM_ID);
+  assert.notEqual(issueInput.projectId, GRANTED_AI_PROJECT_ID);
+});
+
+test('does not cross-route a Granted AI ticket onto the TAB team', async () => {
+  const { issueInput } = await captureIssuePayload(
+    371514,
+    'Granted AI Support',
+    'App crashes during setup'
+  );
+
+  assert.notEqual(issueInput.teamId, TAB_TEAM_ID);
+  assert.equal(issueInput.teamId, LOO_TEAM_ID);
+});
+
+test('ignores an unknown Help Scout mailbox without falling back to Tablet Notes or Granted AI', async () => {
+  const writes = [];
+  const helpScoutClient = {
+    getConversation: async () => crashConversationForMailbox(999999, 'Unknown Inbox', 'App crashes'),
+    createDraftReply: async () => writes.push('draft'),
+    createNote: async () => writes.push('note')
+  };
+  const linearClient = {
+    createIssue: async (input) => {
+      writes.push(['linear', input.teamId, input.projectId]);
+    }
+  };
+
+  const result = await runSupportWorkflow({
+    eventName: 'convo.created',
+    payload: { id: 123 },
+    helpScoutClient,
+    linearClient,
+    config: { inboxRoutes: productionInboxRoutes }
+  });
+
+  assert.equal(result.processed, false);
+  assert.equal(result.reason, 'Ignored unconfigured Help Scout mailbox: 999999');
+  assert.equal(result.linearIssue, undefined);
+  assert.equal(result.route, undefined);
+  assert.deepEqual(writes, []);
+});
+
+test('each product draft reply uses that product supportEmail and supportSignature', async () => {
+  async function draftForMailbox(mailboxId, mailboxName, leakedIdentity) {
+    let draftedText;
+    const helpScoutClient = {
+      getConversation: async () => crashConversationForMailbox(mailboxId, mailboxName, 'App crashes'),
+      createDraftReply: async (conversationId, input) => {
+        draftedText = input.text;
+        return { id: 999 };
+      },
+      createNote: async () => ({ id: 1000 })
+    };
+    const supportAgent = {
+      analyze: async (context, fallbackTriage) => ({
+        triage: fallbackTriage,
+        draftReply: [
+          'Hi Jordan,',
+          '',
+          `Thanks for contacting ${leakedIdentity.mailboxName} at ${leakedIdentity.supportEmail}.`,
+          '',
+          'Thanks,',
+          leakedIdentity.supportSignature
+        ].join('\n')
+      })
+    };
+
+    const result = await runSupportWorkflow({
+      eventName: 'convo.created',
+      payload: { id: 123 },
+      helpScoutClient,
+      linearClient: { createIssue: async () => ({ id: 'issue-id' }) },
+      supportAgent,
+      config: { inboxRoutes: productionInboxRoutes }
+    });
+
+    return { draftedText, route: result.route };
+  }
+
+  const tabletNotes = productionInboxRoutes['360464'];
+  const grantedAi = productionInboxRoutes['371514'];
+
+  const tabletNotesDraft = await draftForMailbox(360464, tabletNotes.mailboxName, grantedAi);
+  assert.match(tabletNotesDraft.draftedText, /support@tabletnotes\.io/);
+  assert.match(tabletNotesDraft.draftedText, /Tablet Notes Support/);
+  assert.doesNotMatch(tabletNotesDraft.draftedText, /support@grantedai\.app/);
+  assert.doesNotMatch(tabletNotesDraft.draftedText, /Granted AI Support/);
+
+  const grantedAiDraft = await draftForMailbox(371514, grantedAi.mailboxName, tabletNotes);
+  assert.match(grantedAiDraft.draftedText, /support@grantedai\.app/);
+  assert.match(grantedAiDraft.draftedText, /Granted AI Support/);
+  assert.doesNotMatch(grantedAiDraft.draftedText, /support@tabletnotes\.io/);
+  assert.doesNotMatch(grantedAiDraft.draftedText, /Tablet Notes Support/);
+});
+
+test('builds a Linear issue payload for mailbox 371514 with LOO teamId and Granted AI projectId', () => {
+  const route = productionInboxRoutes['371514'];
+  const context = {
+    ...buildSupportContext(crashConversationForMailbox(371514, route.mailboxName, 'App crashes during setup')),
+    productName: route.productName,
+    supportSignature: route.supportSignature
+  };
+  const triage = triageSupportContext(context);
+  const issue = buildLinearIssueInput(context, triage, {
+    teamId: route.linearTeamId,
+    projectId: route.linearProjectId
+  });
+
+  assert.equal(issue.teamId, LOO_TEAM_ID);
+  assert.equal(issue.projectId, GRANTED_AI_PROJECT_ID);
+  assert.notEqual(issue.teamId, TAB_TEAM_ID);
 });
