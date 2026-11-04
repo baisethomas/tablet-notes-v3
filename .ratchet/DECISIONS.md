@@ -160,3 +160,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** A sermon recorded on Sunday and summarised Monday afternoon gets three reminders (Tuesday, Thursday, Saturday). A sermon whose summary completes after the seventh morning gets none and is never recorded as scheduled; if it is still inside the 48-hour window on a later pass it is re-planned then. Tests in `ScriptureReminderPlannerTests` pin the same-day, next-afternoon, 07:59/08:00/08:01 boundary, month-boundary and DST cases.
 - **Revisit when:** The owner wants a configurable time or count, or a catch-up rule for late summaries.
 - **Approved by:** owner (2026-10-28, option A)
+
+### D-20261104-1800-granted-ai-support-routes-to-loo — Granted AI Help Scout tickets go to Linear team LOO with project Granted AI
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-11-04
+- **Decision:** Help Scout mailbox 371514 (Granted AI Support) routes to Linear team LOO (`60112c28-9f70-4fc3-9e06-d5963b476947`) with `linearProjectId` `fea7755f-3b05-4822-aaad-f298550d3a1c` (Granted AI). Tablet Notes mailbox 360464 stays on team TAB with no project. Unknown mailboxes stay fail-closed. The retired GRA team ID is not a valid route.
+- **Why:** Linear team GRA was folded into LOO as project "Granted AI" and retired on 2026-11-04 (TAB-126). `linearProjectId` already reached Linear issue creation; only the committed route needed updating. Live `SUPPORT_INBOX_ROUTES` remains operator-reserved.
+- **Rejected / alternatives:** Keep routing 371514 to the retired GRA team — rejected; new tickets would target a deleted team. Give 360464 a project as well — out of scope; TAB has no project today.
+- **Consequences:** Repo `.env.example` and tests pin 371514 → LOO + Granted AI and 360464 → TAB. Deployed routing does not change until the operator updates the Vercel env var.
+- **Revisit when:** Another Help Scout mailbox is added, or Granted AI is split back out of LOO.
+- **Approved by:** agent (medium impact, within TAB-126 authorized scope); destination IDs specified by the owner in the brief

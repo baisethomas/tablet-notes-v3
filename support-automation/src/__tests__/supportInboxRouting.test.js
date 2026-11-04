@@ -1,7 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { parseSupportInboxRoutes } = require('../supportInboxRouting');
+
+const TAB_TEAM_ID = '38abf509-9400-4268-a35d-cb64cc6db607';
+const LOO_TEAM_ID = '60112c28-9f70-4fc3-9e06-d5963b476947';
+const GRANTED_AI_PROJECT_ID = 'fea7755f-3b05-4822-aaad-f298550d3a1c';
+
+function parseEnvExampleInboxRoutes() {
+  const envExample = fs.readFileSync(path.join(__dirname, '../../.env.example'), 'utf8');
+  const match = envExample.match(/^SUPPORT_INBOX_ROUTES=(.*)$/m);
+  assert.ok(match, 'SUPPORT_INBOX_ROUTES must be present in .env.example');
+  return parseSupportInboxRoutes(match[1]);
+}
 
 test('parses independent Help Scout mailbox routes from production configuration', () => {
   const routes = parseSupportInboxRoutes(JSON.stringify({
@@ -11,7 +24,7 @@ test('parses independent Help Scout mailbox routes from production configuration
       supportEmail: 'support@tabletnotes.io',
       identityAliases: ['TabletNotes'],
       agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
-      linearTeamId: '38abf509-9400-4268-a35d-cb64cc6db607'
+      linearTeamId: TAB_TEAM_ID
     },
     371514: {
       productName: 'Granted AI',
@@ -19,7 +32,8 @@ test('parses independent Help Scout mailbox routes from production configuration
       supportEmail: 'support@grantedai.app',
       supportSignature: 'Granted AI Support',
       agentGuidance: 'Use only details present in the ticket.',
-      linearTeamId: 'ec3442ea-feb0-42a3-a355-bdb373c9bc0c',
+      linearTeamId: LOO_TEAM_ID,
+      linearProjectId: GRANTED_AI_PROJECT_ID,
       linearLabelIds: ['support-label']
     }
   }));
@@ -31,12 +45,33 @@ test('parses independent Help Scout mailbox routes from production configuration
     identityAliases: ['TabletNotes'],
     supportSignature: 'Tablet Notes Support',
     agentGuidance: 'Prioritize lost recordings and App Store launch issues.',
-    linearTeamId: '38abf509-9400-4268-a35d-cb64cc6db607',
+    linearTeamId: TAB_TEAM_ID,
     linearLabelIds: []
   });
-  assert.equal(routes['371514'].linearTeamId, 'ec3442ea-feb0-42a3-a355-bdb373c9bc0c');
+  assert.equal(routes['360464'].linearTeamId, TAB_TEAM_ID);
+  assert.equal(routes['360464'].linearProjectId, undefined);
+  assert.notEqual(routes['360464'].linearProjectId, GRANTED_AI_PROJECT_ID);
+  assert.equal(routes['371514'].linearTeamId, LOO_TEAM_ID);
+  assert.equal(routes['371514'].linearProjectId, GRANTED_AI_PROJECT_ID);
   assert.equal(routes['371514'].agentGuidance, 'Use only details present in the ticket.');
   assert.deepEqual(routes['371514'].linearLabelIds, ['support-label']);
+});
+
+test('committed .env.example routes mailbox 371514 to LOO and the Granted AI project', () => {
+  const routes = parseEnvExampleInboxRoutes();
+
+  assert.equal(routes['371514'].linearTeamId, LOO_TEAM_ID);
+  assert.equal(routes['371514'].linearProjectId, GRANTED_AI_PROJECT_ID);
+  assert.notEqual(routes['371514'].linearTeamId, TAB_TEAM_ID);
+});
+
+test('committed .env.example routes mailbox 360464 to TAB with no Granted AI project', () => {
+  const routes = parseEnvExampleInboxRoutes();
+
+  assert.equal(routes['360464'].linearTeamId, TAB_TEAM_ID);
+  assert.equal(routes['360464'].linearProjectId, undefined);
+  assert.notEqual(routes['360464'].linearTeamId, LOO_TEAM_ID);
+  assert.notEqual(routes['360464'].linearProjectId, GRANTED_AI_PROJECT_ID);
 });
 
 test('rejects missing or invalid support inbox routing configuration', () => {

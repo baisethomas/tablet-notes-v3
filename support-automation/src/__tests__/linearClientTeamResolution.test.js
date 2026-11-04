@@ -84,6 +84,41 @@ test('LinearClient passes UUID team ids without a lookup', async () => {
   assert.equal(calls[0].variables.input.teamId, '38abf509-9400-4268-a35d-cb64cc6db607');
 });
 
+test('LinearClient forwards projectId on the issue create payload', async () => {
+  const calls = [];
+  const client = new LinearClient({
+    apiKey: 'lin_api_key',
+    fetchImpl: async (url, options) => {
+      calls.push(JSON.parse(options.body));
+      return jsonResponse({
+        data: {
+          issueCreate: {
+            success: true,
+            issue: {
+              id: 'issue-id',
+              identifier: 'LOO-1',
+              title: 'Support issue',
+              url: 'https://linear.app/loomlogiclabs/issue/LOO-1'
+            }
+          }
+        }
+      });
+    }
+  });
+
+  await client.createIssue({
+    teamId: '60112c28-9f70-4fc3-9e06-d5963b476947',
+    projectId: 'fea7755f-3b05-4822-aaad-f298550d3a1c',
+    title: 'Support issue',
+    description: 'Details',
+    priority: 1
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].variables.input.teamId, '60112c28-9f70-4fc3-9e06-d5963b476947');
+  assert.equal(calls[0].variables.input.projectId, 'fea7755f-3b05-4822-aaad-f298550d3a1c');
+});
+
 function jsonResponse(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,
