@@ -26,7 +26,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- This branch (`claude/ratchet-plugin-marketplace-update-x1g9wa`): upgrade the per-repo Ratchet drop-ins from the 2026-08-22 release (pre-1.0.0, no version marker) to Ratchet 1.2.0, then to 1.3.1 (D-20261102-2110). 1.3.1 adds a fail-closed guard (missing payload library or unexpected parser exit blocks) and project-owned extra guard rules in `.ratchet/guard-destructive.rules`; this repo does not use the rules file yet, since the TabletNotes stops need flag pairing or git state that a pattern file cannot express. Hand-merged on the branch; **each file still needs the owner's yes before merge**, per the `ratchet-upgrade` skill. Not installed on purpose: `.agents/skills/` (Ratchet's skills come from the Claude Code plugin here) and the `_purpose` annotations in `.claude/settings.json` (comment-only).
+- This branch (`claude/ratchet-plugin-marketplace-update-x1g9wa`): upgrade the per-repo Ratchet drop-ins from the 2026-08-22 release (pre-1.0.0, no version marker) to Ratchet 1.2.0, then to 1.3.1 (D-20261102-2110). 1.3.1 adds a fail-closed guard (missing payload library or unexpected parser exit blocks) and project-owned extra guard rules in `.ratchet/guard-destructive.rules`; this repo does not use the rules file yet, since the TabletNotes stops need flag pairing or git state that a pattern file cannot express. Hand-merged on the branch; the owner gave the per-file yes on 2026-11-06 (D-20261102-2110 accepted). Ready for the owner's review and merge; no PR has been opened. Not installed on purpose: `.agents/skills/` (Ratchet's skills come from the Claude Code plugin here) and the `_purpose` annotations in `.claude/settings.json` (comment-only).
 - Also in flight on its own branch: TAB-122 job-less sermon reconciliation (`baise/tab-122-reconcile-jobless-sermons`, PR pending owner review); its state is in that branch's copy of this file.
 
 ## Next
@@ -73,7 +73,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-11-06 (Ratchet 1.3.1 upgrade staged on the branch; awaiting the owner's per-file yes)
+- Updated: 2026-11-06 (Ratchet 1.3.1 upgrade approved per file by the owner; branch ready to merge)
 - By: agent (Claude Code, Fable)
 - Branch/worktree: `claude/ratchet-plugin-marketplace-update-x1g9wa`
 - Last known-good commit: 431c343 (main)
