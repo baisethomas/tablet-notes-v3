@@ -1,5 +1,5 @@
 # CLAUDE.md — Claude Code Adapter
-<!-- ratchet-version: 1.2.0 -->
+<!-- ratchet-version: 1.3.1 -->
 
 <!--
 AGENTS.md is the canonical model-agnostic operating contract (Ratchet). This file only adds

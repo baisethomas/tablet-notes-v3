@@ -1,5 +1,5 @@
 # AGENTS.md — Canonical Working Rules for This Repository
-<!-- ratchet-version: 1.2.0 -->
+<!-- ratchet-version: 1.3.1 -->
 
 <!--
 Ratchet (https://github.com/baisethomas/Ratchet) model-agnostic operating contract.

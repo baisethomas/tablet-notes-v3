@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ratchet-version: 1.2.0
+# ratchet-version: 1.3.1
 # PostToolUse(Edit|Write) hook (Ratchet): check the file that was just edited so
 # the error lands in-loop, whether or not the model would have checked. A
 # mapped file type whose checker is missing is reported, never silently skipped.

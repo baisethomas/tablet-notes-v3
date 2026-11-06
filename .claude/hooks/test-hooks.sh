@@ -484,6 +484,75 @@ echo '{}' | ./guard-destructive.sh >/dev/null 2>&1
 echo 'not json' | ./guard-destructive.sh >/dev/null 2>&1
 [ $? -eq 2 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: non-JSON payload should exit 2 (cannot verify => block)"; }
 
+echo "== guard: must FAIL CLOSED on empty stdin and unexpected payload_field exit =="
+# Empty stdin is unparseable: cannot verify => block. Distinct from valid JSON
+# with no command field, which is allowed above.
+printf '' | ./guard-destructive.sh >/dev/null 2>&1
+[ $? -eq 2 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: empty stdin should exit 2 (cannot verify => block)"; }
+
+# payload_field is specified to return 0, 1, or 2. Any other status used to
+# fall through, treat the empty capture as "no command", and allow a
+# destructive payload. Stage a copy of the real guard with a stub helper so
+# the test drives those statuses without rewriting the production function.
+pf_stub=$(mktemp -d)
+cp ./guard-destructive.sh "$pf_stub/"
+chmod +x "$pf_stub/guard-destructive.sh"
+assert_pf_status() {
+  local expected="$1" status="$2" label="$3" actual
+  printf 'payload_field() { return %s; }\n' "$status" > "$pf_stub/lib-payload.sh"
+  printf '{"tool_input":{"command":"git push origin --force"}}' \
+    | "$pf_stub/guard-destructive.sh" >/dev/null 2>&1
+  actual=$?
+  if [ "$actual" -eq "$expected" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    printf 'FAIL: expected exit %s, got %s for: %s\n' "$expected" "$actual" "$label"
+  fi
+}
+assert_pf_status 2 3 'payload_field returns 3 (unexpected)'
+assert_pf_status 2 127 'payload_field returns 127 (unexpected)'
+# The deny must be visible: a silent exit 2 is better than fail-open, but the
+# contract is a clear block message.
+printf 'payload_field() { return 3; }\n' > "$pf_stub/lib-payload.sh"
+out=$(printf '{"tool_input":{"command":"git push origin --force"}}' | "$pf_stub/guard-destructive.sh" 2>&1 >/dev/null)
+printf '%s' "$out" | grep -q "BLOCKED by guard hook" && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: unexpected helper exit should print a BLOCKED message"; }
+rm -rf "$pf_stub"
+
+echo "== guard: must FAIL CLOSED when lib-payload.sh cannot be loaded =="
+# Missing or unreadable helper: cannot verify => block, with a message that
+# names the library, not a generic parser error.
+lib_stub=$(mktemp -d)
+cp ./guard-destructive.sh "$lib_stub/"
+chmod +x "$lib_stub/guard-destructive.sh"
+assert_lib_load() {
+  local label="$1" actual out
+  out=$(printf '{"tool_input":{"command":"git push origin --force"}}' | "$lib_stub/guard-destructive.sh" 2>&1 >/dev/null)
+  actual=$?
+  if [ "$actual" -ne 2 ]; then
+    fail=$((fail + 1))
+    printf 'FAIL: expected exit 2, got %s for: %s\n' "$actual" "$label"
+    return
+  fi
+  if ! printf '%s' "$out" | grep "BLOCKED by guard hook" | grep -q "lib-payload.sh"; then
+    fail=$((fail + 1)); printf 'FAIL: %s: BLOCKED line should name lib-payload.sh, got: %s\n' "$label" "$out"; return
+  fi
+  pass=$((pass + 1))
+}
+assert_lib_load 'lib-payload.sh missing'
+cp ./lib-payload.sh "$lib_stub/"
+chmod a-r "$lib_stub/lib-payload.sh"
+# chmod a-r does not hide the file from UID 0; [ -r ] stays true and bash
+# sources it, so the guard blocks the force-push instead of the load. Skip
+# the permission case when the chmod did not take — keep missing unconditional.
+if [ -r "$lib_stub/lib-payload.sh" ]; then
+  echo "SKIP: lib-payload.sh unreadable case needs a non-root runner (chmod a-r is still readable to UID 0)"
+else
+  assert_lib_load 'lib-payload.sh unreadable'
+fi
+chmod u+r "$lib_stub/lib-payload.sh" 2>/dev/null || chmod a+r "$lib_stub/lib-payload.sh"
+rm -rf "$lib_stub"
+
 echo "== lint hook: non-lintable and missing paths are skipped =="
 for payload in '{"tool_input":{"file_path":"README.md"}}' '{}'; do
   echo "$payload" | ./lint-edited-file.sh >/dev/null 2>&1
@@ -718,6 +787,183 @@ assert_guard 0 'git pull --ff-only origin main'
 assert_guard 0 'git checkout main && git pull -q --ff-only origin main'
 assert_guard 0 'git fetch origin main'
 assert_guard 0 'gh pr merge 77 --squash --delete-branch'
+
+# Project-owned extra rules live at $CLAUDE_PROJECT_DIR/.ratchet/guard-destructive.rules
+# (git toplevel if that env is unset). They are additive: they cannot weaken a default.
+EXAMPLE_PROJECT_RULES='# Extra blocked commands for this project. Combined with Ratchet defaults.
+# Blank lines and comments are ignored. Each remaining line is an unanchored POSIX ERE
+# matched against the same normalized command text the default rules use.
+npm run db:push
+drizzle-kit generate
+'
+
+stage_project_rules() {
+  local dir="$1" body="${2:-$EXAMPLE_PROJECT_RULES}"
+  mkdir -p "$dir/.ratchet"
+  printf '%s' "$body" > "$dir/.ratchet/guard-destructive.rules"
+}
+
+assert_guard_proj() {
+  local expected="$1" cmd="$2" proj="$3" actual
+  printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str "$cmd")" \
+    | CLAUDE_PROJECT_DIR="$proj" ./guard-destructive.sh >/dev/null 2>&1
+  actual=$?
+  if [ "$actual" -eq "$expected" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    printf 'FAIL: expected exit %s, got %s for: %s (project %s)\n' "$expected" "$actual" "$cmd" "$proj"
+  fi
+}
+
+echo "== guard: project rule file blocks a matching command =="
+# The documented example: npm run db:push and drizzle-kit generate (including npx).
+rulesproj=$(mktemp -d)
+stage_project_rules "$rulesproj"
+assert_guard_proj 2 'npm run db:push' "$rulesproj"
+assert_guard_proj 2 'npm run db:push --force' "$rulesproj"
+assert_guard_proj 2 "npm run 'db:push'" "$rulesproj"
+assert_guard_proj 2 'drizzle-kit generate' "$rulesproj"
+assert_guard_proj 2 'npx drizzle-kit generate' "$rulesproj"
+# CRLF line endings still match; a Windows-edited file is not malformed.
+printf 'npm run db:push\r\n' > "$rulesproj/.ratchet/guard-destructive.rules"
+assert_guard_proj 2 'npm run db:push' "$rulesproj"
+printf '%s' "$EXAMPLE_PROJECT_RULES" > "$rulesproj/.ratchet/guard-destructive.rules"
+assert_guard_proj 0 'npm test' "$rulesproj"
+assert_guard_proj 0 'npm run lint' "$rulesproj"
+# A pattern that starts with - is still an ERE, not a grep flag.
+printf '%s\n' '--extra-dangerous' >> "$rulesproj/.ratchet/guard-destructive.rules"
+assert_guard_proj 2 'tool --extra-dangerous' "$rulesproj"
+assert_guard_proj 0 'npm test' "$rulesproj"
+# The BLOCKED line must name the project rule that matched.
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str 'npm run db:push')" \
+  | CLAUDE_PROJECT_DIR="$rulesproj" ./guard-destructive.sh 2>&1 >/dev/null)
+if printf '%s' "$out" | grep -q 'BLOCKED by guard hook' \
+   && printf '%s' "$out" | grep -q 'project rule' \
+   && printf '%s' "$out" | grep -q 'npm run db:push'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); printf 'FAIL: project-rule block message should name the matching rule, got: %s\n' "$out"
+fi
+# Found via CLAUDE_PROJECT_DIR even when the hook itself lives in a plugin root.
+plugroot=$(mktemp -d)
+cp ./guard-destructive.sh ./lib-payload.sh "$plugroot/"
+chmod +x "$plugroot/guard-destructive.sh"
+printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str 'npx drizzle-kit generate')" \
+  | CLAUDE_PROJECT_DIR="$rulesproj" "$plugroot/guard-destructive.sh" >/dev/null 2>&1
+[ $? -eq 2 ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL: plugin-root copy of the guard should still load project rules via CLAUDE_PROJECT_DIR"; }
+rm -rf "$plugroot"
+
+echo "== guard: default rules still block when a project rule file is present =="
+assert_guard_proj 2 'git push --force' "$rulesproj"
+assert_guard_proj 2 'git push origin --force' "$rulesproj"
+assert_guard_proj 2 'drizzle-kit push' "$rulesproj"
+assert_guard_proj 2 'npm run db:migrate' "$rulesproj"
+# TabletNotes: a push to main is a project hard stop, so the ordinary push is a feature branch.
+assert_guard_proj 0 'git push origin feature' "$rulesproj"
+rm -rf "$rulesproj"
+
+echo "== guard: missing or empty project rule file falls back to defaults =="
+missingproj=$(mktemp -d)
+mkdir -p "$missingproj/.ratchet"
+# No file at all: defaults only. db:push is not a default.
+assert_guard_proj 0 'npm run db:push' "$missingproj"
+assert_guard_proj 0 'drizzle-kit generate' "$missingproj"
+assert_guard_proj 2 'git push --force' "$missingproj"
+assert_guard_proj 2 'drizzle-kit push' "$missingproj"
+# Empty file, comments-only, and blank lines: same as missing.
+: > "$missingproj/.ratchet/guard-destructive.rules"
+assert_guard_proj 0 'npm run db:push' "$missingproj"
+assert_guard_proj 2 'git push --force' "$missingproj"
+printf '# only a comment\n\n   \n' > "$missingproj/.ratchet/guard-destructive.rules"
+assert_guard_proj 0 'npm run db:push' "$missingproj"
+assert_guard_proj 2 'drizzle-kit push' "$missingproj"
+rm -rf "$missingproj"
+
+echo "== guard: malformed or unreadable project rule file fails closed =="
+# Present-but-unusable is "cannot verify", same class as a missing lib-payload.sh:
+# every real command is blocked, including ones the defaults would allow.
+badproj=$(mktemp -d)
+mkdir -p "$badproj/.ratchet"
+assert_malformed() {
+  local cmd="$1" label="$2" actual out
+  out=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str "$cmd")" \
+    | CLAUDE_PROJECT_DIR="$badproj" ./guard-destructive.sh 2>&1 >/dev/null)
+  actual=$?
+  if [ "$actual" -ne 2 ]; then
+    fail=$((fail + 1)); printf 'FAIL: expected exit 2, got %s for: %s\n' "$actual" "$label"; return
+  fi
+  if ! printf '%s' "$out" | grep -q 'BLOCKED by guard hook'; then
+    fail=$((fail + 1)); printf 'FAIL: %s: missing BLOCKED line, got: %s\n' "$label" "$out"; return
+  fi
+  if ! printf '%s' "$out" | grep -q 'guard-destructive.rules'; then
+    fail=$((fail + 1)); printf 'FAIL: %s: BLOCKED line should name the project rule file, got: %s\n' "$label" "$out"; return
+  fi
+  pass=$((pass + 1))
+}
+# Invalid POSIX ERE.
+printf 'npm run db:push\n[unclosed\n' > "$badproj/.ratchet/guard-destructive.rules"
+assert_malformed 'npm test' 'invalid ERE in project rule file'
+assert_malformed 'git status' 'invalid ERE also blocks a default-allowed command'
+# A directory at the path is not a rule file.
+rm -f "$badproj/.ratchet/guard-destructive.rules"
+mkdir "$badproj/.ratchet/guard-destructive.rules"
+assert_malformed 'npm test' 'project rule path is a directory'
+rmdir "$badproj/.ratchet/guard-destructive.rules"
+# Unreadable regular file. chmod a-r does not hide the file from UID 0.
+printf 'npm run db:push\n' > "$badproj/.ratchet/guard-destructive.rules"
+chmod a-r "$badproj/.ratchet/guard-destructive.rules"
+if [ -r "$badproj/.ratchet/guard-destructive.rules" ]; then
+  echo "SKIP: unreadable project rule file needs a non-root runner (chmod a-r is still readable to UID 0)"
+else
+  assert_malformed 'npm test' 'project rule file unreadable'
+fi
+chmod u+r "$badproj/.ratchet/guard-destructive.rules" 2>/dev/null || chmod a+r "$badproj/.ratchet/guard-destructive.rules"
+rm -rf "$badproj"
+
+echo "== guard: a read failure after a successful open fails closed =="
+# -f/-r pass; the subsequent slurp (`cat --` of that path) fails. A portable
+# mid-read I/O error is not stageable here, so a cat on PATH that exits 1 for
+# this path is the same failure the hook denies on (see ASSUMED). Empty,
+# comment-only, and EOF-without-newline files must still not deny.
+readfail=$(mktemp -d)
+mkdir -p "$readfail/.ratchet"
+printf '%s' 'npm run db:push' > "$readfail/.ratchet/guard-destructive.rules"
+assert_guard_proj 2 'npm run db:push' "$readfail"
+assert_guard_proj 0 'npm test' "$readfail"
+: > "$readfail/.ratchet/guard-destructive.rules"
+assert_guard_proj 0 'npm run db:push' "$readfail"
+printf '# only a comment\n' > "$readfail/.ratchet/guard-destructive.rules"
+assert_guard_proj 0 'npm run db:push' "$readfail"
+printf '%s' "$EXAMPLE_PROJECT_RULES" > "$readfail/.ratchet/guard-destructive.rules"
+bindir=$(mktemp -d)
+realcat=$(command -v cat)
+cat > "$bindir/cat" <<SH
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    $readfail/.ratchet/guard-destructive.rules) exit 1 ;;
+  esac
+done
+exec "$realcat" "\$@"
+SH
+chmod +x "$bindir/cat"
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(json_str 'npm test')" \
+  | PATH="$bindir:$PATH" CLAUDE_PROJECT_DIR="$readfail" ./guard-destructive.sh 2>&1 >/dev/null)
+actual=$?
+if [ "$actual" -eq 2 ] && printf '%s' "$out" | grep -q 'BLOCKED by guard hook' \
+   && printf '%s' "$out" | grep -q 'guard-destructive.rules'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  printf 'FAIL: read failure after open should fail closed (exit 2 naming the rules file), got %s: %s\n' "$actual" "$out"
+fi
+rm -rf "$bindir" "$readfail"
+
+# Upstream's "lint hook: unreachable project dir" assertion is not carried:
+# the TabletNotes lint hook never enters the project dir (it syntax-checks the
+# edited path directly), so that case is covered by the TabletNotes lint
+# section above instead.
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

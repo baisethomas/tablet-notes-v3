@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ratchet-version: 1.2.0
+# ratchet-version: 1.3.1
 # Stop hook (Ratchet): run the repo's verification before Claude is allowed to
 # finish, so a red suite surfaces at "done" time instead of after merge. Also
 # refuses to finish while .ratchet/STATE.md or a recorded decision still says

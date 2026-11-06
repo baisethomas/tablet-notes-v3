@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ratchet-version: 1.2.0
+# ratchet-version: 1.3.1
 # PreToolUse(Bash) guard: surface the hard stops in AGENTS.md so irreversible
 # commands stop and go to a human instead of running by momentum.
 #
@@ -29,8 +29,18 @@
 
 set -uo pipefail
 
+lib="$(dirname "${BASH_SOURCE[0]}")/lib-payload.sh"
+# Cannot verify if the helper is missing, unreadable, or fails to source: an
+# unread payload would look like an empty command and fail open.
+if [ ! -r "$lib" ]; then
+  echo "BLOCKED by guard hook: cannot load lib-payload.sh (missing or unreadable), so destructive commands cannot be checked." >&2
+  exit 2
+fi
 # shellcheck source=lib-payload.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib-payload.sh"
+. "$lib" || {
+  echo "BLOCKED by guard hook: cannot load lib-payload.sh, so destructive commands cannot be checked." >&2
+  exit 2
+}
 
 input=$(cat)
 
@@ -38,10 +48,18 @@ input=$(cat)
 # which would silently allow every destructive operation. "Cannot verify" must
 # never be treated as "nothing to block".
 command=$(payload_field "$input" '.tool_input.command' '?.tool_input?.command')
-case $? in
+pf_status=$?
+# payload_field is specified to return 0, 1, or 2. Any other status — helper
+# crash, command-not-found after a failed source, a future return code — used
+# to fall through, treat the empty capture as "no command", and allow the
+# tool through. Cannot verify => block.
+case $pf_status in
+  0) ;;
   1) echo "BLOCKED by guard hook: no JSON parser available (needs jq or node), so destructive commands cannot be checked. Install jq, then retry." >&2
      exit 2 ;;
   2) echo "BLOCKED by guard hook: could not parse the hook payload, so destructive commands cannot be checked. Fix the JSON parser (jq/node), then retry." >&2
+     exit 2 ;;
+  *) echo "BLOCKED by guard hook: payload parser exited $pf_status unexpectedly, so destructive commands cannot be checked. Fix the JSON parser (jq/node), then retry." >&2
      exit 2 ;;
 esac
 
@@ -104,6 +122,54 @@ block() {
 # macOS drains its input), so this avoids the pipeline entirely.
 has() { grep -qE "$1" <<<"$norm"; }
 has_i() { grep -qiE "$1" <<<"$norm"; }
+
+# --- Project-owned extra rules ------------------------------------------------
+# Additive blocked-command patterns from the project, not from Ratchet. Path is
+# always <project>/.ratchet/guard-destructive.rules so the hook finds it from
+# .claude/hooks, a plugin root (${CLAUDE_PLUGIN_ROOT}/hooks), or any other
+# copy: CLAUDE_PROJECT_DIR is the project, with git toplevel then cwd as
+# fallbacks. Missing or empty = defaults only. Present but unreadable,
+# not a regular file, unreadable after a successful open, or containing an
+# invalid POSIX ERE = cannot verify, so fail closed (exit 2), same class as
+# a missing lib-payload.sh. A bash `while read; do ...; done < file || deny`
+# is dead: the loop's status is the last body command, not the read, so a
+# mid-read I/O error would silently keep a partial set. Slurp with cat after
+# the -f/-r probe; if that read fails, deny. Then parse the blob. Normal EOF
+# (including no trailing newline), empty, and comment-only files still fall
+# back to defaults.
+project_dir="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "$project_dir" ]; then
+  project_dir="$(git rev-parse --show-toplevel 2>/dev/null)" || project_dir="."
+fi
+rules_file="$project_dir/.ratchet/guard-destructive.rules"
+project_patterns=()
+deny_project_rules() {
+  echo "BLOCKED by guard hook: project rule file .ratchet/guard-destructive.rules is malformed or unreadable, so destructive commands cannot be checked." >&2
+  exit 2
+}
+if [ -e "$rules_file" ] || [ -L "$rules_file" ]; then
+  if [ ! -f "$rules_file" ] || [ ! -r "$rules_file" ]; then
+    deny_project_rules
+  fi
+  # The probe passed; now read the bytes. cat failing here is the observable
+  # "read failed after open" — bash 3.2 has no portable I/O-error vs EOF
+  # distinction on `read`, and `while …; done < file || deny` never fires.
+  rules_blob=$(cat -- "$rules_file") || deny_project_rules
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -z "$trimmed" ] && continue
+    case "$trimmed" in
+      \#*) continue ;;
+    esac
+    grep -qE -- "$trimmed" <<<"" 2>/dev/null
+    case $? in
+      0|1) project_patterns+=("$trimmed") ;;
+      *) deny_project_rules ;;
+    esac
+  done < <(printf '%s\n' "$rules_blob")
+fi
 
 # seg_has PAT... — true if ONE simple command matches every pattern given.
 # Flag rules must not look across control operators: `git branch --show-current
@@ -356,6 +422,9 @@ has "$(git_sub push)" && has "$REMOTE_URL" \
   && block "a push to an explicit remote URL"
 
 # --- TabletNotes project hard stops (AGENTS.md "Repo specifics") -------------
+# These stay in the hook rather than in .ratchet/guard-destructive.rules (1.3.0)
+# because they need seg_has flag pairing or git state; a pattern file cannot
+# express either. Simple pattern-only stops may move there later.
 # Netlify production deploys carry env-var changes live; previews do not.
 # Flag rules read one simple command at a time (seg_has), so `netlify deploy
 # --alias x && echo --prod` is not a production deploy.
@@ -415,6 +484,17 @@ if has "$(git_sub push)"; then
       main|refs/heads/main) block "an implicit push whose upstream is main" ;;
     esac
   fi
+fi
+
+# Project patterns run after the defaults so a default match keeps its
+# message, and so they cannot disable a default. Unanchored ERE against the
+# same normalized text the defaults use (`npx drizzle-kit generate` matches
+# `drizzle-kit generate`).
+if [ "${#project_patterns[@]}" -gt 0 ]; then
+  for p in "${project_patterns[@]}"; do
+    # -- so a pattern that starts with - is an ERE, not a grep flag.
+    grep -qE -- "$p" <<<"$norm" && block "project rule '$p'"
+  done
 fi
 
 exit 0
