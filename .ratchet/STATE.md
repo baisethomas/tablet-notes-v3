@@ -26,7 +26,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- Nothing on `main`. In flight on its own branch: TAB-122 job-less sermon reconciliation (`baise/tab-122-reconcile-jobless-sermons`, PR pending owner review); its state is in that branch's copy of this file.
+- TAB-126 [open PR #91] on `cursor/tab-126-support-routing-granted-ai-36f0`: route Help Scout mailbox 371514 (Granted AI) to Linear team LOO plus project Granted AI. Live `SUPPORT_INBOX_ROUTES` env update is operator-reserved. No GRA team ID remains in `support-automation/`.
+- TAB-122 job-less sermon reconciliation remains in flight on its own branch (`baise/tab-122-reconcile-jobless-sermons`); its state is in that branch's copy of this file.
 
 ## Next
 
@@ -49,6 +50,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
+- TAB-126 [open PR #91]: `cd support-automation && npm test` — 49/49 pass. `rg ec3442ea support-automation` empty. `rrr.sh --base 431c343` on `committed .env.example routes mailbox 371514 to LOO and the Granted AI project` (fix file `support-automation/.env.example`) reported `RRR: PROVEN`; phase 2 failed on GRA team id `ec3442ea-…` vs LOO `60112c28-…`. No cross-routing bug found; `linearProjectId` already reached Linear issue creation.
 - `main` @ 1f6e8f3 (TAB-119 merge; verified on the branch head 13cb373 that was squashed): `xcodebuild build` exit 0; `ScriptureReminderPlannerTests` 40/40 (nine new recording-day anchor tests; six fail with the past-slot drop removed), `ScriptureReminderSchedulerTests` 35/35 (the four race tests, the replacement-then-delete test and the late-summary anchor test each proven to fail with their guard or fix disabled), `SermonServiceDeleteTests` 7/7, `SermonServiceAuthWipeTests` 5/5, `SermonProcessingCoordinatorTests` 4/4, `DurableProcessingWiringTests` 13/13, `CompletedSermonReprocessingGuardTests` 13/13: 117/117, run on an iPhone 16 Pro / iOS 26.2 simulator (A476D5E8-216E-481B-ADFE-6EB2E52FBEAC) because the manual's 18.5 simulator and runtime were deleted while freeing disk space on 2026-10-19. Device verification still pending the owner.
 
 - `main` @ 3a615c5 after TAB-117 / PR #81: `git diff --check` passed and referenced repository files existed; no product code changed, so iOS and backend tests were not required.
@@ -69,7 +71,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-10-28 (TAB-119 merged; STATE reconciled on `main`)
-- By: agent (Claude Code, Fable)
-- Branch/worktree: `main` (reconcile via `baise/ops-state-after-tab-119-merge`)
-- Last known-good commit: 1f6e8f3 (main)
+- Updated: 2026-11-09 (TAB-126 Ratchet format pass; PR #91 open)
+- By: agent
+- Branch/worktree: `cursor/tab-126-support-routing-granted-ai-36f0`
+- Last known-good commit: 49b6d4a (PR #91) plus this STATE.md refresh; `main` remains 431c343
