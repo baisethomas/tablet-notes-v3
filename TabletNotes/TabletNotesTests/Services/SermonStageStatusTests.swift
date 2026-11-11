@@ -30,7 +30,7 @@ struct SermonStageStatusTests {
         // Must match the #Predicate in dispatchPendingDurableJobs, which cannot
         // call into Swift and so spells these out as string literals.
         let dispatchable = SermonStageStatus.allCases.filter(\.isDispatchable).map(\.rawValue).sorted()
-        #expect(dispatchable == ["failed", "pending"])
+        #expect(dispatchable == ["failed", "pending", "processing"])
     }
 
     @Test("the raw values match what the server writes")
