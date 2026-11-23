@@ -6,6 +6,7 @@ const {
   missingStageFor,
   classifyJoblessSermon,
   planJoblessReconciliation,
+  collectJoblessPlan,
   buildReconciledJobPayload
 } = require('../joblessSermons');
 const { JOB_STATUS, idempotencyKey } = require('../processingJobs');
@@ -15,6 +16,8 @@ const VICTIM = '0b3249ad-baea-4567-9972-55af78a38f41';
 const NOW = Date.parse('2026-10-26T00:00:00Z');
 const OLD = new Date(NOW - 2 * RECONCILE_MIN_AGE_MS).toISOString();
 const FRESH = new Date(NOW - RECONCILE_MIN_AGE_MS / 2).toISOString();
+/** Comfortably above the summarizer's 50-character floor. */
+const LONG_TRANSCRIPT = 'In the beginning God created the heaven and the earth, and the earth was without form.';
 
 function sermon(overrides = {}) {
   return {
@@ -90,10 +93,61 @@ test('an existing transcript does not short-circuit the summary stage', () => {
   // The transcript is what the summary job consumes; its presence is the
   // normal case here, not a reason to skip.
   const result = classifyJoblessSermon(
-    sermon({ transcription_status: 'complete', transcript_text: 'In the beginning' }),
+    sermon({ transcription_status: 'complete', transcript_text: LONG_TRANSCRIPT }),
     { now: NOW }
   );
   assert.deepEqual(result, { action: 'create_job', stage: 'summary' });
+});
+
+// --- the summary stage needs a transcript the summarizer can use ---
+
+test('a summary stage whose transcript is not on the server is left alone, never queued', () => {
+  // 12 production sermons on 2026-11-23. A job here reads nothing, fails five
+  // times and stamps failed_permanent on a sermon whose transcript may simply
+  // live on the device.
+  for (const text of [undefined, null, '', '   \n ', 42]) {
+    const result = classifyJoblessSermon(
+      sermon({ transcription_status: 'complete', transcript_text: text }),
+      { now: NOW }
+    );
+    assert.deepEqual(result, { action: 'skip', reason: 'no_transcript' }, String(text));
+  }
+});
+
+test('a summary stage whose transcript is below the floor stops as too_short, not as a doomed job', () => {
+  for (const text of ['Amen.', 'x'.repeat(49), `  ${'x'.repeat(49)}  `]) {
+    const result = classifyJoblessSermon(
+      sermon({ transcription_status: 'complete', transcript_text: text }),
+      { now: NOW }
+    );
+    assert.deepEqual(result, { action: 'mark_too_short', stage: 'summary' }, text);
+  }
+});
+
+test('the floor is the pipeline\'s own: 50 characters gets a summary job', () => {
+  const result = classifyJoblessSermon(
+    sermon({ transcription_status: 'complete', transcript_text: 'x'.repeat(50) }),
+    { now: NOW }
+  );
+  assert.deepEqual(result, { action: 'create_job', stage: 'summary' });
+});
+
+test('a summary that already exists still gets its job, whatever the transcript looks like', () => {
+  // The job is free (the reaper marks it done without regenerating) and it is
+  // what moves the stage to complete. too_short here would hide a real summary.
+  for (const text of [null, 'Amen.', LONG_TRANSCRIPT]) {
+    const result = classifyJoblessSermon(
+      sermon({ transcription_status: 'complete', transcript_text: text, has_summary: true }),
+      { now: NOW }
+    );
+    assert.deepEqual(result, { action: 'create_job', stage: 'summary' }, String(text));
+  }
+});
+
+test('the transcript checks are for the summary stage only', () => {
+  // A transcription stage with no transcript is the ordinary case.
+  const result = classifyJoblessSermon(sermon({ transcript_text: null }), { now: NOW });
+  assert.deepEqual(result, { action: 'create_job', stage: 'transcription' });
 });
 
 // --- candidate classification: refusals ---
@@ -159,7 +213,8 @@ test('the plan creates jobs only for sermons with no job for that stage', () => 
   const needsSummary = sermon({
     id: 'aaaaaaaa-0000-0000-0000-000000000003',
     local_id: 'aaaaaaaa-0000-0000-0000-00000000000c',
-    transcription_status: 'complete'
+    transcription_status: 'complete',
+    transcript_text: LONG_TRANSCRIPT
   });
   const summaryJobExistsButTranscriptionMissing = sermon({
     id: 'aaaaaaaa-0000-0000-0000-000000000004',
@@ -253,10 +308,186 @@ test('the cap applies to job creation only; status repairs are free and all land
 });
 
 test('the plan tolerates missing or malformed inputs', () => {
-  assert.deepEqual(planJoblessReconciliation({ now: NOW }), { create: [], markComplete: [], skipped: [], deferred: 0 });
-  assert.deepEqual(
-    planJoblessReconciliation({ sermons: 'nope', existingJobs: null, now: NOW }),
-    { create: [], markComplete: [], skipped: [], deferred: 0 }
+  const empty = { create: [], markComplete: [], markTooShort: [], skipped: [], deferred: 0 };
+  assert.deepEqual(planJoblessReconciliation({ now: NOW }), empty);
+  assert.deepEqual(planJoblessReconciliation({ sermons: 'nope', existingJobs: null, now: NOW }), empty);
+});
+
+test('the plan stops short transcripts and skips missing ones instead of creating summary jobs', () => {
+  const short = sermon({ id: 'ffffffff-0000-0000-0000-000000000001', transcription_status: 'complete', transcript_text: 'Amen.' });
+  const missing = sermon({ id: 'ffffffff-0000-0000-0000-000000000002', transcription_status: 'complete' });
+  const ready = sermon({ id: 'ffffffff-0000-0000-0000-000000000003', transcription_status: 'complete', transcript_text: LONG_TRANSCRIPT });
+
+  const plan = planJoblessReconciliation({ sermons: [short, missing, ready], existingJobs: [], now: NOW });
+
+  assert.deepEqual(plan.create.map((p) => [p.sermon_id, p.kind]), [[ready.id, 'summary']]);
+  assert.deepEqual(plan.markTooShort, [{ sermon_id: short.id, stage: 'summary' }]);
+  assert.deepEqual(plan.skipped, [{ sermon_id: missing.id, reason: 'no_transcript' }]);
+});
+
+test('a too-short stop is never written over a stage that already has a job', () => {
+  const s = sermon({ transcription_status: 'complete', transcript_text: 'Amen.' });
+  const plan = planJoblessReconciliation({
+    sermons: [s],
+    existingJobs: [{ sermon_id: s.id, kind: 'summary', status: 'queued' }],
+    now: NOW
+  });
+  assert.deepEqual(plan.markTooShort, []);
+  assert.deepEqual(plan.skipped, [{ sermon_id: s.id, reason: 'has_job' }]);
+});
+
+// --- scanning: the window must not fill up with sermons that can never be acted on ---
+
+const PAGE = 5;
+
+function numbered(prefix, count, overrides = {}) {
+  const rows = [];
+  for (let i = 0; i < count; i++) {
+    const tail = String(i).padStart(12, '0');
+    rows.push(sermon({ id: `${prefix}-0000-0000-0000-${tail}`, local_id: `${prefix}-1111-0000-0000-${tail}`, ...overrides }));
+  }
+  return rows;
+}
+
+/** A fake database: candidates in scan order, plus the rows the lookups return. */
+function fakeReads({ candidates, jobs = [], transcripts = [], summaries = [] }) {
+  const calls = { pages: [], contexts: [] };
+  return {
+    calls,
+    fetchPage: async ({ offset, limit }) => {
+      calls.pages.push({ offset, limit });
+      return candidates.slice(offset, offset + limit);
+    },
+    fetchContext: async (ids) => {
+      calls.contexts.push(ids);
+      const wanted = new Set(ids);
+      return {
+        jobs: jobs.filter((j) => wanted.has(j.sermon_id)),
+        transcripts: transcripts.filter((t) => wanted.has(t.sermon_id)),
+        summaries: summaries.filter((s) => wanted.has(s.sermon_id))
+      };
+    }
+  };
+}
+
+test('sermons that already have a job cannot crowd the ones behind them out of the scan', () => {
+  // The defect: one fixed window, newest first, and the has-job check applied
+  // afterwards. A full window of sermons that already have a job never drains,
+  // so the job-less sermons behind it were never seen and nothing was logged.
+  const blocked = numbered('aaaaaaaa', PAGE);
+  const stuck = numbered('bbbbbbbb', 2);
+  const reads = fakeReads({
+    candidates: [...blocked, ...stuck],
+    jobs: blocked.map((s) => ({ sermon_id: s.id, kind: 'transcription', status: 'dead' }))
+  });
+
+  return collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE }).then(({ plan, scanned, exhausted }) => {
+    assert.deepEqual(plan.create.map((p) => p.sermon_id), stuck.map((s) => s.id));
+    assert.equal(plan.skipped.filter((s) => s.reason === 'has_job').length, PAGE);
+    assert.equal(scanned, PAGE + 2);
+    assert.equal(exhausted, true);
+    assert.deepEqual(reads.calls.pages, [{ offset: 0, limit: PAGE }, { offset: PAGE, limit: PAGE }]);
+  });
+});
+
+test('sermons with no server transcript cannot crowd the scan either', async () => {
+  const noTranscript = numbered('aaaaaaaa', PAGE, { transcription_status: 'complete' });
+  const stuck = numbered('bbbbbbbb', 1);
+  const reads = fakeReads({ candidates: [...noTranscript, ...stuck] });
+
+  const { plan } = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE });
+
+  assert.deepEqual(plan.create.map((p) => p.sermon_id), [stuck[0].id]);
+  assert.equal(plan.skipped.filter((s) => s.reason === 'no_transcript').length, PAGE);
+});
+
+test('the scan attaches each sermon\'s own transcript and summary before deciding', async () => {
+  const [repair, short, summarized] = numbered('aaaaaaaa', 3);
+  const candidates = [
+    repair,
+    { ...short, transcription_status: 'complete' },
+    { ...summarized, transcription_status: 'complete' }
+  ];
+  const reads = fakeReads({
+    candidates,
+    transcripts: [
+      { sermon_id: repair.id, text: LONG_TRANSCRIPT },
+      { sermon_id: short.id, text: 'Amen.' }
+    ],
+    summaries: [
+      { sermon_id: summarized.id, text: 'A summary that already exists.' },
+      // A blank summary row is not a summary.
+      { sermon_id: short.id, text: '   ' }
+    ]
+  });
+
+  const { plan } = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE });
+
+  assert.deepEqual(plan.markComplete, [{ sermon_id: repair.id, stage: 'transcription' }]);
+  assert.deepEqual(plan.markTooShort, [{ sermon_id: short.id, stage: 'summary' }]);
+  assert.deepEqual(plan.create.map((p) => [p.sermon_id, p.kind]), [[summarized.id, 'summary']]);
+});
+
+test('the per-sweep job cap holds across pages, and the scan stops once the batch is full', async () => {
+  const reads = fakeReads({ candidates: numbered('aaaaaaaa', PAGE * 4) });
+
+  const { plan, exhausted } = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE, limit: PAGE + 2 });
+
+  assert.equal(plan.create.length, PAGE + 2);
+  assert.equal(new Set(plan.create.map((p) => p.sermon_id)).size, PAGE + 2);
+  assert.equal(plan.deferred, PAGE - 2);
+  // Two pages filled the batch; pages three and four were never read.
+  assert.equal(reads.calls.pages.length, 2);
+  assert.equal(exhausted, false);
+});
+
+test('the scan is bounded, and says so when it stops before the candidates run out', async () => {
+  const blocked = numbered('aaaaaaaa', PAGE * 5);
+  const reads = fakeReads({
+    candidates: blocked,
+    jobs: blocked.map((s) => ({ sermon_id: s.id, kind: 'transcription', status: 'dead' }))
+  });
+
+  const { plan, scanned, exhausted } = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE, maxPages: 3 });
+
+  assert.equal(reads.calls.pages.length, 3);
+  assert.equal(scanned, PAGE * 3);
+  assert.deepEqual(plan.create, []);
+  assert.equal(exhausted, false);
+});
+
+test('a scan with no candidates reads one page and nothing else', async () => {
+  const reads = fakeReads({ candidates: [] });
+  const result = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE });
+  assert.equal(result.scanned, 0);
+  assert.equal(result.exhausted, true);
+  assert.deepEqual(reads.calls.contexts, []);
+});
+
+test('a failed lookup on any page aborts the whole plan, so nothing is created blind', async () => {
+  // Fail closed: page one found work, page two's job lookup failed. Returning
+  // page one's plan would be defensible; returning nothing is the documented
+  // rule and keeps a half-read sweep from acting.
+  const candidates = numbered('aaaaaaaa', PAGE * 2);
+  const reads = fakeReads({ candidates });
+  let contextCalls = 0;
+  const fetchContext = async (ids) => {
+    contextCalls += 1;
+    if (contextCalls === 2) throw new Error('job lookup failed: timeout');
+    return reads.fetchContext(ids);
+  };
+
+  await assert.rejects(
+    collectJoblessPlan({ fetchPage: reads.fetchPage, fetchContext, now: NOW, pageSize: PAGE, limit: PAGE * 2 }),
+    /job lookup failed/
+  );
+  await assert.rejects(
+    collectJoblessPlan({
+      fetchPage: async () => { throw new Error('sermon scan failed: timeout'); },
+      fetchContext: reads.fetchContext,
+      now: NOW
+    }),
+    /sermon scan failed/
   );
 });
 
