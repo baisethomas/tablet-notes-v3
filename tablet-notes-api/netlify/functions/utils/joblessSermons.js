@@ -342,7 +342,47 @@ async function collectJoblessPlan({
   return { plan, scanned, exhausted, rotating, total };
 }
 
+/**
+ * Apply the plan's stage repairs, re-checking for a job right before each one.
+ *
+ * The plan was built from a lookup that can be many pages old by the time a
+ * repair is written. A client asking POST /api/jobs for the same sermon in
+ * that gap creates a job the plan never saw, and closing the stage underneath
+ * it leaves a live job on a stage the reconciler says is finished. So each
+ * repair asks again, and a stage that has gained a job is left to that job.
+ *
+ *   hasJob({ sermon_id, stage })  -> whether a job row exists for that stage
+ *   apply({ sermon_id, stage })   -> writes the repair; returns { applied }
+ *
+ * This narrows the gap to one round trip; it does not close it. Closing it
+ * needs the check and the write in one database statement, which is a
+ * migration. A lookup that throws counts as "cannot tell": the repair is
+ * skipped and the sermon is seen again next sweep.
+ */
+async function applyRepairsUnlessJobAppeared({ repairs, hasJob, apply } = {}) {
+  const result = { applied: 0, jobAppeared: 0, unknown: 0 };
+
+  for (const repair of Array.isArray(repairs) ? repairs : []) {
+    let taken;
+    try {
+      taken = await hasJob(repair);
+    } catch (lookupError) {
+      result.unknown += 1;
+      continue;
+    }
+    if (taken) {
+      result.jobAppeared += 1;
+      continue;
+    }
+    const written = await apply(repair);
+    if (written?.applied) result.applied += 1;
+  }
+
+  return result;
+}
+
 module.exports = {
+  applyRepairsUnlessJobAppeared,
   RECONCILE_MIN_AGE_MS,
   RECONCILE_BATCH_LIMIT,
   RECONCILE_PAGE_SIZE,

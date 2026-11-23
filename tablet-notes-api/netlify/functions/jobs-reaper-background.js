@@ -24,7 +24,11 @@ const {
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 const { applySermonStageTerminal } = require('./utils/sermonStatus');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
-const { collectJoblessPlan, RECONCILE_MIN_AGE_MS } = require('./utils/joblessSermons');
+const {
+  collectJoblessPlan,
+  applyRepairsUnlessJobAppeared,
+  RECONCILE_MIN_AGE_MS
+} = require('./utils/joblessSermons');
 const { TERMINAL_STATUSES, STATUS_COMPLETE, STATUS_TOO_SHORT } = require('./utils/sermonStatus');
 
 /**
@@ -77,7 +81,7 @@ function supabaseClient() {
  * candidate is still reached.
  */
 async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
-  const outcome = { scanned: 0, created: 0, repaired: 0, tooShort: 0, deferred: 0, skipped: {} };
+  const outcome = { scanned: 0, created: 0, repaired: 0, tooShort: 0, repairsSkipped: 0, deferred: 0, skipped: {} };
   const cutoff = new Date(now - RECONCILE_MIN_AGE_MS).toISOString();
   const terminal = `(${TERMINAL_STATUSES.join(',')})`;
 
@@ -142,35 +146,48 @@ async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
   }
   outcome.deferred = plan.deferred;
 
+  // The plan's "no job" answer can be many pages old by now. Ask again right
+  // before each stage write, and leave a stage that has gained a job to it.
+  const hasJob = async ({ sermon_id: sermonId, stage }) => {
+    const { data, error } = await supabase
+      .from('processing_jobs')
+      .select('id')
+      .eq('sermon_id', sermonId)
+      .eq('kind', stage)
+      .limit(1);
+    if (error) throw new Error(`job re-check failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  };
+  const stageWrite = (status) => ({ sermon_id: sermonId, stage }) => applySermonStageTerminal({
+    supabase,
+    sermonId,
+    stage,
+    status,
+    onlyIfNotTerminal: true,
+    logger
+  });
+
   // A transcript already exists: advance the stage rather than pay for it
   // again. Non-fatal and guarded, like every stage write — a stage that has
   // stopped in the meantime keeps its outcome.
-  for (const repair of plan.markComplete) {
-    const result = await applySermonStageTerminal({
-      supabase,
-      sermonId: repair.sermon_id,
-      stage: repair.stage,
-      status: STATUS_COMPLETE,
-      onlyIfNotTerminal: true,
-      logger
-    });
-    if (result?.applied) outcome.repaired += 1;
-  }
+  const completed = await applyRepairsUnlessJobAppeared({
+    repairs: plan.markComplete,
+    hasJob,
+    apply: stageWrite(STATUS_COMPLETE)
+  });
+  outcome.repaired = completed.applied;
 
   // The transcript is below the summarizer's floor: stop the summary stage on
   // `too_short`, the state the normal pipeline writes for the same transcript
   // (completeTranscription.js), instead of queuing a job that can only fail.
-  for (const stop of plan.markTooShort) {
-    const result = await applySermonStageTerminal({
-      supabase,
-      sermonId: stop.sermon_id,
-      stage: stop.stage,
-      status: STATUS_TOO_SHORT,
-      onlyIfNotTerminal: true,
-      logger
-    });
-    if (result?.applied) outcome.tooShort += 1;
-  }
+  const stopped = await applyRepairsUnlessJobAppeared({
+    repairs: plan.markTooShort,
+    hasJob,
+    apply: stageWrite(STATUS_TOO_SHORT)
+  });
+  outcome.tooShort = stopped.applied;
+
+  outcome.repairsSkipped = completed.jobAppeared + completed.unknown + stopped.jobAppeared + stopped.unknown;
 
   if (plan.create.length > 0) {
     // `ignoreDuplicates: true` is INSERT ... ON CONFLICT DO NOTHING. jobs.js

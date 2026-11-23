@@ -7,6 +7,7 @@ const {
   classifyJoblessSermon,
   planJoblessReconciliation,
   collectJoblessPlan,
+  applyRepairsUnlessJobAppeared,
   buildReconciledJobPayload
 } = require('../joblessSermons');
 const { JOB_STATUS, idempotencyKey } = require('../processingJobs');
@@ -582,6 +583,92 @@ test('a failed lookup on any page aborts the whole plan, so nothing is created b
     }),
     /sermon scan failed/
   );
+});
+
+// --- applying repairs: a job that appeared after the plan was built wins ---
+
+test('a stage that gained a job between the plan and the write is left to that job', async () => {
+  // Ternary on PR #85: the plan's "no job" answer is a snapshot. A client
+  // POST /api/jobs landing after it must not find its stage closed underneath.
+  const repairs = [
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'transcription' },
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000002', stage: 'transcription' },
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000003', stage: 'summary' }
+  ];
+  const raced = new Set([repairs[1].sermon_id]);
+  const written = [];
+
+  const result = await applyRepairsUnlessJobAppeared({
+    repairs,
+    hasJob: async ({ sermon_id: id }) => raced.has(id),
+    apply: async (repair) => { written.push(repair); return { applied: true }; }
+  });
+
+  assert.deepEqual(written, [repairs[0], repairs[2]]);
+  assert.deepEqual(result, { applied: 2, jobAppeared: 1, unknown: 0 });
+});
+
+test('the job re-check runs immediately before each write, not once up front', async () => {
+  // A job that appears while an earlier repair is being written is still seen.
+  const repairs = [
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'transcription' },
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000002', stage: 'transcription' }
+  ];
+  const jobs = new Set();
+  const order = [];
+
+  const result = await applyRepairsUnlessJobAppeared({
+    repairs,
+    hasJob: async ({ sermon_id: id }) => { order.push(`check ${id.slice(-1)}`); return jobs.has(id); },
+    apply: async ({ sermon_id: id }) => {
+      order.push(`write ${id.slice(-1)}`);
+      jobs.add(repairs[1].sermon_id);
+      return { applied: true };
+    }
+  });
+
+  assert.deepEqual(order, ['check 1', 'write 1', 'check 2']);
+  assert.deepEqual(result, { applied: 1, jobAppeared: 1, unknown: 0 });
+});
+
+test('the re-check asks about the repair\'s own stage', async () => {
+  const asked = [];
+  await applyRepairsUnlessJobAppeared({
+    repairs: [{ sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'summary' }],
+    hasJob: async (repair) => { asked.push(repair); return false; },
+    apply: async () => ({ applied: true })
+  });
+  assert.deepEqual(asked, [{ sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'summary' }]);
+});
+
+test('a re-check that fails skips that repair and carries on with the rest', async () => {
+  const repairs = [
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'transcription' },
+    { sermon_id: 'aaaaaaaa-0000-0000-0000-000000000002', stage: 'transcription' }
+  ];
+  const written = [];
+
+  const result = await applyRepairsUnlessJobAppeared({
+    repairs,
+    hasJob: async ({ sermon_id: id }) => {
+      if (id === repairs[0].sermon_id) throw new Error('job re-check failed: timeout');
+      return false;
+    },
+    apply: async (repair) => { written.push(repair.sermon_id); return { applied: true }; }
+  });
+
+  assert.deepEqual(written, [repairs[1].sermon_id]);
+  assert.deepEqual(result, { applied: 1, jobAppeared: 0, unknown: 1 });
+});
+
+test('a repair the stage write declines is not counted as applied', async () => {
+  const result = await applyRepairsUnlessJobAppeared({
+    repairs: [{ sermon_id: 'aaaaaaaa-0000-0000-0000-000000000001', stage: 'transcription' }],
+    hasJob: async () => false,
+    apply: async () => ({ applied: false })
+  });
+  assert.deepEqual(result, { applied: 0, jobAppeared: 0, unknown: 0 });
+  assert.deepEqual(await applyRepairsUnlessJobAppeared({}), { applied: 0, jobAppeared: 0, unknown: 0 });
 });
 
 // --- the row that gets written ---
