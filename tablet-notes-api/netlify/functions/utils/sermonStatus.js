@@ -119,18 +119,17 @@ async function applySermonStageTerminal({
   const column = SERMON_STAGE_COLUMNS[stage];
 
   if (onlyIfNotTerminal) {
-    const { data, error } = await supabase
-      .from('sermons')
-      .update(patch)
-      .eq('id', sermonId)
-      .or(stageNotTerminalPredicate(column))
-      .select('id');
+    const { applied, error } = await updateWhileStageNotTerminal({
+      supabase,
+      patch,
+      column,
+      scope: { id: sermonId }
+    });
 
     if (error) {
       logger?.error?.('Failed to write sermon stage status', { sermonId, stage, status }, error);
       return { error, patch, applied: false };
     }
-    const applied = Array.isArray(data) && data.length > 0;
     if (!applied) {
       logger?.info?.('Stage already terminal; left as-is', { sermonId, stage, status });
     }
@@ -225,24 +224,50 @@ function planStageStatusWrites({ incoming = {}, server = {} } = {}) {
   return { writes, dropped };
 }
 
+/** The terminal states as a PostgREST `in` list: `(complete,no_speech,...)`. */
+function terminalStatusList() {
+  return `(${TERMINAL_STATUSES.join(',')})`;
+}
+
 /**
- * PostgREST filter making a stage write a compare-and-set.
+ * Updates a sermon only while one stage column has not already stopped: a
+ * compare-and-set.
  *
- * The snapshot this decision was made from is already stale by the time the
- * write goes out: a job finishing in that window would otherwise be clobbered
- * by the client's value, and since the job is terminal nothing would correct
- * it. Anding this onto the update means the row is only touched while the
- * column is still not `complete`.
+ * The snapshot the caller decided from is already stale by the time the write
+ * goes out. A job finishing in that window would otherwise be clobbered, and
+ * since the job is terminal nothing would correct it.
  *
- * The null branch matters — `status <> 'complete'` is NULL, not true, for a row
- * where the column was never set, so a bare `neq` would silently match nothing.
+ * The condition is "column IS NULL OR column NOT IN (terminal states)". It is
+ * sent as two plain-filter updates, never as one `or=(...)` filter (TAB-141).
+ * On an update PostgREST applies `or`/`and` filters a second time, to the rows
+ * the update returns, and those carry only the selected columns. With
+ * `select=id` every such request failed with "column sermons.<column> does not
+ * exist" and wrote nothing, in production, for every caller. Selecting the
+ * column as well does not help: the filter would then be tested against the
+ * NEW value, so writing a terminal status would report zero rows although it
+ * landed. Plain filters (`eq`, `not.in`, `is`) apply to the update alone.
+ *
+ * The null request matters. `status NOT IN (...)` is NULL, not true, for a row
+ * whose column was never set, so the first request alone would never match it.
+ * It only runs when the first matched nothing.
+ *
+ * @param {object} scope  equality filters identifying the row, e.g. `{ id }`
+ * @returns {{ applied: boolean, error: object|null }}
  */
-function stageNotTerminalPredicate(column) {
-  // `and(...)` nested inside the top-level `or` so this reads as
-  //   column IS NULL OR (column <> each terminal state)
-  // rather than the useless "differs from at least one of them".
-  const notAny = TERMINAL_STATUSES.map((s) => `${column}.neq.${s}`).join(',');
-  return `${column}.is.null,and(${notAny})`;
+async function updateWhileStageNotTerminal({ supabase, patch, column, scope = {} }) {
+  const attempt = async (guard) => {
+    let query = supabase.from('sermons').update(patch);
+    for (const [key, value] of Object.entries(scope)) {
+      query = query.eq(key, value);
+    }
+    const { data, error } = await guard(query).select('id');
+    return { applied: !error && Array.isArray(data) && data.length > 0, error: error || null };
+  };
+
+  const notTerminal = await attempt((query) => query.not(column, 'in', terminalStatusList()));
+  if (notTerminal.error || notTerminal.applied) return notTerminal;
+
+  return attempt((query) => query.is(column, null));
 }
 
 /**
@@ -261,19 +286,18 @@ async function applyStageStatusWrites({ supabase, sermonId, userId, writes = [],
   const dropped = [];
 
   for (const { column, value } of writes) {
-    const { data: applied, error } = await supabase
-      .from('sermons')
-      .update({ [column]: value })
-      .eq('id', sermonId)
-      .eq('user_id', userId)
-      .or(stageNotTerminalPredicate(column))
-      .select('id');
+    const { applied, error } = await updateWhileStageNotTerminal({
+      supabase,
+      patch: { [column]: value },
+      column,
+      scope: { id: sermonId, user_id: userId }
+    });
 
     if (error) {
       logger?.warn?.('Failed to apply stage status', { sermonId, column, error: error.message });
       continue;
     }
-    if (!applied || applied.length === 0) {
+    if (!applied) {
       dropped.push(column);
       logger?.info?.('Stage completed while the update was in flight; kept the server value', {
         sermonId,
@@ -460,7 +484,8 @@ module.exports = {
   prepareStageForDeliberateRetry,
   isForbiddenStageRegression,
   planStageStatusWrites,
-  stageNotTerminalPredicate,
+  terminalStatusList,
+  updateWhileStageNotTerminal,
   applyStageStatusWrites,
   SERMON_STAGE_COLUMNS,
   CLOSED_NO_RETRY_STAGE_STATUSES,

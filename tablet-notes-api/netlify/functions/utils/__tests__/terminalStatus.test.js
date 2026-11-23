@@ -8,8 +8,11 @@ const {
   STATUS_TOO_SHORT,
   isTerminalStatus,
   isForbiddenStageRegression,
-  stageNotTerminalPredicate
+  terminalStatusList
 } = require('../sermonStatus');
+
+/** The guard a compare-and-set stage write must carry (TAB-141). */
+const notTerminalFilter = (column) => ['not', column, 'in', terminalStatusList()];
 
 // TAB-85 part 2. The pipeline had exactly one way to stop: `complete`. A
 // recording that can never transcribe, and one that transcribes to nothing,
@@ -63,15 +66,10 @@ test('re-sending the state the server already holds is not a regression', () => 
 });
 
 test('the compare-and-set predicate protects every terminal state', () => {
-  const p = stageNotTerminalPredicate('transcription_status');
-  assert.equal(
-    p,
-    'transcription_status.is.null,and(transcription_status.neq.complete,'
-      + 'transcription_status.neq.no_speech,transcription_status.neq.failed_permanent,'
-      + 'transcription_status.neq.too_short)'
-  );
+  const list = terminalStatusList();
+  assert.equal(list, '(complete,no_speech,failed_permanent,too_short)');
   for (const s of TERMINAL_STATUSES) {
-    assert.ok(p.includes(`neq.${s}`), `${s} must be excluded from the write`);
+    assert.ok(list.includes(s), `${s} must be excluded from the write`);
   }
 });
 
@@ -106,7 +104,7 @@ function fakePipelineSupabase({ sermonSelectResults } = {}) {
         async upsert(row) { writes[table].push(row); return { error: null }; },
         // Records the update and every filter chained onto it, and is awaitable
         // at any point in the chain — the code under test ends some updates at
-        // .eq() and others at .or().select().
+        // .eq() and others at .not().select().
         update(patch) {
           const rec = { patch, filters: [] };
           let recorded = false;
@@ -117,9 +115,16 @@ function fakePipelineSupabase({ sermonSelectResults } = {}) {
               if (column === 'id') rec.id = value;
               return chain;
             },
-            or(expr) { rec.filters.push(['or', expr]); return chain; },
+            not(column, operator, value) { rec.filters.push(['not', column, operator, value]); return chain; },
+            is(column, value) { rec.filters.push(['is', column, value]); return chain; },
+            // PostgREST rejects an `or` filter on an update that returns only
+            // `id` (TAB-141). The fake rejects it the same way.
+            or(expr) { rec.filters.push(['or', expr]); rec.rejected = true; return chain; },
             async select() {
               record();
+              if (rec.rejected) {
+                return { data: null, error: { code: '42703', message: 'column does not exist' } };
+              }
               if (table === 'sermons' && sermonSelectResults) {
                 const next = sermonSelectResults[sermonSelectIndex]
                   ?? sermonSelectResults[sermonSelectResults.length - 1];
@@ -230,8 +235,8 @@ test('a too-short transcript completes transcription and stops the summary (TAB-
   );
   const summaryWrite = supabase.writes.sermons.find((w) => w.patch?.summary_status === STATUS_TOO_SHORT);
   assert.deepEqual(
-    summaryWrite.filters.find(([kind]) => kind === 'or'),
-    ['or', stageNotTerminalPredicate('summary_status')],
+    summaryWrite.filters.find(([kind]) => kind === 'not'),
+    notTerminalFilter('summary_status'),
     'must not stamp too_short over a summary that already exists'
   );
 });
@@ -316,8 +321,8 @@ test('a dead job does not overwrite a stage that already stopped (PR #52 review)
   const write = supabase.writes.sermons.find((w) => w.patch?.summary_status === STATUS_FAILED_PERMANENT);
   assert.ok(write, 'the guarded write still goes out');
   assert.deepEqual(
-    write.filters.find(([kind]) => kind === 'or'),
-    ['or', stageNotTerminalPredicate('summary_status')],
+    write.filters.find(([kind]) => kind === 'not'),
+    notTerminalFilter('summary_status'),
     'and only lands while the stage has not already stopped'
   );
 });
@@ -338,7 +343,7 @@ test('a completion write is NOT guarded — success must win over a stale failur
   const write = supabase.writes.sermons.find((w) => w.patch?.transcription_status === 'complete');
   assert.ok(write);
   assert.equal(
-    write.filters.some(([kind]) => kind === 'or'),
+    write.filters.some(([kind]) => kind !== 'eq'),
     false,
     'complete is unconditional'
   );
