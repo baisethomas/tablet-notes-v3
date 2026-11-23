@@ -1,0 +1,33 @@
+{
+  "baseline": "openai/gpt-4o-mini",
+  "candidates": [
+    "openai/gpt-6-luna",
+    "mistralai/mistral-small-2603",
+    { "label": "openai/gpt-6-luna [5000 tok]", "model": "openai/gpt-6-luna", "params": { "max_tokens": 5000 } },
+    { "label": "openai/gpt-6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
+    { "label": "openai/gpt-5.6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-5.6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
+    { "label": "anthropic/claude-haiku-5.5 [reasoning off, 4000 tok]", "model": "anthropic/claude-haiku-5.5", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
+    { "label": "deepseek/deepseek-v4.1-flash [reasoning off, 4000 tok]", "model": "deepseek/deepseek-v4.1-flash", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
+    { "label": "google/gemini-3.5-flash-lite [reasoning minimal, 4000 tok]", "model": "google/gemini-3.5-flash-lite", "params": { "reasoning": { "effort": "minimal" }, "max_tokens": 4000 } }
+  ],
+  "judges": ["anthropic/claude-sonnet-5.5", "openai/gpt-6.2-sol"],
+  "repeats": 2,
+  "chatTranscripts": 4,
+  "concurrency": 4,
+  "weights": { "faithfulness": 0.35, "scripture": 0.25, "coverage": 0.2, "focus": 0.1, "clarity": 0.1 },
+  "gates": {
+    "completionRate": 1.0,
+    "titleRate": 1.0,
+    "sectionsRate": 0.95,
+    "scriptureSectionWithRefRate": 0.9,
+    "faithfulnessTarget": 4.0,
+    "faithfulnessVsBaselineMin": -0.15,
+    "scriptureVsBaselineMin": -0.15,
+    "worstFaithfulnessMin": 3,
+    "qualityVsBaselineMin": -2,
+    "latencyP95MsMax": 45000,
+    "costVsBaselineMax": 2.0,
+    "questionsJsonRate": 1.0,
+    "offTopicRedirectRate": 1.0
+  }
+}
