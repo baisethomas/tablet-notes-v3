@@ -26,7 +26,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Working on
 
-- TAB-126 [open PR #91] on `cursor/tab-126-support-routing-granted-ai-36f0`: route Help Scout mailbox 371514 (Granted AI) to Linear team LOO plus project Granted AI. Live `SUPPORT_INBOX_ROUTES` env update is operator-reserved. No GRA team ID remains in `support-automation/`.
+- TAB-138 [PR open, owner review] on `baise/tab-138-evaluation-harness-for-choosing-the-gpt-4o`: an evaluation harness for the summarize/chat model replacement (`gpt-4o-mini` is being retired in January 2027, per the owner) at `tablet-notes-api/scripts/model-eval/`; read its `README.md` for the standards. Runs on 2026-11-22 (12 of the owner's own transcripts, two judges) and 2026-11-23 (30 transcripts, one judge): `gpt-6-luna` with the output cap raised to 5000 tokens passed every gate both times, at about three times the incumbent's latency (p95 about 35 s against the 55 s abort); no candidate works as a model-string-only swap at the current 2000-token cap. No production code changed. The swap itself is out of scope for TAB-138, has no issue yet and needs the owner's choice of model.
+- TAB-126 merged to `main` @ a6ccf89 (PR #91). The live `SUPPORT_INBOX_ROUTES` env update is operator-reserved; whether it has been applied is not verified here.
 - TAB-122 job-less sermon reconciliation remains in flight on its own branch (`baise/tab-122-reconcile-jobless-sermons`); its state is in that branch's copy of this file.
 
 ## Next
@@ -34,6 +35,8 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 1. The next release must bump `MARKETING_VERSION` to 1.0.2 or higher before archiving.
 2. Watch the owner's daily health check for the first real purchase and for the new build's note-save behavior.
 3. Backlog, roughly in order: TAB-103 step 2 (retire the legacy processing path once the durable pipeline has soaked), TAB-33, then TAB-102/104/105 (low).
+
+4. Redesign (planned 2026-11-22, no code yet): the agreed plan is the Linear project document "Tablet Notes redesign plan"; releases 1.0.2 through 1.4 are parent issues TAB-128 to TAB-132, all in Backlog until the owner says go. Visual direction "D" with a gold accent was chosen from a throwaway prototype (verdict on TAB-128). The prototype lives untracked at `prototypes/redesign-2026-11/` as the visual reference for release 1.1; never commit it (it holds sermon transcript excerpts) and delete it once 1.1 is built.
 
 ## Blocked
 
@@ -71,7 +74,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-11-09 (TAB-126 Ratchet format pass; PR #91 open)
-- By: agent
-- Branch/worktree: `cursor/tab-126-support-routing-granted-ai-36f0`
-- Last known-good commit: 49b6d4a (PR #91) plus this STATE.md refresh; `main` remains 431c343
+- Updated: 2026-11-23 (TAB-138 evaluation harness; PR open)
+- By: agent (Claude Code, Fable)
+- Branch/worktree: `baise/tab-138-evaluation-harness-for-choosing-the-gpt-4o`
+- Last known-good commit: a6ccf89 (main); branch verified with `npm test` 242/242 and the harness's own tests 8/8
