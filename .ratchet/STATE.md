@@ -27,7 +27,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 ## Working on
 
 - TAB-126 [open PR #91] on `cursor/tab-126-support-routing-granted-ai-36f0`: route Help Scout mailbox 371514 (Granted AI) to Linear team LOO plus project Granted AI. Live `SUPPORT_INBOX_ROUTES` env update is operator-reserved. No GRA team ID remains in `support-automation/`.
-- TAB-122 job-less sermon reconciliation remains in flight on its own branch (`baise/tab-122-reconcile-jobless-sermons`); its state is in that branch's copy of this file.
+- TAB-122 [PR #85 open, owner review] on `baise/tab-122-reconcile-jobless-sermons` (this branch, rebased onto `main` @ a6ccf89 on 2026-11-23). Sermons with a non-terminal stage and no `processing_jobs` row were invisible to both the reaper (iterates jobs) and the client sweep (re-asks only for pending/failed), so they read "processing" forever. Fix: `jobs-reaper-background` runs a step 0 before its job fetch that writes the missing queued row (same payload and idempotency key as `jobs.js`, `ON CONFLICT DO NOTHING`, capped at 10 per sweep, stored path re-authorized with `isOwnedObjectPath`, fails closed on any lookup error, isolated so it never stops the sweep). A sermon that already has a transcript gets its stage advanced instead of a re-billed job. Pure logic in `utils/joblessSermons.js`. Review round 1 (2026-11-23) fixed two findings: a summary stage whose server transcript is under the 50-character floor now stops as `too_short` and one with no server transcript is skipped as `no_transcript` (a job there only failed into `failed_permanent`), and the scan pages (`collectJoblessPlan`) so candidates that can never be acted on cannot fill a fixed window. Open for the owner: the `no_transcript` sermons (12 in prod) stay non-terminal with no job, and the round-1 "should fix" items listed in the PR body are not addressed. Next: owner review, merge on the owner's say-so, then verify the five sermons named in TAB-122 gain job rows. Follow-ups filed: TAB-123 (widen the client sweep to `processing`/`preparing`), TAB-124 (refuse to upload recovered audio with no `moov` atom), TAB-125 (daily health metric counts job-less and dead-job sermons), TAB-139 was filed for Ternary's blocking round-2 finding (the scan read the same first 1,000 candidates every sweep) and is now fixed on this branch instead: past 1,000 candidates the scan starts at a random page and wraps, so every candidate is reached; close TAB-139 when PR #85 merges. Round 3 (Ternary, blocking): a stage repair could land after a client had created a job for that stage; each repair now re-checks for a job first (`applyRepairsUnlessJobAppeared`), which narrows the gap to one round trip, and the atomic fix (a database function, so a migration) is TAB-140.
 
 ## Next
 
@@ -50,6 +50,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Verification status
 
+- TAB-122 branch after review round 1, rebased onto `main` @ a6ccf89: `npm test` 291/291 (49 in `joblessSermons.test.js`; disabling the transcript check fails five tests, disabling paging fails five, disabling the rotation fails four, disabling the pre-repair job re-check fails two), `node --check` on the reaper. A read-only prod query on 2026-11-23 predicts 7 transcription jobs, 7 stage repairs, 2 summary jobs, 2 `too_short`, 12 `no_transcript` skips and 23 has-job skips. The reaper's own Supabase wiring has no test (functions have no harness) and has not run in production; that happens on merge.
 - TAB-126 [open PR #91]: `cd support-automation && npm test` — 49/49 pass. `rg ec3442ea support-automation` empty. `rrr.sh --base 431c343` on `committed .env.example routes mailbox 371514 to LOO and the Granted AI project` (fix file `support-automation/.env.example`) reported `RRR: PROVEN`; phase 2 failed on GRA team id `ec3442ea-…` vs LOO `60112c28-…`. No cross-routing bug found; `linearProjectId` already reached Linear issue creation.
 - `main` @ 1f6e8f3 (TAB-119 merge; verified on the branch head 13cb373 that was squashed): `xcodebuild build` exit 0; `ScriptureReminderPlannerTests` 40/40 (nine new recording-day anchor tests; six fail with the past-slot drop removed), `ScriptureReminderSchedulerTests` 35/35 (the four race tests, the replacement-then-delete test and the late-summary anchor test each proven to fail with their guard or fix disabled), `SermonServiceDeleteTests` 7/7, `SermonServiceAuthWipeTests` 5/5, `SermonProcessingCoordinatorTests` 4/4, `DurableProcessingWiringTests` 13/13, `CompletedSermonReprocessingGuardTests` 13/13: 117/117, run on an iPhone 16 Pro / iOS 26.2 simulator (A476D5E8-216E-481B-ADFE-6EB2E52FBEAC) because the manual's 18.5 simulator and runtime were deleted while freeing disk space on 2026-10-19. Device verification still pending the owner.
 
@@ -71,7 +72,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-11-09 (TAB-126 Ratchet format pass; PR #91 open)
-- By: agent
-- Branch/worktree: `cursor/tab-126-support-routing-granted-ai-36f0`
-- Last known-good commit: 49b6d4a (PR #91) plus this STATE.md refresh; `main` remains 431c343
+- Updated: 2026-11-23 (TAB-122 review round 1 fixes, rebased; PR #85 open)
+- By: agent (Claude Code, Fable)
+- Branch/worktree: `baise/tab-122-reconcile-jobless-sermons`
+- Last known-good commit: 6a061c9 (this branch) plus this STATE.md refresh; `main` is a6ccf89
