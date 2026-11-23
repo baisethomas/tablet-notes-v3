@@ -42,8 +42,12 @@ const RECONCILE_BATCH_LIMIT = 10;
  * pages because some candidates can never be acted on (they already have a
  * job, or their transcript is not on the server) and they stay candidates
  * forever: a single fixed window fills up with them and the sermons behind it
- * are never seen. 20 x 50 is far more candidates than exist; hitting the page
- * limit is logged, never silent.
+ * are never seen.
+ *
+ * 20 x 50 bounds one sweep's work, not what the reconciler can reach: when
+ * there are more candidates than that, each sweep reads a window that starts
+ * at a different, randomly chosen page (see collectJoblessPlan), so no set of
+ * permanently skipped rows can sit in front of a job-less sermon for good.
  */
 const RECONCILE_PAGE_SIZE = 50;
 const RECONCILE_MAX_PAGES = 20;
@@ -246,14 +250,24 @@ function hasText(row) {
 /**
  * Read candidates page by page and build one plan for the sweep.
  *
- * The caller supplies the two reads so this stays testable without a database:
+ * The caller supplies the reads so this stays testable without a database:
  *
+ *   countCandidates()             -> how many candidates there are
  *   fetchPage({ offset, limit })  -> candidate sermons, in a stable order
  *   fetchContext(sermonIds)       -> { jobs, transcripts, summaries } for them
  *
  * Paging stops when the candidates run out, when the sweep's job batch is
- * full, or at `maxPages`. `exhausted` says whether every candidate was seen,
- * so the caller can log a scan that was cut off rather than hide it.
+ * full, or at `maxPages`. `exhausted` says whether every candidate was seen.
+ *
+ * When there are more candidates than `maxPages` can hold, the scan rotates:
+ * it starts at a random page and wraps past the end. A scan that always began
+ * at the first page would read the same rows every sweep, and rows that can
+ * never be acted on (they have a job, their transcript is not on the server)
+ * would hide everything behind them permanently. Random rather than a stored
+ * position because there is nowhere to store one without a migration, and
+ * rather than a clock-derived position because that can fall into step with
+ * the schedule and skip the same pages every time. Each page is read with
+ * probability maxPages / totalPages per sweep, so every candidate is reached.
  *
  * Nothing is written here, so the scan does not move its own pages. Another
  * writer can still move a row out of the filter mid-scan, which shifts the
@@ -269,15 +283,26 @@ async function collectJoblessPlan({
   minAgeMs = RECONCILE_MIN_AGE_MS,
   limit = RECONCILE_BATCH_LIMIT,
   pageSize = RECONCILE_PAGE_SIZE,
-  maxPages = RECONCILE_MAX_PAGES
+  maxPages = RECONCILE_MAX_PAGES,
+  countCandidates,
+  random = Math.random
 } = {}) {
   const plan = emptyPlan();
   let scanned = 0;
   let exhausted = false;
 
-  for (let page = 0; page < maxPages; page += 1) {
+  // More candidates than one sweep reads: rotate. Otherwise read from the top.
+  const total = typeof countCandidates === 'function' ? await countCandidates() : 0;
+  const totalPages = Number.isFinite(total) && total > 0 ? Math.ceil(total / pageSize) : 0;
+  const rotating = totalPages > maxPages;
+  const startPage = rotating ? Math.min(Math.floor(random() * totalPages), totalPages - 1) : 0;
+
+  for (let step = 0; step < maxPages; step += 1) {
+    const page = rotating ? (startPage + step) % totalPages : step;
     const sermons = await fetchPage({ offset: page * pageSize, limit: pageSize });
     if (!Array.isArray(sermons) || sermons.length === 0) {
+      // Rotating: this is the end of the list (or it shrank); wrap to the top.
+      if (rotating) continue;
       exhausted = true;
       break;
     }
@@ -305,14 +330,16 @@ async function collectJoblessPlan({
     plan.skipped.push(...pagePlan.skipped);
     plan.deferred += pagePlan.deferred;
 
-    if (sermons.length < pageSize) {
+    // A short page is the last one. From the top that means everything was
+    // seen; mid-rotation it only means the window wraps to the first page.
+    if (!rotating && sermons.length < pageSize) {
       exhausted = true;
       break;
     }
     if (plan.create.length >= limit) break;
   }
 
-  return { plan, scanned, exhausted };
+  return { plan, scanned, exhausted, rotating, total };
 }
 
 module.exports = {

@@ -354,6 +354,7 @@ function fakeReads({ candidates, jobs = [], transcripts = [], summaries = [] }) 
   const calls = { pages: [], contexts: [] };
   return {
     calls,
+    countCandidates: async () => candidates.length,
     fetchPage: async ({ offset, limit }) => {
       calls.pages.push({ offset, limit });
       return candidates.slice(offset, offset + limit);
@@ -441,19 +442,111 @@ test('the per-sweep job cap holds across pages, and the scan stops once the batc
   assert.equal(exhausted, false);
 });
 
-test('the scan is bounded, and says so when it stops before the candidates run out', async () => {
-  const blocked = numbered('aaaaaaaa', PAGE * 5);
+// --- more candidates than one sweep reads: the window rotates ---
+
+const MAX_PAGES = 3;
+
+/**
+ * More permanently skipped candidates than one sweep can read (four pages of
+ * sermons with a dead job, against a three-page sweep), all newer than the one
+ * sermon that is genuinely job-less. Five pages in total; the job-less sermon
+ * is alone on the last.
+ */
+function buriedSermon() {
+  const blocked = numbered('aaaaaaaa', PAGE * (MAX_PAGES + 1));
+  const [buried] = numbered('bbbbbbbb', 1);
   const reads = fakeReads({
-    candidates: blocked,
+    candidates: [...blocked, buried],
     jobs: blocked.map((s) => ({ sermon_id: s.id, kind: 'transcription', status: 'dead' }))
   });
+  const totalPages = MAX_PAGES + 2;
+  const sweep = (random) => collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE, maxPages: MAX_PAGES, random });
+  return { buried, reads, totalPages, sweep };
+}
 
-  const { plan, scanned, exhausted } = await collectJoblessPlan({ ...reads, now: NOW, pageSize: PAGE, maxPages: 3 });
+test('a job-less sermon behind more skipped candidates than one sweep reads is still reached', async () => {
+  // The defect (Ternary on PR #85): every sweep began at the first page, read
+  // the same permanently skipped rows up to the page limit, and never reached
+  // the sermon behind them. Repeated sweeps did not help; they were identical.
+  const { buried, totalPages, sweep } = buriedSermon();
 
-  assert.equal(reads.calls.pages.length, 3);
-  assert.equal(scanned, PAGE * 3);
-  assert.deepEqual(plan.create, []);
-  assert.equal(exhausted, false);
+  const found = [];
+  for (let start = 0; start < totalPages; start++) {
+    const { plan, rotating, exhausted } = await sweep(() => start / totalPages);
+    assert.equal(rotating, true);
+    assert.equal(exhausted, false);
+    if (plan.create.some((p) => p.sermon_id === buried.id)) found.push(start);
+  }
+
+  // Three of the five possible windows contain the last page.
+  assert.deepEqual(found, [2, 3, 4]);
+});
+
+test('repeated sweeps with the real random source reach the buried sermon', async () => {
+  const { buried, sweep } = buriedSermon();
+
+  let reachedOnSweep = null;
+  for (let n = 1; n <= 200 && reachedOnSweep === null; n++) {
+    const { plan } = await sweep(Math.random);
+    if (plan.create.some((p) => p.sermon_id === buried.id)) reachedOnSweep = n;
+  }
+
+  // Each sweep reaches it with probability 3/5; missing 200 times in a row is
+  // (2/5)^200. A scan pinned to the first page misses every time.
+  assert.notEqual(reachedOnSweep, null);
+});
+
+test('a rotating window wraps past the end and never reads a page twice in one sweep', async () => {
+  const { reads, totalPages, sweep } = buriedSermon();
+
+  const seen = new Set();
+  for (let start = 0; start < totalPages; start++) {
+    reads.calls.pages.length = 0;
+    await sweep(() => start / totalPages);
+
+    const offsets = reads.calls.pages.map((p) => p.offset);
+    const expected = [0, 1, 2].map((step) => ((start + step) % totalPages) * PAGE);
+    assert.deepEqual(offsets, expected, `start page ${start}`);
+    assert.equal(new Set(offsets).size, MAX_PAGES);
+    offsets.forEach((o) => seen.add(o));
+  }
+
+  // Between them the windows cover every page.
+  assert.equal(seen.size, totalPages);
+});
+
+test('a random value at the top of its range still picks a real page', async () => {
+  const { reads, totalPages, sweep } = buriedSermon();
+  await sweep(() => 1);
+  assert.equal(reads.calls.pages[0].offset, (totalPages - 1) * PAGE);
+});
+
+test('the scan does not rotate while one sweep can read every candidate', async () => {
+  // Exactly as many candidates as a sweep reads: from the top, in order, and
+  // the random source is never consulted.
+  const reads = fakeReads({ candidates: numbered('aaaaaaaa', PAGE * MAX_PAGES) });
+  const random = () => { throw new Error('random must not be used'); };
+
+  const { rotating, scanned } = await collectJoblessPlan({
+    ...reads, now: NOW, pageSize: PAGE, maxPages: MAX_PAGES, limit: PAGE * MAX_PAGES + 1, random
+  });
+
+  assert.equal(rotating, false);
+  assert.equal(scanned, PAGE * MAX_PAGES);
+  assert.deepEqual(reads.calls.pages.map((p) => p.offset), [0, PAGE, PAGE * 2]);
+});
+
+test('a failed candidate count aborts the plan like any other failed lookup', async () => {
+  const reads = fakeReads({ candidates: numbered('aaaaaaaa', 2) });
+  await assert.rejects(
+    collectJoblessPlan({
+      ...reads,
+      countCandidates: async () => { throw new Error('sermon count failed: timeout'); },
+      now: NOW
+    }),
+    /sermon count failed/
+  );
+  assert.deepEqual(reads.calls.pages, []);
 });
 
 test('a scan with no candidates reads one page and nothing else', async () => {

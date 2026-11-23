@@ -72,24 +72,38 @@ function supabaseClient() {
  *
  * The scan pages (utils/joblessSermons.js#collectJoblessPlan). Candidates that
  * can never be acted on stay candidates forever, so a single fixed window
- * fills up with them and hides the sermons behind it.
+ * fills up with them and hides the sermons behind it. One sweep reads a
+ * bounded number of pages; past that bound the window rotates, so every
+ * candidate is still reached.
  */
 async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
   const outcome = { scanned: 0, created: 0, repaired: 0, tooShort: 0, deferred: 0, skipped: {} };
   const cutoff = new Date(now - RECONCILE_MIN_AGE_MS).toISOString();
   const terminal = `(${TERMINAL_STATUSES.join(',')})`;
 
+  // One definition of "candidate" for both the count and the pages, so the
+  // rotation is sized against the same rows it then reads.
+  const candidates = (columns, options) => supabase
+    .from('sermons')
+    .select(columns, options)
+    .or(
+      `transcription_status.not.in.${terminal},transcription_status.is.null,` +
+      `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.not.in.${terminal}),` +
+      `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.is.null)`
+    )
+    .not('audio_file_path', 'is', null)
+    .lt('updated_at', cutoff);
+
+  const countCandidates = async () => {
+    const { count, error } = await candidates('id', { count: 'exact', head: true });
+    if (error) throw new Error(`sermon count failed: ${error.message}`);
+    return count || 0;
+  };
+
   const fetchPage = async ({ offset, limit }) => {
-    const { data, error } = await supabase
-      .from('sermons')
-      .select('id, local_id, user_id, transcription_status, summary_status, audio_file_path, updated_at')
-      .or(
-        `transcription_status.not.in.${terminal},transcription_status.is.null,` +
-        `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.not.in.${terminal}),` +
-        `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.is.null)`
-      )
-      .not('audio_file_path', 'is', null)
-      .lt('updated_at', cutoff)
+    const { data, error } = await candidates(
+      'id, local_id, user_id, transcription_status, summary_status, audio_file_path, updated_at'
+    )
       .order('updated_at', { ascending: false })
       // Tie-break so the pages of one sweep never overlap or skip a row.
       .order('id', { ascending: true })
@@ -113,13 +127,13 @@ async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
 
   let collected;
   try {
-    collected = await collectJoblessPlan({ fetchPage, fetchContext, now });
+    collected = await collectJoblessPlan({ countCandidates, fetchPage, fetchContext, now });
   } catch (lookupError) {
     logger.error('[jobs-reaper] reconcile: lookup failed; creating nothing', { error: lookupError.message });
     return outcome;
   }
 
-  const { plan, scanned, exhausted } = collected;
+  const { plan, scanned, exhausted, rotating, total } = collected;
   if (scanned === 0) return outcome;
   outcome.scanned = scanned;
 
@@ -176,10 +190,14 @@ async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
 
   // Logged on every sweep that saw a candidate, including the ones that did
   // nothing: a scan that quietly stops finding work is otherwise invisible.
-  logger.info('[jobs-reaper] reconcile: sweep', { ...outcome, exhausted });
-  if (!exhausted && plan.create.length === 0) {
-    logger.warn('[jobs-reaper] reconcile: page limit reached with no job to create; candidates beyond it were not seen', {
-      scanned
+  logger.info('[jobs-reaper] reconcile: sweep', { ...outcome, exhausted, rotating, total });
+  if (rotating) {
+    // Not a fault, but worth seeing: the backlog of candidates that can never
+    // be acted on has outgrown one sweep, so each sweep reads a different
+    // window and a job-less sermon may wait a few sweeps to be reached.
+    logger.warn('[jobs-reaper] reconcile: more candidates than one sweep reads; scanning a rotating window', {
+      scanned,
+      total
     });
   }
   return outcome;
