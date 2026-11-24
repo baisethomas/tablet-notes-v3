@@ -77,7 +77,7 @@ Post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. 
 
 ## Last handoff
 
-- Updated: 2026-11-24 (TAB-138 evaluation harness; PR #92 open, review rounds 1 to 15 addressed; Ternary has no blocking findings. The owner said on 2026-11-24 to fix only blocking review findings on this PR from here: leave non-blocking warnings and suggestions unpushed and unanswered, and report them)
+- Updated: 2026-11-24 (TAB-138 evaluation harness; PR #92 open, review rounds 1 to 16 addressed; round 16's blocking finding is fixed and awaits Ternary's re-review. The owner said on 2026-11-24 to fix only blocking review findings on this PR from here: leave non-blocking warnings and suggestions unpushed and unanswered, and report them)
 - By: agent (Claude Code, Fable)
 - Branch/worktree: `baise/tab-138-evaluation-harness-for-choosing-the-gpt-4o`
-- Last known-good commit: 107a9f0 (main, merged into this branch); branch verified with `npm test` 410/410 after merging `main`, which includes the harness's 109 tests
+- Last known-good commit: 107a9f0 (main, merged into this branch); branch verified with `npm test` 412/412 after merging `main`, which includes the harness's 111 tests

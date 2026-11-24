@@ -138,6 +138,9 @@ disagree. The report is written to
 - Every OpenRouter request sets `provider.data_collection = "deny"`, so a model
   only reachable through a provider that retains prompts fails rather than runs.
   A candidate's `params` cannot override it.
+- A pull is published by its manifest: transcript files are named by a hash
+  of their text, so an interrupted pull leaves the previous set exactly as it
+  was, even when the new pull reuses an id with different text.
 - `data/` and `runs/` hold transcripts and summaries, including each run's
   copy of its inputs. Both are gitignored.
 

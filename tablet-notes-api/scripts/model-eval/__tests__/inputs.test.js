@@ -100,40 +100,81 @@ test('a planned run whose inputs are gone is refused, not given a fresh copy of 
 function pullFixture() {
   const data = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-pull-')), 'data');
   const row = (t, i) => ({ id: t.id, tier: i % 2 === 0 ? 'premium' : 'basic' });
-  const set = (ids) => ids.map(id => ({ id, text: `text of ${id}` }));
-  const complete = () => {
+  // `version` changes the text an id carries, as a re-transcribed sermon would.
+  const set = (ids, version = 1) => ids.map(id => ({ id, text: `text of ${id}, version ${version}` }));
+  // What the manifest on disk resolves to: every row's file must exist.
+  const current = () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(data, 'manifest.json'), 'utf8'));
-    for (const m of manifest) assert.ok(fs.existsSync(path.join(data, 'transcripts', `${m.id}.json`)), `${m.id} is in the manifest but not on disk`);
-    return manifest.map(m => m.id);
+    return Object.fromEntries(manifest.map(m => [m.id, JSON.parse(fs.readFileSync(path.join(data, 'transcripts', m.file), 'utf8')).text]));
   };
-  return { data, row, set, complete };
+  const texts = (ids, version = 1) => Object.fromEntries(set(ids, version).map(t => [t.id, t.text]));
+  const files = () => fs.readdirSync(path.join(data, 'transcripts')).length;
+  // The disk fills on the nth write from now.
+  const failOnWrite = (n, fn) => {
+    const realWrite = fs.writeFileSync;
+    let writes = 0;
+    fs.writeFileSync = (...a) => { if (++writes === n) throw new Error('ENOSPC'); return realWrite(...a); };
+    try { assert.throws(fn, /ENOSPC/); } finally { fs.writeFileSync = realWrite; }
+  };
+  return { data, row, set, current, texts, files, failOnWrite };
 }
 
 test('a pull replaces the previous set and leaves no transcript the manifest does not name', () => {
-  const { data, row, set, complete } = pullFixture();
+  const { data, row, set, current, texts, files } = pullFixture();
   replacePull(data, set(['a', 'b', 'c']), row);
-  assert.deepEqual(complete(), ['a', 'b', 'c']);
+  assert.deepEqual(current(), texts(['a', 'b', 'c']));
   replacePull(data, set(['c', 'd']), row);
-  assert.deepEqual(complete(), ['c', 'd']);
-  assert.deepEqual(fs.readdirSync(path.join(data, 'transcripts')).sort(), ['c.json', 'd.json']);
+  assert.deepEqual(current(), texts(['c', 'd']));
+  assert.equal(files(), 2);
 });
 
 test('a pull interrupted while writing leaves the previous set whole', () => {
-  const { data, row, set, complete } = pullFixture();
+  const { data, row, set, current, texts, files, failOnWrite } = pullFixture();
   replacePull(data, set(['a', 'b', 'c']), row);
-  // The disk fills on the second new transcript.
-  const realWrite = fs.writeFileSync;
-  let writes = 0;
-  fs.writeFileSync = (...a) => { if (++writes === 2) throw new Error('ENOSPC'); return realWrite(...a); };
-  try { assert.throws(() => replacePull(data, set(['d', 'e', 'f']), row), /ENOSPC/); } finally { fs.writeFileSync = realWrite; }
-  assert.deepEqual(complete(), ['a', 'b', 'c']);
-  // And a failure on the manifest itself, after every transcript landed.
-  writes = 0;
-  fs.writeFileSync = (...a) => { if (++writes === 4) throw new Error('ENOSPC'); return realWrite(...a); };
-  try { assert.throws(() => replacePull(data, set(['d', 'e', 'f']), row), /ENOSPC/); } finally { fs.writeFileSync = realWrite; }
-  assert.deepEqual(complete(), ['a', 'b', 'c']);
+  failOnWrite(2, () => replacePull(data, set(['d', 'e', 'f']), row));          // mid-set
+  assert.deepEqual(current(), texts(['a', 'b', 'c']));
+  failOnWrite(4, () => replacePull(data, set(['d', 'e', 'f']), row));          // on the manifest
+  assert.deepEqual(current(), texts(['a', 'b', 'c']));
   // The next pull that succeeds cleans up what the failed ones left.
   replacePull(data, set(['g']), row);
-  assert.deepEqual(complete(), ['g']);
-  assert.deepEqual(fs.readdirSync(path.join(data, 'transcripts')), ['g.json']);
+  assert.deepEqual(current(), texts(['g']));
+  assert.equal(files(), 1);
+});
+
+test('an interrupted pull that reuses an id with new text does not change what the old manifest resolves to', () => {
+  const { data, row, set, current, texts, files, failOnWrite } = pullFixture();
+  replacePull(data, set(['a', 'b', 'c'], 1), row);
+  // Same ids, different text. Interrupted after the first transcript, after
+  // all three, and on the manifest: each time the old set must read back as
+  // version 1, not a mix.
+  for (const n of [2, 3, 4]) {
+    failOnWrite(n, () => replacePull(data, set(['a', 'b', 'c'], 2), row));
+    assert.deepEqual(current(), texts(['a', 'b', 'c'], 1), `interrupted on write ${n}`);
+  }
+  // A run started now snapshots the old set, exactly.
+  const run = path.join(path.dirname(data), 'runs', 'r1');
+  assert.deepEqual(Object.fromEntries(snapshotInputs(data, run).map(t => [t.id, t.text])), texts(['a', 'b', 'c'], 1));
+  // Completed, the same pull publishes version 2 and removes version 1's files.
+  replacePull(data, set(['a', 'b', 'c'], 2), row);
+  assert.deepEqual(current(), texts(['a', 'b', 'c'], 2));
+  assert.equal(files(), 3);
+  // The run keeps what it started with.
+  assert.deepEqual(Object.fromEntries(loadInputs(run).map(t => [t.id, t.text])), texts(['a', 'b', 'c'], 1));
+});
+
+test('a run snapshot of a pulled set loads, and a pull written before files were named by content still reads', () => {
+  const { data, row, set, texts } = pullFixture();
+  replacePull(data, set(['a', 'b']), row);
+  const run = path.join(path.dirname(data), 'runs', 'r2');
+  const snap = snapshotInputs(data, run);
+  assert.deepEqual(snap.map(t => t.id), ['a', 'b']);
+  assert.equal('file' in snap[0], false);
+  assert.deepEqual(fs.readdirSync(path.join(run, 'inputs', 'transcripts')).sort(), ['a.json', 'b.json']);
+  // Older layout: <id>.json and no `file` in the manifest.
+  const old = path.join(path.dirname(data), 'old-data');
+  fs.mkdirSync(path.join(old, 'transcripts'), { recursive: true });
+  fs.writeFileSync(path.join(old, 'transcripts', 'z.json'), JSON.stringify({ id: 'z', text: 'older pull' }));
+  fs.writeFileSync(path.join(old, 'manifest.json'), JSON.stringify([{ id: 'z', tier: 'premium' }]));
+  assert.equal(snapshotInputs(old, path.join(path.dirname(data), 'runs', 'r3'))[0].text, 'older pull');
+  assert.deepEqual(texts(['a']), { a: 'text of a, version 1' });
 });

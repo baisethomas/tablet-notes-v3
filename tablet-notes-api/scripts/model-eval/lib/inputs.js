@@ -17,21 +17,29 @@ const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
 const inputsDir = (runDir) => path.join(runDir, 'inputs');
 const hasInputs = (runDir) => fs.existsSync(path.join(inputsDir(runDir), 'manifest.json'));
 
+// A manifest row names its transcript file. Rows written before files were
+// named by content (and every run snapshot) use `<id>.json`.
 function readSet(dir) {
   const manifest = readJson(path.join(dir, 'manifest.json'));
-  return manifest.map(m => ({ ...m, text: readJson(path.join(dir, 'transcripts', `${m.id}.json`)).text }));
+  return manifest.map(m => ({ ...m, text: readJson(path.join(dir, 'transcripts', m.file || `${m.id}.json`)).text }));
 }
 
-// Replace the pulled set in data/. The new transcripts are written first, the
-// manifest is then renamed into place, and only after that are transcripts
-// the new manifest does not name removed. Interrupted at any point, data/
-// holds a manifest whose transcripts all exist: the old one or the new one.
+// A pulled transcript's file name carries a hash of its text, so a new pull
+// never writes over a file the current manifest points at: the same id with
+// different text is a different file.
+const pulledFile = (t) => `${t.id}.${sha(t.text).slice(0, 12)}.json`;
+
+// Replace the pulled set in data/. The new transcripts are written beside
+// the old ones, the manifest that names them is then renamed into place, and
+// only after that are files the new manifest does not name removed.
+// Interrupted at any point, data/ holds one whole set: the manifest on disk,
+// old or new, resolves to exactly the text it was written for.
 function writePull(dataDir, picked, rowFor) {
   const dir = path.join(dataDir, 'transcripts');
-  for (const t of picked) writeJson(path.join(dir, `${t.id}.json`), t);
-  const manifest = picked.map(rowFor);
+  for (const t of picked) writeJson(path.join(dir, pulledFile(t)), t);
+  const manifest = picked.map((t, i) => ({ ...rowFor(t, i), file: pulledFile(t) }));
   writeJson(path.join(dataDir, 'manifest.json'), manifest);
-  const keep = new Set(picked.map(t => `${t.id}.json`));
+  const keep = new Set(manifest.map(m => m.file));
   for (const name of fs.readdirSync(dir)) if (!keep.has(name)) fs.rmSync(path.join(dir, name), { force: true });
   return manifest;
 }
@@ -48,12 +56,14 @@ function snapshotInputs(dataDir, runDir, { planned = false } = {}) {
   }
   const set = readSet(dataDir);
   const dir = inputsDir(runDir);
+  // The snapshot is written once and never replaced, so its files are named
+  // by id alone; the pull's own file names are not carried over.
   for (const t of set) {
-    const { text, ...meta } = t;
+    const { text, file, ...meta } = t;
     writeJson(path.join(dir, 'transcripts', `${t.id}.json`), { ...meta, text });
   }
   // Written last, so a half-finished copy is not mistaken for a snapshot.
-  writeJson(path.join(dir, 'manifest.json'), set.map(({ text, ...meta }) => ({ ...meta, sha: sha(text) })));
+  writeJson(path.join(dir, 'manifest.json'), set.map(({ text, file, ...meta }) => ({ ...meta, sha: sha(text) })));
   return loadInputs(runDir);
 }
 
