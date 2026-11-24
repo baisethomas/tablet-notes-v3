@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { slug, sha, pct, resolveJudges, aggregate, applyGates, verdict } = require('../lib/score');
+const { slug, sha, pct, resolveJudges, loadPlan, aggregate, applyGates, verdict } = require('../lib/score');
 
 const config = {
   judges: ['vendor-a/judge', 'vendor-b/judge'],
@@ -438,4 +438,69 @@ test('a candidate with no baseline in the run is INCOMPLETE', () => {
   cand.gates = applyGates(cand, undefined, config);
   assert.equal(verdict(cand, false), 'INCOMPLETE');
   assert.deepEqual(failing(cand), ['baseline present in this run']);
+});
+
+// A file cut off mid-write, as a killed process or a full disk leaves it.
+const truncate = (f) => fs.writeFileSync(f, fs.readFileSync(f, 'utf8').slice(0, 25));
+
+function passingRun() {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  assert.equal(score(run).verdict, 'PASS');
+  return run;
+}
+
+test('a truncated generation file is missing evidence, not a crash', () => {
+  const run = passingRun();
+  truncate(path.join(run, 'gen', slug('cand'), 't2.r1.json'));
+  const r = score(run);
+  assert.equal(r.cand.generationsPresent, 5);
+  assert.deepEqual(failing(r.cand), ['all planned generations present']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a truncated chat file is missing evidence, not a crash', () => {
+  const run = passingRun();
+  truncate(path.join(run, 'chat', slug('cand'), 't1.json'));
+  const r = score(run);
+  assert.ok(failing(r.cand).includes('all planned chat checks present'));
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a truncated judgment file is missing evidence, not a crash', () => {
+  const run = passingRun();
+  truncate(path.join(run, 'judge', slug('vendor-a/judge'), slug('cand'), 't3.json'));
+  truncate(path.join(run, 'judge', slug('vendor-b/judge'), slug('cand'), 'offtopic.t1.json'));
+  const r = score(run);
+  assert.equal(r.cand.judgmentsPresent, 10);
+  assert.deepEqual(failing(r.cand), ['judgments complete']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a truncated baseline file makes the candidate INCOMPLETE', () => {
+  const run = passingRun();
+  truncate(path.join(run, 'gen', slug('base'), 't1.r0.json'));
+  assert.equal(score(run).verdict, 'INCOMPLETE');
+});
+
+test('an unreadable plan or judge list is treated as not recorded', () => {
+  const run = passingRun();
+  fs.writeFileSync(path.join(run, 'plan.json'), '{"transcripts":["t1"');
+  fs.writeFileSync(path.join(run, 'judges.json'), '["vendor-a/ju');
+  assert.equal(loadPlan(run), null);
+  assert.deepEqual(resolveJudges(run, config, null), config.judges);
+  const r = score(run, config.judges, loadPlan(run));
+  assert.ok(failing(r.cand).includes('run plan recorded (plan.json)'));
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a temporary file left in a model folder is not read as a result', () => {
+  const run = passingRun();
+  // Whole, valid JSON: a write that finished but was never renamed into place.
+  fs.copyFileSync(path.join(run, 'gen', slug('cand'), 't1.r0.json'), path.join(run, 'gen', slug('cand'), 't1.r0.json.123.tmp'));
+  assert.equal(score(run).verdict, 'PASS');
+  assert.equal(aggregate(run, slug('cand'), config, config.judges, null).generationsPresent, 6);
 });

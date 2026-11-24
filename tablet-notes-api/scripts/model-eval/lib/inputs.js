@@ -10,9 +10,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+const { readJson, writeJson } = require('./files');
+
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
-const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
-const writeJson = (f, d) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(d, null, 2)); };
 
 const inputsDir = (runDir) => path.join(runDir, 'inputs');
 const hasInputs = (runDir) => fs.existsSync(path.join(inputsDir(runDir), 'manifest.json'));

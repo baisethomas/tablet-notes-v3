@@ -103,4 +103,14 @@ async function pool(items, concurrency, worker) {
   return out;
 }
 
-module.exports = { chat, pool, buildBody };
+// A pool in which one job throwing does not reject the rest: the throw is
+// handed to onError and the other jobs carry on. Returns how many failed.
+async function poolSettled(items, concurrency, worker, onError = () => {}) {
+  let failed = 0;
+  await pool(items, concurrency, async (item, i) => {
+    try { await worker(item, i); } catch (e) { failed++; onError(e, item); }
+  });
+  return failed;
+}
+
+module.exports = { chat, pool, poolSettled, buildBody };

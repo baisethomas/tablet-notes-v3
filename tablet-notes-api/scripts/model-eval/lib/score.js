@@ -8,10 +8,10 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { KEYS } = require('./judge');
+const { readJson, readJsonOrNull } = require('./files');
 
 const slug = (s) => s.replace(/[^a-zA-Z0-9.-]+/g, '_');
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
-const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 const rate = (xs, f) => xs.length ? xs.filter(f).length / xs.length : null;
 function pct(xs, p) {
@@ -30,17 +30,16 @@ const gradable = (gen) => !gen.result.error && !!(gen.result.content || '').trim
 function resolveJudges(runDir, config, override) {
   if (override && override.length) return override;
   const file = path.join(runDir, 'judges.json');
-  if (fs.existsSync(file)) return readJson(file);
-  return config.judges;
+  const recorded = readJsonOrNull(file);
+  return Array.isArray(recorded) && recorded.length ? recorded : config.judges;
 }
 
 // A stored judgment counts only if it can show it graded the text that is on
 // disk now. One with no hash cannot show that, so it is missing evidence:
 // `judge` redoes it and `report` stays INCOMPLETE until it has.
 function loadJudgment(file, summary) {
-  if (!fs.existsSync(file)) return null;
-  const j = readJson(file);
-  if (j.summarySha !== sha(summary)) return null;
+  const j = readJsonOrNull(file);   // absent or unreadable: no judgment
+  if (!j || j.summarySha !== sha(summary)) return null;
   return j;
 }
 
@@ -49,17 +48,18 @@ function loadJudgment(file, summary) {
 // missing evidence instead of quietly shrinking the sample.
 function loadPlan(runDir) {
   const file = path.join(runDir, 'plan.json');
-  return fs.existsSync(file) ? readJson(file) : null;
+  return readJsonOrNull(file);
 }
 
+// A result file that is absent or cannot be parsed is not a result.
 function readPlanned(dir, names) {
-  return names.filter(n => fs.existsSync(path.join(dir, n))).map(n => readJson(path.join(dir, n)));
+  return names.map(n => readJsonOrNull(path.join(dir, n))).filter(Boolean);
 }
 
 function aggregate(runDir, modelSlug, config, judges, plan) {
   const genDir = path.join(runDir, 'gen', modelSlug);
   const chatDir = path.join(runDir, 'chat', modelSlug);
-  const list = (dir) => fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+  const list = (dir) => fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => n.endsWith('.json')) : [];
   // With a plan, only planned files count and every one of them is expected.
   // Without one there is no way to know what is missing; applyGates says so.
   const genNames = plan ? plan.transcripts.flatMap(t => Array.from({ length: plan.repeats }, (_, rep) => `${t}.r${rep}.json`)) : list(genDir);
@@ -243,4 +243,4 @@ function verdict(m, isBase) {
   return provisional ? 'PROVISIONAL (one judge vendor)' : 'PASS';
 }
 
-module.exports = { slug, sha, readJson, mean, rate, pct, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict, judgmentsComplete };
+module.exports = { slug, sha, readJson, readJsonOrNull, mean, rate, pct, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict, judgmentsComplete };

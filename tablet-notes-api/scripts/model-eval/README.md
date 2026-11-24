@@ -77,6 +77,12 @@ default and write longer summaries, so they hit the token cap. The
 `{ label, model, params }` form tests the same model with the request changes a
 real swap would ship, and the label says what they are.
 
+`params` changes the summary request only. The two chat calls keep
+production's own caps (500 and 1,000 tokens), so a summary's raised cap never
+reaches them. A change the chat calls would ship with too, such as a reasoning
+setting, is named separately in `chatParams`. Each result file records the
+params its request was sent with.
+
 ## What it does not measure
 
 - Latency is measured through OpenRouter, not the provider's own API. It
@@ -98,7 +104,10 @@ node --test __tests__/*.test.js
 ```
 
 `run` and `judge` skip work that already has a result file, so an interrupted
-run resumes. Delete a model's folder under `runs/<name>/gen/` to redo it.
+run resumes. Result files are written whole or not at all, and one that cannot
+be parsed is treated as absent: it is redone, and until then the report counts
+it as missing. A job that throws is reported and retried by the next
+invocation; it does not stop the others. Delete a model's folder under `runs/<name>/gen/` to redo it.
 `--models "a;b"` limits `run` to some labels, and `--judges a,b` overrides the
 judges. One judge roughly halves the cost, but judges from a single vendor can
 only fail a model: the best verdict they give is PROVISIONAL, because nothing
@@ -109,7 +118,8 @@ disagree. The report is written to
 
 ### Transcript sources
 
-- `--source supabase` reads the `transcripts` table with GET requests only.
+- `--source supabase` reads the `transcripts` table with GET requests only,
+  paging until the server returns no more rows.
   `--users` is required: it names whose sermons are sent to third-party models.
 - `--source assemblyai` lists completed transcripts from the AssemblyAI account.
   It needs `ASSEMBLYAI_API_KEY` in the environment; the Netlify copy is a masked
@@ -132,4 +142,4 @@ disagree. The report is written to
 `lib/prompt.js` reads the prompts and parameters out of `summarize.js` and
 `chat.js` at run time and throws if their shape changes, so the eval cannot
 drift from production. Candidates are listed in `config.json`; per-model request
-overrides (for example a reasoning setting) go in the `{ label, model, params }` candidate form.
+overrides (for example a reasoning setting) go in the `{ label, model, params, chatParams }` candidate form.

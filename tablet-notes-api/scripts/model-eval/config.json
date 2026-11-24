@@ -4,11 +4,11 @@
     "openai/gpt-6-luna",
     "mistralai/mistral-small-2603",
     { "label": "openai/gpt-6-luna [5000 tok]", "model": "openai/gpt-6-luna", "params": { "max_tokens": 5000 } },
-    { "label": "openai/gpt-6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
-    { "label": "openai/gpt-5.6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-5.6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
-    { "label": "anthropic/claude-haiku-5.5 [reasoning off, 4000 tok]", "model": "anthropic/claude-haiku-5.5", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
-    { "label": "deepseek/deepseek-v4.1-flash [reasoning off, 4000 tok]", "model": "deepseek/deepseek-v4.1-flash", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 } },
-    { "label": "google/gemini-3.5-flash-lite [reasoning minimal, 4000 tok]", "model": "google/gemini-3.5-flash-lite", "params": { "reasoning": { "effort": "minimal" }, "max_tokens": 4000 } }
+    { "label": "openai/gpt-6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 }, "chatParams": { "reasoning": { "enabled": false } } },
+    { "label": "openai/gpt-5.6-luna [reasoning off, 4000 tok]", "model": "openai/gpt-5.6-luna", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 }, "chatParams": { "reasoning": { "enabled": false } } },
+    { "label": "anthropic/claude-haiku-5.5 [reasoning off, 4000 tok]", "model": "anthropic/claude-haiku-5.5", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 }, "chatParams": { "reasoning": { "enabled": false } } },
+    { "label": "deepseek/deepseek-v4.1-flash [reasoning off, 4000 tok]", "model": "deepseek/deepseek-v4.1-flash", "params": { "reasoning": { "enabled": false }, "max_tokens": 4000 }, "chatParams": { "reasoning": { "enabled": false } } },
+    { "label": "google/gemini-3.5-flash-lite [reasoning minimal, 4000 tok]", "model": "google/gemini-3.5-flash-lite", "params": { "reasoning": { "effort": "minimal" }, "max_tokens": 4000 }, "chatParams": { "reasoning": { "effort": "minimal" } } }
   ],
   "judges": ["anthropic/claude-sonnet-5.5", "openai/gpt-6.2-sol"],
   "repeats": 2,

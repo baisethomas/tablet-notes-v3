@@ -15,12 +15,15 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const { assemblyKey } = require('./lib/keys');
-const { chat, pool } = require('./lib/openrouter');
+const { chat, poolSettled } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
 const { snapshotInputs, loadInputs, assertRunName } = require('./lib/inputs');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
-const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
+const { writeJson, writeText, readJsonOrNull } = require('./lib/files');
+const { candidates, summaryParams, chatParams } = require('./lib/candidates');
+const { allRows } = require('./lib/pages');
+const { slug, sha, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -40,7 +43,6 @@ function args(argv) {
   }
   return out;
 }
-const writeJson = (f, d) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(d, null, 2)); };
 
 // ---------- pull ----------
 
@@ -57,9 +59,10 @@ async function pullSupabase(a) {
     return res.json();
   };
   const users = `in.(${a.users})`;
-  const sermons = await get(`sermons?select=id,service_type,duration&user_id=${users}&deleted_at=is.null`);
+  // Paged: one GET stops at the server's row cap and would drop the rest.
+  const sermons = await allRows(get, `sermons?select=id,service_type,duration&user_id=${users}&deleted_at=is.null`);
   const byId = new Map(sermons.map(s => [s.id, s]));
-  const transcripts = await get(`transcripts?select=id,sermon_id,text&user_id=${users}`);
+  const transcripts = await allRows(get, `transcripts?select=id,sermon_id,text&user_id=${users}`, { pageSize: 200 });
   return transcripts.filter(t => byId.has(t.sermon_id)).map(t => ({
     id: t.id,
     source: 'supabase',
@@ -133,15 +136,8 @@ async function cmdPull(a) {
 
 // ---------- run ----------
 
-// A candidate is a model id, or { label, model, params } to test the same
-// model under a different request configuration (e.g. reasoning disabled).
-function models(a) {
-  const all = [config.baseline, ...config.candidates].map(c =>
-    typeof c === 'string' ? { label: c, model: c, params: {} } : { params: {}, ...c });
-  if (!a.models) return all;
-  const want = a.models.split(';').map(s => s.trim());   // labels may contain commas
-  return all.filter(c => want.includes(c.label));
-}
+// Labels may contain commas, so --models is split on semicolons.
+const models = (a) => candidates(config, a.models ? a.models.split(';').map(s => s.trim()) : null);
 
 async function cmdRun(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
@@ -158,7 +154,7 @@ async function cmdRun(a) {
 
   const jobs = [];
   for (const c of models(a)) {
-    const base = { label: c.label, model: c.model, extra: c.params };
+    const base = { label: c.label, model: c.model, c };
     for (const t of set) {
       for (let rep = 0; rep < repeats; rep++) {
         jobs.push({ ...base, kind: 'summary', t, rep, file: path.join(runDir, 'gen', slug(c.label), `${t.id}.r${rep}.json`) });
@@ -168,7 +164,8 @@ async function cmdRun(a) {
       jobs.push({ ...base, kind: 'chat', t, file: path.join(runDir, 'chat', slug(c.label), `${t.id}.json`) });
     }
   }
-  const todo = jobs.filter(j => !fs.existsSync(j.file));
+  // A result file that cannot be read is redone, like one that is absent.
+  const todo = jobs.filter(j => !readJsonOrNull(j.file));
   console.log(`${jobs.length} jobs, ${todo.length} to run`);
   // Record what this run is meant to contain before producing any of it, so
   // `report` can tell a finished run from an interrupted one. --models can
@@ -182,27 +179,35 @@ async function cmdRun(a) {
   });
 
   let done = 0;
-  await pool(todo, config.concurrency, async (j) => {
+  // One job going wrong (a full disk, a bug in a check) must not abandon the
+  // generations still in flight. It leaves no result file, so the report
+  // shows it as missing and the next `run` retries it.
+  const runOne = async (j) => {
     if (j.kind === 'summary') {
       // Production aborts the summary at 55 s in total. A reply that arrives
       // later is one production never stores, so it is an error here too.
-      const result = await chat(j.model, summarize.messages(j.t), { ...summarize.params, ...j.extra }, { deadlineMs: summarize.timeoutMs });
+      const params = summaryParams(summarize.params, j.c);
+      const result = await chat(j.model, summarize.messages(j.t), params, { deadlineMs: summarize.timeoutMs });
       const check = result.error ? null : checks.checkSummary({
         content: result.content, finishReason: result.finishReason, tier: j.t.tier, transcript: j.t.text, index: indexes.get(j.t.id),
       });
-      writeJson(j.file, { model: j.label, apiModel: j.model, params: j.extra, transcript: j.t.id, rep: j.rep, tier: j.t.tier, serviceType: j.t.serviceType, result, check });
+      writeJson(j.file, { model: j.label, apiModel: j.model, params: j.c.params, transcript: j.t.id, rep: j.rep, tier: j.t.tier, serviceType: j.t.serviceType, result, check });
     } else {
       const context = { title: 'Sunday message', serviceType: j.t.serviceType, transcript: j.t.text };
-      const q = await chat(j.model, chatSpec.questions.messages(context), { ...chatSpec.questions.params, ...j.extra });
-      const off = await chat(j.model, chatSpec.chat.messages(context, OFF_TOPIC), { ...chatSpec.chat.params, ...j.extra });
+      // Production's chat caps apply; a candidate's summary params do not.
+      const q = await chat(j.model, chatSpec.questions.messages(context), chatParams(chatSpec.questions.params, j.c));
+      const off = await chat(j.model, chatSpec.chat.messages(context, OFF_TOPIC), chatParams(chatSpec.chat.params, j.c));
       writeJson(j.file, {
-        model: j.label, apiModel: j.model, transcript: j.t.id,
+        model: j.label, apiModel: j.model, params: j.c.chatParams, transcript: j.t.id,
         questions: { result: q, ok: !q.error && checks.checkQuestions(q.content) },
         offTopic: { result: off, ok: !off.error && checks.checkOffTopicRedirect(off.content) },
       });
     }
-    if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
-  });
+  };
+  const failed = await poolSettled(todo, config.concurrency, async (j) => {
+    try { await runOne(j); } finally { if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`); }
+  }, (e, j) => console.warn(`  ${j.kind} job failed (${j.label}, ${String(j.t.id).slice(0, 8)}): ${e.message}`));
+  if (failed) console.warn(`${failed} jobs failed and wrote no result; re-run "run" to retry them (the report stays INCOMPLETE until they exist)`);
 }
 
 // ---------- judge ----------
@@ -214,8 +219,10 @@ async function cmdJudge(a) {
   const jobs = [];
   for (const model of fs.readdirSync(path.join(runDir, 'gen'))) {
     for (const f of fs.readdirSync(path.join(runDir, 'gen', model)).filter(f => f.endsWith('.r0.json'))) {
-      const gen = readJson(path.join(runDir, 'gen', model, f));
-      if (!gradable(gen)) continue;   // nothing to grade; the gate already fails it
+      const gen = readJsonOrNull(path.join(runDir, 'gen', model, f));
+      // Unreadable: nothing to grade, and the report counts it as missing.
+      // Not gradable: the completion gate already fails it.
+      if (!gen || !gradable(gen)) continue;
       for (const judge of judges) {
         jobs.push({ judge, gen, file: path.join(runDir, 'judge', slug(judge), model, `${gen.transcript}.json`) });
       }
@@ -225,9 +232,9 @@ async function cmdJudge(a) {
   // the reply only redirected or also answered the question.
   const chatRoot = path.join(runDir, 'chat');
   for (const model of fs.existsSync(chatRoot) ? fs.readdirSync(chatRoot) : []) {
-    for (const f of fs.readdirSync(path.join(chatRoot, model))) {
-      const c = readJson(path.join(chatRoot, model, f));
-      if (!c.offTopic.ok) continue;
+    for (const f of fs.readdirSync(path.join(chatRoot, model)).filter(f => f.endsWith('.json'))) {
+      const c = readJsonOrNull(path.join(chatRoot, model, f));
+      if (!c || !c.offTopic.ok) continue;
       for (const judge of judges) {
         jobs.push({ judge, offTopic: c, file: path.join(runDir, 'judge', slug(judge), model, `offtopic.${c.transcript}.json`) });
       }
@@ -239,7 +246,7 @@ async function cmdJudge(a) {
   const todo = jobs.filter(j => !loadJudgment(j.file, graded(j)));
   console.log(`${jobs.length} judgments, ${todo.length} to run`);
   writeJson(path.join(runDir, 'judges.json'), judges);   // report reads this
-  let done = 0, failed = 0;
+  let done = 0;
   // One judgment going wrong must not cost the rest of the batch: a throw here
   // would reject the pool and abandon every judgment still in flight.
   const judgeOne = async (j) => {
@@ -255,10 +262,9 @@ async function cmdJudge(a) {
     if (res.error) throw new Error(res.error);
     writeJson(j.file, { judge: j.judge, model: j.gen.model, transcript: j.gen.transcript, summarySha: sha(j.gen.result.content), ...res });
   };
-  await pool(todo, config.concurrency, async (j) => {
-    try { await judgeOne(j); } catch (e) { failed++; console.warn(`  judge failed (${j.judge}): ${e.message}`); }
-    if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
-  });
+  const failed = await poolSettled(todo, config.concurrency, async (j) => {
+    try { await judgeOne(j); } finally { if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`); }
+  }, (e, j) => console.warn(`  judge failed (${j.judge}): ${e.message}`));
   if (failed) console.warn(`${failed} judgments failed; re-run "judge" to retry them (the report stays INCOMPLETE until they exist)`);
 }
 
@@ -304,7 +310,7 @@ function cmdReport(a) {
     if (m.failures.ungroundedRefs.length) L.push(`- references to books not in the transcript: ${m.failures.ungroundedRefs.slice(0, 8).join('; ')}`);
     L.push('');
   }
-  fs.writeFileSync(path.join(runDir, 'report.md'), L.join('\n'));
+  writeText(path.join(runDir, 'report.md'), L.join('\n'));
   writeJson(path.join(runDir, 'scores.json'), all);
   console.log(L.join('\n'));
 }

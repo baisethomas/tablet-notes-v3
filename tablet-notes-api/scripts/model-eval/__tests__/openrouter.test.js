@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 process.env.OPENROUTER_API_KEY = 'test-key-not-real';
-const { chat, buildBody } = require('../lib/openrouter');
+const { chat, buildBody, poolSettled } = require('../lib/openrouter');
 
 const MESSAGES = [{ role: 'user', content: 'hi' }];
 
@@ -91,4 +91,15 @@ test('a request that never succeeds comes back as an error, not a throw', async 
   const res = await chat('vendor/model', MESSAGES);
   assert.equal(res.error, 'bad request');
   assert.equal(res.attempts, 1);
+});
+
+test('one job throwing does not stop the others', async () => {
+  const ran = [], seen = [];
+  const failed = await poolSettled([1, 2, 3, 4, 5, 6], 2, async (n) => {
+    if (n === 2 || n === 5) throw new Error(`boom ${n}`);
+    ran.push(n);
+  }, (e, n) => seen.push(`${n}: ${e.message}`));
+  assert.equal(failed, 2);
+  assert.deepEqual(ran.sort(), [1, 3, 4, 6]);
+  assert.deepEqual(seen.sort(), ['2: boom 2', '5: boom 5']);
 });
