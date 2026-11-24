@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   isForbiddenStageRegression,
   planStageStatusWrites,
-  stageNotTerminalPredicate,
+  terminalStatusList,
   applyStageStatusWrites
 } = require('../sermonStatus');
 
@@ -100,24 +100,52 @@ test('a push carrying no stage statuses is a no-op', () => {
 
 // --- the compare-and-set ------------------------------------------------------
 
-test('the predicate matches a null column, not just a non-terminal one', () => {
-  // `status <> 'complete'` is NULL — not true — for a row that never had one,
-  // so a bare neq would silently match nothing and drop every write.
+test('a null column is still writable, not just a non-terminal one', async () => {
+  // `status NOT IN (...)` is NULL — not true — for a row that never had one,
+  // so the first request alone would match nothing and drop every such write.
   // The terminal set itself is pinned in terminalStatus.test.js.
-  const p = stageNotTerminalPredicate('transcription_status');
-  assert.ok(p.startsWith('transcription_status.is.null,'), 'a never-set column must still be writable');
-  assert.ok(p.includes('neq.complete'));
+  const supabase = fakeSupabase((call) => (
+    call.filters.some(([kind]) => kind === 'is')
+      ? { data: [{ id: 'sermon-1' }], error: null }
+      : { data: [], error: null }
+  ));
+
+  const { dropped } = await applyStageStatusWrites({
+    supabase,
+    sermonId: 'sermon-1',
+    userId: 'user-1',
+    writes: [{ column: 'transcription_status', value: 'pending' }]
+  });
+
+  assert.deepEqual(dropped, [], 'the null row took the write');
+  assert.equal(supabase.calls.length, 2);
+  assert.deepEqual(supabase.calls[1].filters, [
+    ['eq', 'id', 'sermon-1'],
+    ['eq', 'user_id', 'user-1'],
+    ['is', 'transcription_status', null]
+  ]);
 });
 
-/** Records what was asked of it and returns a caller-chosen result. */
+/**
+ * Records what was asked of it and returns a caller-chosen result. An `or`
+ * filter is rejected the way PostgREST rejects it on an update that returns
+ * only `id` (TAB-141).
+ */
 function fakeSupabase(result) {
   const calls = [];
   let current;
   const chain = {
     update(patch) { current.patch = patch; return chain; },
     eq(column, value) { current.filters.push(['eq', column, value]); return chain; },
-    or(expr) { current.filters.push(['or', expr]); return chain; },
-    select() { return Promise.resolve(result(current)); }
+    not(column, operator, value) { current.filters.push(['not', column, operator, value]); return chain; },
+    is(column, value) { current.filters.push(['is', column, value]); return chain; },
+    or(expr) { current.filters.push(['or', expr]); current.rejected = true; return chain; },
+    select() {
+      if (current.rejected) {
+        return Promise.resolve({ data: null, error: { code: '42703', message: 'column does not exist' } });
+      }
+      return Promise.resolve(result(current));
+    }
   };
   return {
     calls,
@@ -147,7 +175,7 @@ test('a stage write is scoped to the owner and refuses to overwrite complete', a
   assert.deepEqual(call.filters, [
     ['eq', 'id', 'sermon-1'],
     ['eq', 'user_id', 'user-1'],
-    ['or', stageNotTerminalPredicate('transcription_status')]
+    ['not', 'transcription_status', 'in', terminalStatusList()]
   ]);
 });
 
