@@ -33,4 +33,7 @@ function writeText(f, text) {
 
 const writeJson = (f, d) => writeText(f, JSON.stringify(d, null, 2));
 
-module.exports = { readJson, readJsonOrNull, writeJson, writeText };
+// A folder nothing has been written to yet has no entries; it is not an error.
+const listDir = (dir) => fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+
+module.exports = { readJson, readJsonOrNull, writeJson, writeText, listDir };

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { readJsonOrNull, writeJson } = require('../lib/files');
+const { readJsonOrNull, writeJson, listDir } = require('../lib/files');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-files-'));
 
@@ -45,4 +45,11 @@ test('an absent or unparseable file reads as null', () => {
 
 test('a read error other than a missing file is not swallowed', () => {
   assert.throws(() => readJsonOrNull(tmp()), /EISDIR/);
+});
+
+test('a folder that does not exist lists as empty', () => {
+  const dir = tmp();
+  assert.deepEqual(listDir(path.join(dir, 'gen')), []);
+  writeJson(path.join(dir, 'gen', 'model', 'x.json'), {});
+  assert.deepEqual(listDir(path.join(dir, 'gen')), ['model']);
 });

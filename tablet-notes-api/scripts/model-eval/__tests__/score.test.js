@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { slug, sha, pct, resolveJudges, loadPlan, aggregate, applyGates, verdict } = require('../lib/score');
+const { slug, sha, pct, resolveJudges, loadPlan, mergePlan, aggregate, applyGates, verdict } = require('../lib/score');
 
 const config = {
   judges: ['vendor-a/judge', 'vendor-b/judge'],
@@ -503,4 +503,29 @@ test('a temporary file left in a model folder is not read as a result', () => {
   fs.copyFileSync(path.join(run, 'gen', slug('cand'), 't1.r0.json'), path.join(run, 'gen', slug('cand'), 't1.r0.json.123.tmp'));
   assert.equal(score(run).verdict, 'PASS');
   assert.equal(aggregate(run, slug('cand'), config, config.judges, null).generationsPresent, 6);
+});
+
+test('the first invocation records the plan it was given', () => {
+  assert.deepEqual(mergePlan(null, { ...PLAN, models: ['base', 'base'] }), { ...PLAN, models: ['base'] });
+});
+
+test('a later invocation may add models and nothing else', () => {
+  const merged = mergePlan(PLAN, { ...PLAN, models: ['cand', 'third'] });
+  assert.deepEqual(merged, { ...PLAN, models: ['base', 'cand', 'third'] });
+});
+
+test('a resumed run cannot shrink, or otherwise change, the planned sample', () => {
+  assert.throws(() => mergePlan(PLAN, { ...PLAN, repeats: 1 }), /planned with 2 generations per transcript, not 1/);
+  assert.throws(() => mergePlan(PLAN, { ...PLAN, repeats: 3 }), /planned with 2 generations/);
+  assert.throws(() => mergePlan(PLAN, { ...PLAN, chatTranscripts: ['t1'] }), /different set of transcripts or chat checks/);
+  assert.throws(() => mergePlan(PLAN, { ...PLAN, transcripts: ['t1', 't2'] }), /different set of transcripts or chat checks/);
+});
+
+test('a run missing its second generations stays INCOMPLETE under the plan it was started with', () => {
+  const run = passingRun();
+  for (const t of TRANSCRIPTS) fs.rmSync(path.join(run, 'gen', slug('cand'), `${t}.r1.json`));
+  // What the old code would have recorded after a resume with --repeats 1.
+  assert.equal(score(run, config.judges, { ...PLAN, repeats: 1 }).verdict, 'PASS');
+  assert.throws(() => mergePlan(PLAN, { ...PLAN, repeats: 1 }));
+  assert.equal(score(run).verdict, 'INCOMPLETE');
 });

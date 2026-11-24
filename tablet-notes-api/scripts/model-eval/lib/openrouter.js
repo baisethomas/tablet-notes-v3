@@ -63,6 +63,11 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
         }
         return { error: String(err).slice(0, 300), status: res.status, latencyMs, attempts: attempt + 1 };
       }
+      // A 200 whose body is empty or not a JSON object is a failed request,
+      // not a completion with no text.
+      if (json === null || typeof json !== 'object') {
+        return { error: 'unparseable response body', status: res.status, latencyMs, attempts: attempt + 1 };
+      }
       const choice = json.choices?.[0] || {};
       return {
         content: choice.message?.content || '',

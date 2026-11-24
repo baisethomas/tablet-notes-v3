@@ -103,3 +103,16 @@ test('one job throwing does not stop the others', async () => {
   assert.deepEqual(ran.sort(), [1, 3, 4, 6]);
   assert.deepEqual(seen.sort(), ['2: boom 2', '5: boom 5']);
 });
+
+test('a 200 with an empty or non-JSON body is an error result, not a throw', async (t) => {
+  const realFetch = global.fetch;
+  t.after(() => { global.fetch = realFetch; });
+  const bodies = [async () => { throw new SyntaxError('Unexpected end of JSON input'); }, async () => null, async () => 'ok', async () => 7];
+  for (const json of bodies) {
+    global.fetch = async () => ({ ok: true, status: 200, json });
+    const r = await chat('vendor/model', MESSAGES);
+    assert.equal(r.error, 'unparseable response body');
+    assert.equal(r.status, 200);
+    assert.equal(r.content, undefined);
+  }
+});

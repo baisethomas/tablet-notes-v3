@@ -52,6 +52,22 @@ function loadPlan(runDir) {
 }
 
 // A result file that is absent or cannot be parsed is not a result.
+// The plan a `run` invocation records. A run's sample is fixed by its first
+// invocation: a later one may add models, but asking for a different number
+// of generations or chat checks is refused, because rewriting the plan to a
+// smaller one would turn an unfinished run into a finished smaller one.
+function mergePlan(before, now) {
+  if (!before) return { ...now, models: [...new Set(now.models)] };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (before.repeats !== now.repeats) {
+    throw new Error(`this run was planned with ${before.repeats} generations per transcript, not ${now.repeats}; use --repeats ${before.repeats} or start a new run`);
+  }
+  if (!same(before.transcripts, now.transcripts) || !same(before.chatTranscripts, now.chatTranscripts)) {
+    throw new Error('this run was planned with a different set of transcripts or chat checks; start a new run');
+  }
+  return { ...before, models: [...new Set([...before.models, ...now.models])] };
+}
+
 function readPlanned(dir, names) {
   return names.map(n => readJsonOrNull(path.join(dir, n))).filter(Boolean);
 }
@@ -243,4 +259,4 @@ function verdict(m, isBase) {
   return provisional ? 'PROVISIONAL (one judge vendor)' : 'PASS';
 }
 
-module.exports = { slug, sha, readJson, readJsonOrNull, mean, rate, pct, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict, judgmentsComplete };
+module.exports = { slug, sha, readJson, readJsonOrNull, mean, rate, pct, gradable, resolveJudges, loadJudgment, loadPlan, mergePlan, aggregate, applyGates, verdict, judgmentsComplete };

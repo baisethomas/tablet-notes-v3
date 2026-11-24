@@ -20,10 +20,10 @@ const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
 const { snapshotInputs, loadInputs, assertRunName } = require('./lib/inputs');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
-const { writeJson, writeText, readJsonOrNull } = require('./lib/files');
+const { writeJson, writeText, readJsonOrNull, listDir } = require('./lib/files');
 const { candidates, summaryParams, chatParams } = require('./lib/candidates');
 const { allRows } = require('./lib/pages');
-const { slug, sha, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
+const { slug, sha, gradable, resolveJudges, loadJudgment, loadPlan, mergePlan, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -146,7 +146,17 @@ async function cmdRun(a) {
   const set = snapshotInputs(DATA, runDir);
   const summarize = loadSummarize();
   const chatSpec = loadChat();
-  const repeats = Number(a.repeats || config.repeats);
+  // The first `run` fixes the sample. A later invocation with no --repeats
+  // continues with the planned number; one that asks for another is refused.
+  const before = loadPlan(runDir);
+  const repeats = Number(a.repeats || (before ? before.repeats : config.repeats));
+  const plan = mergePlan(before, {
+    transcripts: set.map(t => t.id),
+    repeats,
+    chatTranscripts: (before ? set.filter(t => before.chatTranscripts.includes(t.id)) : set.slice(0, config.chatTranscripts)).map(t => t.id),
+    models: models(a).map(c => c.label),
+  });
+  const chatSet = set.filter(t => plan.chatTranscripts.includes(t.id));
   const indexes = new Map(set.map(t => [t.id, checks.transcriptIndex(t.text)]));
   if (summarize.prodModel !== config.baseline.split('/').pop()) {
     console.warn(`note: production runs ${summarize.prodModel}; config baseline is ${config.baseline}`);
@@ -160,7 +170,7 @@ async function cmdRun(a) {
         jobs.push({ ...base, kind: 'summary', t, rep, file: path.join(runDir, 'gen', slug(c.label), `${t.id}.r${rep}.json`) });
       }
     }
-    for (const t of set.slice(0, config.chatTranscripts)) {
+    for (const t of chatSet) {
       jobs.push({ ...base, kind: 'chat', t, file: path.join(runDir, 'chat', slug(c.label), `${t.id}.json`) });
     }
   }
@@ -170,13 +180,7 @@ async function cmdRun(a) {
   // Record what this run is meant to contain before producing any of it, so
   // `report` can tell a finished run from an interrupted one. --models can
   // add models over several invocations; the transcript set is the run's own.
-  const before = loadPlan(runDir);
-  writeJson(path.join(runDir, 'plan.json'), {
-    transcripts: set.map(t => t.id),
-    repeats,
-    chatTranscripts: set.slice(0, config.chatTranscripts).map(t => t.id),
-    models: [...new Set([...(before ? before.models : []), ...models(a).map(c => c.label)])],
-  });
+  writeJson(path.join(runDir, 'plan.json'), plan);
 
   let done = 0;
   // One job going wrong (a full disk, a bug in a check) must not abandon the
@@ -217,7 +221,8 @@ async function cmdJudge(a) {
   const judges = a.judges ? a.judges.split(',') : config.judges;
   const set = new Map(loadInputs(runDir).map(t => [t.id, t]));
   const jobs = [];
-  for (const model of fs.readdirSync(path.join(runDir, 'gen'))) {
+  // No gen/ folder yet is no summaries to grade; the chat replies still are.
+  for (const model of listDir(path.join(runDir, 'gen'))) {
     for (const f of fs.readdirSync(path.join(runDir, 'gen', model)).filter(f => f.endsWith('.r0.json'))) {
       const gen = readJsonOrNull(path.join(runDir, 'gen', model, f));
       // Unreadable: nothing to grade, and the report counts it as missing.
@@ -231,7 +236,7 @@ async function cmdJudge(a) {
   // Off-topic chat replies the code check accepted: the judges decide whether
   // the reply only redirected or also answered the question.
   const chatRoot = path.join(runDir, 'chat');
-  for (const model of fs.existsSync(chatRoot) ? fs.readdirSync(chatRoot) : []) {
+  for (const model of listDir(chatRoot)) {
     for (const f of fs.readdirSync(path.join(chatRoot, model)).filter(f => f.endsWith('.json'))) {
       const c = readJsonOrNull(path.join(chatRoot, model, f));
       if (!c || !c.offTopic.ok) continue;
@@ -279,7 +284,7 @@ function cmdReport(a) {
   const judges = resolveJudges(runDir, config, a.judges ? a.judges.split(',') : null);
   const plan = loadPlan(runDir);
   // Every model the run planned, even one with no output at all yet.
-  const slugs = [...new Set([...fs.readdirSync(path.join(runDir, 'gen')), ...(plan ? plan.models.map(slug) : [])])];
+  const slugs = [...new Set([...listDir(path.join(runDir, 'gen')), ...(plan ? plan.models.map(slug) : [])])];
   const all = slugs.map(s => aggregate(runDir, s, config, judges, plan));
   const base = all.find(m => m.model === config.baseline);
   for (const m of all) {
