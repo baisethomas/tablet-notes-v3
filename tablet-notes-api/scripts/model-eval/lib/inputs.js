@@ -24,8 +24,14 @@ function readSet(dir) {
 
 // Copy the current pull into the run, once. A run that already has inputs
 // keeps them: a later pull never changes what an existing run is about.
-function snapshotInputs(dataDir, runDir) {
+function snapshotInputs(dataDir, runDir, { planned = false } = {}) {
   if (hasInputs(runDir)) return loadInputs(runDir);
+  // A run that already has a plan had its inputs copied when it started. If
+  // they are gone, copying today's pull in their place would bind old results
+  // to different transcripts, so the run is refused before anything is written.
+  if (planned) {
+    throw new Error(`${path.basename(runDir)} has a plan but its input snapshot (runs/<run>/inputs/) is missing; start a new run`);
+  }
   const set = readSet(dataDir);
   const dir = inputsDir(runDir);
   for (const t of set) {

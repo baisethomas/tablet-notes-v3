@@ -32,6 +32,10 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
 
   // latencyMs is what a caller would have waited: every attempt plus the
   // backoff between them. A retry must not make a slow model look fast.
+  // Resolved once, before any attempt: a missing key is not a transient
+  // failure, so it is reported at once instead of being retried.
+  let key;
+  try { key = openRouterKey(); } catch (e) { return { error: e.message, latencyMs: 0, attempts: 0 }; }
   const started = Date.now();
   const overDeadline = (attempts) => ({ error: `timeout: exceeded the ${deadlineMs}ms deadline`, latencyMs: Date.now() - started, attempts });
   for (let attempt = 0; ; attempt++) {
@@ -43,7 +47,7 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
       const res = await fetch(URL, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${openRouterKey()}`,
+          authorization: `Bearer ${key}`,
           'content-type': 'application/json',
           'x-title': 'model-eval',
         },

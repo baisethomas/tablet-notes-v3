@@ -79,3 +79,20 @@ test('a run name must be one plain path segment', () => {
     assert.throws(() => assertRunName(bad), /invalid --run name/, String(bad));
   }
 });
+
+test('a planned run whose inputs are gone is refused, not given a fresh copy of data/', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-planned-'));
+  const data = path.join(root, 'data'), run = path.join(root, 'runs', 'r1');
+  fs.mkdirSync(path.join(data, 'transcripts'), { recursive: true });
+  fs.writeFileSync(path.join(data, 'transcripts', 'a.json'), JSON.stringify({ id: 'a', text: 'first pull' }));
+  fs.writeFileSync(path.join(data, 'manifest.json'), JSON.stringify([{ id: 'a', tier: 'premium' }]));
+  // First invocation: no plan yet, so the pull is copied.
+  assert.equal(snapshotInputs(data, run).length, 1);
+  // A later invocation of the same run reads its own copy, planned or not.
+  assert.equal(snapshotInputs(data, run, { planned: true })[0].text, 'first pull');
+  // Inputs removed after the run was planned: nothing is written in their place.
+  fs.rmSync(path.join(run, 'inputs'), { recursive: true });
+  assert.throws(() => snapshotInputs(data, run, { planned: true }), /has a plan but its input snapshot .* is missing/);
+  assert.equal(hasInputs(run), false);
+  assert.equal(fs.existsSync(path.join(run, 'inputs')), false);
+});

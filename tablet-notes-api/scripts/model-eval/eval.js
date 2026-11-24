@@ -119,12 +119,12 @@ async function cmdRun(a) {
   const chosen = models(a);
   // The first `run` copies the current pull into the run; after that the run
   // reads only its own copy, whatever `pull` has done to data/ since.
-  const set = snapshotInputs(DATA, runDir);
+  const before = loadPlan(runDir);
+  const set = snapshotInputs(DATA, runDir, { planned: !!before });
   const summarize = loadSummarize();
   const chatSpec = loadChat();
   // The first `run` fixes the sample. A later invocation with no --repeats
   // continues with the planned number; one that asks for another is refused.
-  const before = loadPlan(runDir);
   const repeats = Number(a.repeats || (before ? before.repeats : config.repeats));
   const plan = mergePlan(before, {
     transcripts: set.map(t => t.id),

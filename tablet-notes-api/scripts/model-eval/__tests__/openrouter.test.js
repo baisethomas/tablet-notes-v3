@@ -138,3 +138,23 @@ test('a reply that finishes after the deadline is an error even if the abort nev
   global.fetch = late(200, { choices: [{ message: { content: 'in time' }, finish_reason: 'stop' }], usage: {} });
   assert.equal((await chat('vendor/model', MESSAGES, {}, { deadlineMs: 5000 })).content, 'in time');
 });
+
+test('a missing key is an immediate error result: no request, no retries', async (t) => {
+  const realFetch = global.fetch;
+  const saved = { key: process.env.OPENROUTER_API_KEY, file: process.env.OPENROUTER_ENV_FILE };
+  t.after(() => {
+    global.fetch = realFetch;
+    process.env.OPENROUTER_API_KEY = saved.key;
+    if (saved.file == null) delete process.env.OPENROUTER_ENV_FILE; else process.env.OPENROUTER_ENV_FILE = saved.file;
+  });
+  delete process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_ENV_FILE = '/nonexistent/model-eval/.env';
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error('should not be called'); };
+  const started = Date.now();
+  const res = await chat('vendor/model', MESSAGES);
+  assert.match(res.error, /OPENROUTER_API_KEY not set/);
+  assert.equal(res.attempts, 0);
+  assert.equal(calls, 0);
+  assert.ok(Date.now() - started < 1000, 'returned without backing off');
+});
