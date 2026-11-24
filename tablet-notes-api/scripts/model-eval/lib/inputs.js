@@ -50,4 +50,13 @@ function loadInputs(runDir) {
   return set;
 }
 
-module.exports = { snapshotInputs, loadInputs, hasInputs };
+// A run name becomes a folder under runs/. Anything but one plain path
+// segment could put transcripts and summaries outside the gitignored tree.
+function assertRunName(name) {
+  if (typeof name !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(name) || /^\.+$/.test(name)) {
+    throw new Error('invalid --run name: use letters, digits, dot, dash and underscore only');
+  }
+  return name;
+}
+
+module.exports = { snapshotInputs, loadInputs, hasInputs, assertRunName };

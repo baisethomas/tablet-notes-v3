@@ -46,6 +46,8 @@ function parse(content) {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start < 0 || end < 0) return null;
+  // Only the text from the first { to the last } is parsed, so what comes back
+  // is an object or a throw: a bare `null`, array, string or number never gets here.
   let data;
   try { data = JSON.parse(raw.slice(start, end + 1)); } catch (_) { return null; }
   for (const k of KEYS) {
@@ -137,4 +139,4 @@ async function judgeOffTopic(judgeModel, { question, reply }) {
   return { error: 'unreachable' };
 }
 
-module.exports = { judgeSummary, judgeOffTopic, parseOffTopic, KEYS };
+module.exports = { judgeSummary, judgeOffTopic, parseSummary: parse, parseOffTopic, KEYS };

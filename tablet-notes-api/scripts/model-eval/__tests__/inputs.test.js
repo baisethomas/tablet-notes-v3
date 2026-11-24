@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { snapshotInputs, loadInputs, hasInputs } = require('../lib/inputs');
+const { snapshotInputs, loadInputs, hasInputs, assertRunName } = require('../lib/inputs');
 
 function write(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -71,4 +71,11 @@ test('a copy interrupted before its manifest was written is not a snapshot', () 
   write(path.join(run, 'inputs', 'transcripts', 'a.json'), { id: 'a', text: 'partial' });
   assert.equal(hasInputs(run), false);
   assert.equal(snapshotInputs(data, run)[0].text, 'first sermon');
+});
+
+test('a run name must be one plain path segment', () => {
+  for (const ok of ['2026-11-23-confirm', 'smoke', 'run_2.v1']) assert.equal(assertRunName(ok), ok);
+  for (const bad of ['..', '.', '../..', '../outside', 'a/b', 'a\\b', '/tmp/x', '', ' ', 'run name', true, undefined]) {
+    assert.throws(() => assertRunName(bad), /invalid --run name/, String(bad));
+  }
 });

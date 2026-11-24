@@ -18,7 +18,7 @@ const { assemblyKey } = require('./lib/keys');
 const { chat, pool } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
-const { snapshotInputs, loadInputs } = require('./lib/inputs');
+const { snapshotInputs, loadInputs, assertRunName } = require('./lib/inputs');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
 const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
 
@@ -240,19 +240,23 @@ async function cmdJudge(a) {
   console.log(`${jobs.length} judgments, ${todo.length} to run`);
   writeJson(path.join(runDir, 'judges.json'), judges);   // report reads this
   let done = 0, failed = 0;
-  await pool(todo, config.concurrency, async (j) => {
+  // One judgment going wrong must not cost the rest of the batch: a throw here
+  // would reject the pool and abandon every judgment still in flight.
+  const judgeOne = async (j) => {
     if (j.offTopic) {
       const res = await judgeOffTopic(j.judge, { question: OFF_TOPIC, reply: graded(j) });
-      if (res.error) { failed++; console.warn(`  judge failed (${j.judge}): ${res.error}`); }
-      else writeJson(j.file, { judge: j.judge, model: j.offTopic.model, transcript: j.offTopic.transcript, summarySha: sha(graded(j)), ...res });
-      if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
+      if (res.error) throw new Error(res.error);
+      writeJson(j.file, { judge: j.judge, model: j.offTopic.model, transcript: j.offTopic.transcript, summarySha: sha(graded(j)), ...res });
       return;
     }
     const t = set.get(j.gen.transcript);
     // The judge sees the summary exactly as a user would, and never the model name.
     const res = await judgeSummary(j.judge, { transcript: t.text, serviceType: t.serviceType, tier: t.tier, summary: j.gen.result.content });
-    if (res.error) { failed++; console.warn(`  judge failed (${j.judge}): ${res.error}`); }
-    else writeJson(j.file, { judge: j.judge, model: j.gen.model, transcript: j.gen.transcript, summarySha: sha(j.gen.result.content), ...res });
+    if (res.error) throw new Error(res.error);
+    writeJson(j.file, { judge: j.judge, model: j.gen.model, transcript: j.gen.transcript, summarySha: sha(j.gen.result.content), ...res });
+  };
+  await pool(todo, config.concurrency, async (j) => {
+    try { await judgeOne(j); } catch (e) { failed++; console.warn(`  judge failed (${j.judge}): ${e.message}`); }
     if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
   });
   if (failed) console.warn(`${failed} judgments failed; re-run "judge" to retry them (the report stays INCOMPLETE until they exist)`);
@@ -311,6 +315,7 @@ function cmdReport(a) {
   const a = args(process.argv.slice(2));
   const cmd = a._[0];
   if (cmd !== 'pull' && !a.run) throw new Error('--run <name> is required');
+  if (cmd !== 'pull') assertRunName(a.run);
   if (cmd === 'pull') await cmdPull(a);
   else if (cmd === 'run') await cmdRun(a);
   else if (cmd === 'judge') await cmdJudge(a);
