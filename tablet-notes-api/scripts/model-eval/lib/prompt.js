@@ -19,7 +19,11 @@ function mustMatch(src, re, what) {
 }
 
 function render(template, vars) {
-  // The source is a JS template literal; evaluate it with the same variable names.
+  // The source is a JS template literal; evaluate it with the same variable
+  // names. Only `template`, which is this repository's own function source,
+  // becomes code. The values are passed as arguments, so a value such as a
+  // service type reading "${process.exit()}" is interpolated as that text and
+  // never evaluated (pinned in __tests__/prompt.test.js).
   const names = Object.keys(vars);
   // eslint-disable-next-line no-new-func
   return new Function(...names, 'return `' + template + '`;')(...names.map(n => vars[n]));
@@ -86,4 +90,4 @@ function loadChat() {
   };
 }
 
-module.exports = { loadSummarize, loadChat };
+module.exports = { loadSummarize, loadChat, render };

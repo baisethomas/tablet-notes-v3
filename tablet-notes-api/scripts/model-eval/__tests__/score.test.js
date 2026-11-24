@@ -529,3 +529,35 @@ test('a run missing its second generations stays INCOMPLETE under the plan it wa
   assert.throws(() => mergePlan(PLAN, { ...PLAN, repeats: 1 }));
   assert.equal(score(run).verdict, 'INCOMPLETE');
 });
+
+test('a free baseline passes a free candidate and fails one that costs anything', () => {
+  const free = tmpRun();
+  writeModel(free, 'base', { costUsd: 0 });
+  writeModel(free, 'cand', { costUsd: 0 });
+  writeJudgments(free, 'base', config.judges, 3);
+  writeJudgments(free, 'cand', config.judges, 4);
+  let r = score(free);
+  assert.equal(r.verdict, 'PASS');
+  assert.equal(r.cand.gates.find(g => g.name === 'cost vs baseline').shown, '1.00x');
+
+  const paid = tmpRun();
+  writeModel(paid, 'base', { costUsd: 0 });
+  writeModel(paid, 'cand', { costUsd: 0.0001 });
+  writeJudgments(paid, 'base', config.judges, 3);
+  writeJudgments(paid, 'cand', config.judges, 4);
+  r = score(paid);
+  assert.deepEqual(failing(r.cand), ['cost vs baseline']);
+  assert.equal(r.cand.gates.find(g => g.name === 'cost vs baseline').shown, 'baseline is free');
+  assert.equal(r.verdict, 'FAIL (1)');
+});
+
+test('a cost that was never reported is missing evidence, not a free model', () => {
+  const run = tmpRun();
+  writeModel(run, 'base', { costUsd: null });
+  writeModel(run, 'cand', { costUsd: 0.001 });
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run);
+  assert.deepEqual(failing(r.cand), ['cost vs baseline']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});

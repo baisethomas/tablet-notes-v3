@@ -236,8 +236,13 @@ function applyGates(m, base, config) {
         add('scripture accuracy vs baseline', m.scores.scripture - base.scores.scripture, v => v >= g.scriptureVsBaselineMin, sg);
         add('quality vs baseline (pts)', m.quality - base.quality, v => v >= g.qualityVsBaselineMin, sg);
       }
-      if (m.costUsd != null && base.costUsd) add('cost vs baseline', m.costUsd / base.costUsd, v => v <= g.costVsBaselineMax, v => `${v.toFixed(2)}x`);
-      else evidence('cost vs baseline', false, 'n/a');
+      // A baseline that costs nothing has no ratio: a candidate that is also
+      // free matches it, and one that costs anything is infinitely dearer.
+      // Only a cost that was never reported is missing evidence.
+      if (m.costUsd != null && base.costUsd != null) {
+        const ratio = base.costUsd === 0 ? (m.costUsd === 0 ? 1 : Infinity) : m.costUsd / base.costUsd;
+        add('cost vs baseline', ratio, v => v <= g.costVsBaselineMax, v => Number.isFinite(v) ? `${v.toFixed(2)}x` : 'baseline is free');
+      } else evidence('cost vs baseline', false, 'n/a');
     }
   }
   return rows;
