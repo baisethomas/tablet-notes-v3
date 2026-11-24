@@ -44,7 +44,7 @@ function writeModel(runDir, label, opts = {}) {
         model: label, transcript: t, rep, tier: 'premium',
         result: failed
           ? { error: 'HTTP 500', latencyMs }
-          : { content: content(t), finishReason: 'stop', latencyMs, usage: { costUsd, completionTokens: 900 } },
+          : { content: content(t), finishReason: 'stop', latencyMs, usage: { costUsd: typeof costUsd === 'function' ? costUsd(t, rep) : costUsd, completionTokens: 900 } },
         check: failed ? null : goodCheck,
       });
     }
@@ -560,4 +560,44 @@ test('a cost that was never reported is missing evidence, not a free model', () 
   const r = score(run);
   assert.deepEqual(failing(r.cand), ['cost vs baseline']);
   assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('one completed generation with no reported cost makes the candidate INCOMPLETE', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  // Five generations at half the baseline's cost, one with none reported:
+  // averaged over the five it would pass the cost gate comfortably.
+  writeModel(run, 'cand', { costUsd: (t, rep) => (t === 't2' && rep === 1 ? null : 0.0005) });
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run);
+  assert.equal(r.cand.costUsd, null);
+  assert.equal(r.cand.costsReported, 5);
+  assert.equal(r.cand.costsExpected, 6);
+  assert.deepEqual(failing(r.cand), ['cost vs baseline']);
+  assert.match(r.cand.gates.find(g => g.name === 'cost vs baseline').shown, /5\/6 candidate and 6\/6 baseline/);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a baseline generation with no reported cost makes every candidate INCOMPLETE', () => {
+  const run = tmpRun();
+  writeModel(run, 'base', { costUsd: (t, rep) => (t === 't1' && rep === 0 ? undefined : 0.001) });
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run);
+  assert.deepEqual(failing(r.cand), ['cost vs baseline']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a generation that errored owes no cost', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand', { error: (t, rep) => t === 't3' && rep === 1 });
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run);
+  assert.equal(r.cand.costsExpected, 5);
+  assert.equal(r.cand.costUsd, 0.001);
+  assert.ok(!failing(r.cand).includes('cost vs baseline'));
 });

@@ -85,6 +85,9 @@ params its request was sent with.
 
 ## What it does not measure
 
+- Cost is what OpenRouter reports per request. If any completed generation,
+  the candidate's or the baseline's, came back without one, the cost gate is
+  missing evidence rather than an average of the rest.
 - Latency is measured through OpenRouter, not the provider's own API. It
   includes retried attempts and the backoff between them.
 - The reference parser is this tool's, not the app's Swift analyzer (TAB-121).

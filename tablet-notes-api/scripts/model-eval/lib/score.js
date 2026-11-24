@@ -84,6 +84,7 @@ function aggregate(runDir, modelSlug, config, judges, plan) {
   const chats = readPlanned(chatDir, chatNames);
   const ok = gens.filter(g => g.check);
   const label = plan && (plan.models.find(l => slug(l) === modelSlug));
+  const costs = ok.map(g => g.result.usage.costUsd).filter(c => Number.isFinite(c));
   const refTotal = ok.reduce((n, g) => n + g.check.refCount, 0);
   const quoteTotal = ok.reduce((n, g) => n + g.check.quoteCount, 0);
 
@@ -157,7 +158,11 @@ function aggregate(runDir, modelSlug, config, judges, plan) {
     latencyP50Ms: pct(gens.map(g => g.result.latencyMs), 0.5),
     latencyP95Ms: pct(gens.map(g => g.result.latencyMs), 0.95),
     overBudget: gens.filter(g => g.result.latencyMs > 55000).length,
-    costUsd: mean(ok.map(g => g.result.usage.costUsd).filter(c => c != null)),
+    // The mean cost stands only if every completed generation reported one.
+    // Averaging the ones that did would price the model on a subset.
+    costUsd: costs.length === ok.length ? mean(costs) : null,
+    costsReported: costs.length,
+    costsExpected: ok.length,
     outputTokens: mean(ok.map(g => g.result.usage.completionTokens).filter(c => c != null)),
     questionsJsonRate: rate(chats, c => c.questions.ok),
     offTopicRedirectRate: rate(offTopicResults, ok => ok),
@@ -238,11 +243,15 @@ function applyGates(m, base, config) {
       }
       // A baseline that costs nothing has no ratio: a candidate that is also
       // free matches it, and one that costs anything is infinitely dearer.
-      // Only a cost that was never reported is missing evidence.
+      // A cost that any completed generation failed to report is missing
+      // evidence, on either side.
       if (m.costUsd != null && base.costUsd != null) {
         const ratio = base.costUsd === 0 ? (m.costUsd === 0 ? 1 : Infinity) : m.costUsd / base.costUsd;
         add('cost vs baseline', ratio, v => v <= g.costVsBaselineMax, v => Number.isFinite(v) ? `${v.toFixed(2)}x` : 'baseline is free');
-      } else evidence('cost vs baseline', false, 'n/a');
+      } else {
+        const gap = (x) => `${x.costsReported}/${x.costsExpected}`;
+        evidence('cost vs baseline', false, `cost reported for ${gap(m)} candidate and ${gap(base)} baseline generations`);
+      }
     }
   }
   return rows;
