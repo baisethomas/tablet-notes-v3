@@ -34,12 +34,13 @@ function resolveJudges(runDir, config, override) {
   return config.judges;
 }
 
-// A stored judgment counts only if it graded the summary that is on disk now.
-// Judgments written before `summarySha` existed carry no hash and are accepted.
+// A stored judgment counts only if it can show it graded the text that is on
+// disk now. One with no hash cannot show that, so it is missing evidence:
+// `judge` redoes it and `report` stays INCOMPLETE until it has.
 function loadJudgment(file, summary) {
   if (!fs.existsSync(file)) return null;
   const j = readJson(file);
-  if (j.summarySha != null && j.summarySha !== sha(summary)) return null;
+  if (j.summarySha !== sha(summary)) return null;
   return j;
 }
 

@@ -172,13 +172,16 @@ test('a judgment of an earlier summary is not counted after the model is regener
   assert.equal(r.verdict, 'INCOMPLETE');
 });
 
-test('judgments written before summarySha existed are still accepted', () => {
+test('a judgment with no hash of what it graded is missing evidence', () => {
   const run = tmpRun();
   writeModel(run, 'base');
   writeModel(run, 'cand');
-  writeJudgments(run, 'base', config.judges, 3, { withSha: false });
-  writeJudgments(run, 'cand', config.judges, 4, { withSha: false });
-  assert.equal(score(run).verdict, 'PASS');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 5, { withSha: false });
+  const r = score(run);
+  assert.equal(r.cand.judgmentsPresent, 6);   // the off-topic ones carry a hash
+  assert.equal(r.cand.quality, null);
+  assert.equal(r.verdict, 'INCOMPLETE');
 });
 
 test('a generation that errored needs no judgment but fails the completion gate', () => {
