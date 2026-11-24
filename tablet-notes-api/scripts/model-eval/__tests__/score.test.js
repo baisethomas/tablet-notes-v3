@@ -19,6 +19,8 @@ const config = {
   },
 };
 const TRANSCRIPTS = ['t1', 't2', 't3'];
+// What `run` records in plan.json for these fixtures.
+const PLAN = { transcripts: TRANSCRIPTS, repeats: 2, chatTranscripts: TRANSCRIPTS, models: ['base', 'cand'] };
 
 const goodCheck = {
   completed: true, truncated: false, titleOk: true, sectionsOk: true, scriptureSectionHasRef: true,
@@ -78,9 +80,9 @@ function tmpRun() {
 }
 
 // Baseline plus one candidate, graded; returns the candidate's verdict inputs.
-function score(runDir, judges = config.judges) {
-  const base = aggregate(runDir, slug('base'), config, judges);
-  const cand = aggregate(runDir, slug('cand'), config, judges);
+function score(runDir, judges = config.judges, plan = PLAN) {
+  const base = aggregate(runDir, slug('base'), config, judges, plan);
+  const cand = aggregate(runDir, slug('cand'), config, judges, plan);
   for (const m of [base, cand]) m.gates = applyGates(m, base, config);
   return { base, cand, verdict: verdict(cand, false), baseVerdict: verdict(base, true) };
 }
@@ -124,7 +126,7 @@ test('judging with a judge that is not in the config cannot produce a PASS from 
   const run = tmpRun();
   writeModel(run, 'base');
   writeModel(run, 'cand');
-  const used = ['vendor-c/other'];
+  const used = ['vendor-c/other', 'vendor-d/other'];
   writeJudgments(run, 'base', used, 3);
   writeJudgments(run, 'cand', used, 4);
   // Report resolved against the config's judges finds nothing: incomplete.
@@ -299,11 +301,140 @@ test('a measured failure outranks missing evidence', () => {
   assert.equal(r.cand.overBudget, 6);
 });
 
+test('a run interrupted before every generation was written is INCOMPLETE', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  assert.equal(score(run).verdict, 'PASS');
+  // The second generation for t2 never landed. Nothing about the files that
+  // do exist is wrong, which is exactly why the sample must be checked.
+  fs.rmSync(path.join(run, 'gen', slug('cand'), 't2.r1.json'));
+  const r = score(run);
+  assert.equal(r.cand.generationsPresent, 5);
+  assert.equal(r.cand.generationsExpected, 6);
+  assert.deepEqual(failing(r.cand), ['all planned generations present']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a missing first generation is missing evidence, not a smaller sample', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  fs.rmSync(path.join(run, 'gen', slug('cand'), 't3.r0.json'));
+  const r = score(run);
+  assert.equal(r.verdict, 'INCOMPLETE');
+  assert.ok(failing(r.cand).includes('all planned generations present'));
+});
+
+test('a missing chat check is INCOMPLETE', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  fs.rmSync(path.join(run, 'chat', slug('cand'), 't1.json'));
+  const r = score(run);
+  assert.deepEqual(failing(r.cand), ['all planned chat checks present']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a baseline missing a generation makes every candidate INCOMPLETE', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  fs.rmSync(path.join(run, 'gen', slug('base'), 't1.r1.json'));
+  const r = score(run);
+  assert.deepEqual(failing(r.cand), ['baseline generations and chat checks complete']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('a planned model with no output at all is INCOMPLETE and keeps its label', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeJudgments(run, 'base', config.judges, 3);
+  const r = score(run);
+  assert.equal(r.cand.model, 'cand');
+  assert.equal(r.cand.generationsPresent, 0);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('files outside the plan are not counted', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  // A slow leftover from an earlier, larger manifest.
+  write(path.join(run, 'gen', slug('cand'), 'old.r0.json'), {
+    model: 'cand', transcript: 'old', rep: 0, tier: 'premium',
+    result: { content: 'x', finishReason: 'stop', latencyMs: 99000, usage: { costUsd: 1 } }, check: goodCheck,
+  });
+  const r = score(run);
+  assert.equal(r.cand.runs, 6);
+  assert.equal(r.verdict, 'PASS');
+});
+
+test('a run with no recorded plan cannot pass', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run, config.judges, null);
+  assert.equal(r.verdict, 'INCOMPLETE');
+  assert.ok(failing(r.cand).includes('run plan recorded (plan.json)'));
+});
+
+test('one judge can fail a model but can only pass it provisionally', () => {
+  const run = tmpRun();
+  const one = ['vendor-a/judge'];
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', one, 3);
+  writeJudgments(run, 'cand', one, 4);
+  const r = score(run, one);
+  assert.equal(r.verdict, 'PROVISIONAL (one judge vendor)');
+  assert.deepEqual(failing(r.cand), ['judges from at least 2 vendors']);
+
+  const worse = tmpRun();
+  writeModel(worse, 'base');
+  writeModel(worse, 'cand');
+  writeJudgments(worse, 'base', one, 4);
+  writeJudgments(worse, 'cand', one, 3);
+  assert.equal(score(worse, one).verdict, 'FAIL (3)');
+});
+
+test('two judges from the same vendor are still one vendor', () => {
+  const run = tmpRun();
+  const same = ['vendor-a/judge', 'vendor-a/other-judge'];
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', same, 3);
+  writeJudgments(run, 'cand', same, 4);
+  assert.equal(score(run, same).verdict, 'PROVISIONAL (one judge vendor)');
+});
+
+test('missing evidence outranks a provisional reading', () => {
+  const run = tmpRun();
+  const one = ['vendor-a/judge'];
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', one, 3);
+  writeJudgments(run, 'cand', one, 4, { skip: (j, t) => t === 't2' });
+  assert.equal(score(run, one).verdict, 'INCOMPLETE');
+});
+
 test('a candidate with no baseline in the run is INCOMPLETE', () => {
   const run = tmpRun();
   writeModel(run, 'cand');
   writeJudgments(run, 'cand', config.judges, 5);
-  const cand = aggregate(run, slug('cand'), config, config.judges);
+  const cand = aggregate(run, slug('cand'), config, config.judges, PLAN);
   cand.gates = applyGates(cand, undefined, config);
   assert.equal(verdict(cand, false), 'INCOMPLETE');
   assert.deepEqual(failing(cand), ['baseline present in this run']);

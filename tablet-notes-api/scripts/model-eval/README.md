@@ -40,7 +40,11 @@ Quality is a 0-100 score: faithfulness 35%, scripture accuracy 25%, coverage
 20%, focus 10%, clarity 10%. Faithfulness and scripture carry the weight
 because a summary that misreports the sermon is worse than a thin one.
 
-A verdict needs its evidence. Every gradable first generation and every off-topic
+A verdict needs its evidence. `run` records what it set out to produce in
+`runs/<name>/plan.json` (transcripts, generations each, chat checks, models),
+and the report measures against that, so an interrupted run or a deleted file
+is INCOMPLETE instead of a smaller, kinder sample. A run with no plan cannot
+pass. Every gradable first generation and every off-topic
 reply must have a judgment from every judge, for the candidate and for the incumbent, or the
 candidate is reported as INCOMPLETE instead of PASS. The same holds when the
 incumbent produced no summary for a transcript the candidate was graded on. A measured failure still
@@ -94,7 +98,9 @@ node --test __tests__/*.test.js
 `run` and `judge` skip work that already has a result file, so an interrupted
 run resumes. Delete a model's folder under `runs/<name>/gen/` to redo it.
 `--models "a;b"` limits `run` to some labels, and `--judges a,b` overrides the
-judges (one judge roughly halves the cost). `judge` records the judges it used
+judges. One judge roughly halves the cost, but judges from a single vendor can
+only fail a model: the best verdict they give is PROVISIONAL, because nothing
+then checks a judge that favours its own vendor. A PASS needs two vendors. `judge` records the judges it used
 in `runs/<name>/judges.json` and `report` reads that, so the two cannot
 disagree. The report is written to
 `runs/<name>/report.md` with the raw numbers in `scores.json`.

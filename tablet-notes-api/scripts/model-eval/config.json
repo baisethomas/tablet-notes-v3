@@ -24,6 +24,7 @@
     "faithfulnessVsBaselineMin": -0.15,
     "scriptureVsBaselineMin": -0.15,
     "worstFaithfulnessMin": 3,
+    "minJudgeVendors": 2,
     "qualityVsBaselineMin": -2,
     "latencyP95MsMax": 45000,
     "costVsBaselineMax": 2.0,

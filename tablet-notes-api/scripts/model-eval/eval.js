@@ -19,7 +19,7 @@ const { chat, pool } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
-const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, aggregate, applyGates, verdict } = require('./lib/score');
+const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -171,6 +171,16 @@ async function cmdRun(a) {
   }
   const todo = jobs.filter(j => !fs.existsSync(j.file));
   console.log(`${jobs.length} jobs, ${todo.length} to run`);
+  // Record what this run is meant to contain before producing any of it, so
+  // `report` can tell a finished run from an interrupted one. --models can
+  // add models over several invocations; the transcript set is the manifest's.
+  const before = loadPlan(runDir);
+  writeJson(path.join(runDir, 'plan.json'), {
+    transcripts: set.map(t => t.id),
+    repeats,
+    chatTranscripts: set.slice(0, config.chatTranscripts).map(t => t.id),
+    models: [...new Set([...(before ? before.models : []), ...models(a).map(c => c.label)])],
+  });
 
   let done = 0;
   await pool(todo, config.concurrency, async (j) => {
@@ -258,7 +268,10 @@ function cmdReport(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
   const manifest = readJson(path.join(DATA, 'manifest.json'));
   const judges = resolveJudges(runDir, config, a.judges ? a.judges.split(',') : null);
-  const all = fs.readdirSync(path.join(runDir, 'gen')).map(s => aggregate(runDir, s, config, judges));
+  const plan = loadPlan(runDir);
+  // Every model the run planned, even one with no output at all yet.
+  const slugs = [...new Set([...fs.readdirSync(path.join(runDir, 'gen')), ...(plan ? plan.models.map(slug) : [])])];
+  const all = slugs.map(s => aggregate(runDir, s, config, judges, plan));
   const base = all.find(m => m.model === config.baseline);
   for (const m of all) {
     m.gates = applyGates(m, base, config);
@@ -269,7 +282,7 @@ function cmdReport(a) {
 
   const L = [];
   L.push(`# Model evaluation: ${a.run}`, '');
-  L.push(`${manifest.length} transcripts (${manifest.filter(m => m.tier === 'premium').length} premium, ${manifest.filter(m => m.tier === 'basic').length} basic), ${config.repeats} generations each, production prompt. A bare model id uses production parameters unchanged; a [bracketed] label names the request changes. Judges: ${judges.join(', ')} (blind, first generation only).`, '');
+  L.push(`${manifest.length} transcripts (${manifest.filter(m => m.tier === 'premium').length} premium, ${manifest.filter(m => m.tier === 'basic').length} basic), ${plan ? plan.repeats : config.repeats} generations each, production prompt. A bare model id uses production parameters unchanged; a [bracketed] label names the request changes. Judges: ${judges.join(', ')} (blind, first generation only).`, '');
   L.push('## Result', '');
   L.push('| Model | Verdict | Quality /100 | Faithful | Scripture | Coverage | Sections | Refs section | p95 s | $ / summary |');
   L.push('|---|---|---|---|---|---|---|---|---|---|');

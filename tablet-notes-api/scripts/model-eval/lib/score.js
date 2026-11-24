@@ -44,11 +44,30 @@ function loadJudgment(file, summary) {
   return j;
 }
 
-function aggregate(runDir, modelSlug, config, judges) {
-  const gens = fs.readdirSync(path.join(runDir, 'gen', modelSlug)).map(f => readJson(path.join(runDir, 'gen', modelSlug, f)));
-  const ok = gens.filter(g => g.check);
+// What `run` set out to produce, written to runs/<run>/plan.json. The report
+// measures against this, so an interrupted run or a deleted file shows up as
+// missing evidence instead of quietly shrinking the sample.
+function loadPlan(runDir) {
+  const file = path.join(runDir, 'plan.json');
+  return fs.existsSync(file) ? readJson(file) : null;
+}
+
+function readPlanned(dir, names) {
+  return names.filter(n => fs.existsSync(path.join(dir, n))).map(n => readJson(path.join(dir, n)));
+}
+
+function aggregate(runDir, modelSlug, config, judges, plan) {
+  const genDir = path.join(runDir, 'gen', modelSlug);
   const chatDir = path.join(runDir, 'chat', modelSlug);
-  const chats = fs.existsSync(chatDir) ? fs.readdirSync(chatDir).map(f => readJson(path.join(chatDir, f))) : [];
+  const list = (dir) => fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+  // With a plan, only planned files count and every one of them is expected.
+  // Without one there is no way to know what is missing; applyGates says so.
+  const genNames = plan ? plan.transcripts.flatMap(t => Array.from({ length: plan.repeats }, (_, rep) => `${t}.r${rep}.json`)) : list(genDir);
+  const chatNames = plan ? plan.chatTranscripts.map(t => `${t}.json`) : list(chatDir);
+  const gens = readPlanned(genDir, genNames);
+  const chats = readPlanned(chatDir, chatNames);
+  const ok = gens.filter(g => g.check);
+  const label = plan && (plan.models.find(l => slug(l) === modelSlug));
   const refTotal = ok.reduce((n, g) => n + g.check.refCount, 0);
   const quoteTotal = ok.reduce((n, g) => n + g.check.quoteCount, 0);
 
@@ -98,8 +117,14 @@ function aggregate(runDir, modelSlug, config, judges) {
   const allScores = Object.values(judged).flatMap(b => Object.values(b));
 
   return {
-    model: gens[0] ? gens[0].model : modelSlug,
+    model: gens[0] ? gens[0].model : (label || modelSlug),
     runs: gens.length,
+    planned: !!plan,
+    generationsExpected: genNames.length,
+    generationsPresent: gens.length,
+    chatsExpected: chatNames.length,
+    chatsPresent: chats.length,
+    judgeVendors: new Set(judges.map(j => j.split('/')[0])).size,
     errors: gens.filter(g => g.result.error).map(g => g.result.error),
     completionRate: rate(gens, g => g.check && g.check.completed),
     truncatedRate: rate(gens, g => g.check && g.check.truncated),
@@ -140,10 +165,12 @@ function aggregate(runDir, modelSlug, config, judges) {
 }
 
 const judgmentsComplete = (m) => m.judgmentsExpected > 0 && m.judgmentsPresent === m.judgmentsExpected;
+const outputsComplete = (m) => m.planned && m.generationsExpected > 0 && m.generationsPresent === m.generationsExpected && m.chatsPresent === m.chatsExpected;
 
 // Gate rows for one model. A row with `evidence: true` is not a quality
 // failure: it says the evidence for a verdict is missing, and turns the
-// verdict into INCOMPLETE. A model is never passed on mechanical gates alone.
+// verdict into INCOMPLETE. A model is never passed on mechanical gates alone,
+// on part of the planned sample, or on judges from a single vendor.
 function applyGates(m, base, config) {
   const g = config.gates;
   const isBase = m === base;
@@ -158,17 +185,29 @@ function applyGates(m, base, config) {
     ['latency p95', m.latencyP95Ms, v => v <= g.latencyP95MsMax, v => `${(v / 1000).toFixed(1)} s`],
     ['questions JSON contract', m.questionsJsonRate, v => v >= g.questionsJsonRate, pc],
     ['off-topic redirect', m.offTopicRedirectRate, v => v >= g.offTopicRedirectRate, pc],
-  ].map(([name, value, test, fmt]) => ({ name, value, shown: value == null ? 'n/a' : fmt(value), pass: value != null && test(value) }));
+  // A gate with nothing to measure is missing evidence, not a measured failure.
+  ].map(([name, value, test, fmt]) => value == null
+    ? { name, value, shown: 'n/a', pass: false, evidence: true }
+    : { name, value, shown: fmt(value), pass: test(value) });
   const add = (name, value, test, fmt) => rows.push({ name, value, shown: value == null ? 'n/a' : fmt(value), pass: value != null && test(value) });
   const evidence = (name, pass, shown) => rows.push({ name, value: null, shown, pass, evidence: true });
 
+  if (!m.planned) evidence('run plan recorded (plan.json)', false, 'missing');
+  evidence('all planned generations present', m.planned && m.generationsExpected > 0 && m.generationsPresent === m.generationsExpected, `${m.generationsPresent}/${m.generationsExpected}`);
+  evidence('all planned chat checks present', m.planned && m.chatsPresent === m.chatsExpected, `${m.chatsPresent}/${m.chatsExpected}`);
   evidence('judgments complete', judgmentsComplete(m), `${m.judgmentsPresent}/${m.judgmentsExpected}`);
+  // The standard is two judges from different vendors, so that a judge
+  // favouring its own vendor's model is outvoted. Fewer is a cheaper,
+  // provisional reading: it can fail a model but cannot pass one.
+  const minVendors = g.minJudgeVendors ?? 2;
+  if (m.judgeVendors < minVendors) rows.push({ name: `judges from at least ${minVendors} vendors`, value: null, shown: String(m.judgeVendors), pass: false, evidence: true, provisional: true });
   if (m.judgedCount) add('worst single faithfulness score', m.worstFaithfulness, v => v >= g.worstFaithfulnessMin, n2);
 
   if (!isBase) {
     if (!base) {
       evidence('baseline present in this run', false, 'missing');
     } else {
+      if (!outputsComplete(base)) evidence('baseline generations and chat checks complete', false, `${base.generationsPresent}/${base.generationsExpected}, ${base.chatsPresent}/${base.chatsExpected}`);
       if (!judgmentsComplete(base)) evidence('baseline judgments complete', false, `${base.judgmentsPresent}/${base.judgmentsExpected}`);
       // The comparison is only fair over the same sermons. If the baseline's
       // first generation failed for a transcript the candidate was graded on,
@@ -192,13 +231,16 @@ function applyGates(m, base, config) {
 // whether or not the rest of the evidence is in.
 function verdict(m, isBase) {
   const failed = m.gates.filter(x => !x.pass && !x.evidence).length;
-  const incomplete = m.gates.some(x => !x.pass && x.evidence);
+  const incomplete = m.gates.some(x => !x.pass && x.evidence && !x.provisional);
+  const provisional = m.gates.some(x => !x.pass && x.provisional);
   if (isBase) {
     if (failed) return `baseline (${failed} gate${failed > 1 ? 's' : ''} failed)`;
     return incomplete ? 'baseline (incomplete)' : 'baseline';
   }
   if (failed) return `FAIL (${failed})`;
-  return incomplete ? 'INCOMPLETE' : 'PASS';
+  if (incomplete) return 'INCOMPLETE';
+  // Everything that was measured passed, but not under the full standard.
+  return provisional ? 'PROVISIONAL (one judge vendor)' : 'PASS';
 }
 
-module.exports = { slug, sha, readJson, mean, rate, pct, gradable, resolveJudges, loadJudgment, aggregate, applyGates, verdict, judgmentsComplete };
+module.exports = { slug, sha, readJson, mean, rate, pct, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict, judgmentsComplete };
