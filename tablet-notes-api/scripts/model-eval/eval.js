@@ -18,6 +18,7 @@ const { assemblyKey } = require('./lib/keys');
 const { chat, pool } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
+const { snapshotInputs, loadInputs } = require('./lib/inputs');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
 const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, loadPlan, aggregate, applyGates, verdict } = require('./lib/score');
 
@@ -132,10 +133,6 @@ async function cmdPull(a) {
 
 // ---------- run ----------
 
-function loadSet() {
-  const manifest = readJson(path.join(DATA, 'manifest.json'));
-  return manifest.map(m => ({ ...m, text: readJson(path.join(DATA, 'transcripts', `${m.id}.json`)).text }));
-}
 // A candidate is a model id, or { label, model, params } to test the same
 // model under a different request configuration (e.g. reasoning disabled).
 function models(a) {
@@ -148,7 +145,9 @@ function models(a) {
 
 async function cmdRun(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
-  const set = loadSet();
+  // The first `run` copies the current pull into the run; after that the run
+  // reads only its own copy, whatever `pull` has done to data/ since.
+  const set = snapshotInputs(DATA, runDir);
   const summarize = loadSummarize();
   const chatSpec = loadChat();
   const repeats = Number(a.repeats || config.repeats);
@@ -173,7 +172,7 @@ async function cmdRun(a) {
   console.log(`${jobs.length} jobs, ${todo.length} to run`);
   // Record what this run is meant to contain before producing any of it, so
   // `report` can tell a finished run from an interrupted one. --models can
-  // add models over several invocations; the transcript set is the manifest's.
+  // add models over several invocations; the transcript set is the run's own.
   const before = loadPlan(runDir);
   writeJson(path.join(runDir, 'plan.json'), {
     transcripts: set.map(t => t.id),
@@ -211,7 +210,7 @@ async function cmdRun(a) {
 async function cmdJudge(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
   const judges = a.judges ? a.judges.split(',') : config.judges;
-  const set = new Map(loadSet().map(t => [t.id, t]));
+  const set = new Map(loadInputs(runDir).map(t => [t.id, t]));
   const jobs = [];
   for (const model of fs.readdirSync(path.join(runDir, 'gen'))) {
     for (const f of fs.readdirSync(path.join(runDir, 'gen', model)).filter(f => f.endsWith('.r0.json'))) {
@@ -266,7 +265,7 @@ const p0 = (v) => v == null ? 'n/a' : `${Math.round(v * 100)}%`;
 
 function cmdReport(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
-  const manifest = readJson(path.join(DATA, 'manifest.json'));
+  const manifest = loadInputs(runDir);   // the run's own transcripts, never data/
   const judges = resolveJudges(runDir, config, a.judges ? a.judges.split(',') : null);
   const plan = loadPlan(runDir);
   // Every model the run planned, even one with no output at all yet.

@@ -44,7 +44,9 @@ A verdict needs its evidence. `run` records what it set out to produce in
 `runs/<name>/plan.json` (transcripts, generations each, chat checks, models),
 and the report measures against that, so an interrupted run or a deleted file
 is INCOMPLETE instead of a smaller, kinder sample. A run with no plan cannot
-pass. Every gradable first generation and every off-topic
+pass. The first `run` also copies the pulled transcripts into
+`runs/<name>/inputs/`, and `judge` and `report` read only that copy, so a later
+`pull` cannot change what an existing run was about. Every gradable first generation and every off-topic
 reply must have a judgment from every judge, for the candidate and for the incumbent, or the
 candidate is reported as INCOMPLETE instead of PASS. The same holds when the
 incumbent produced no summary for a transcript the candidate was graded on. A measured failure still
@@ -122,7 +124,8 @@ disagree. The report is written to
 - Every OpenRouter request sets `provider.data_collection = "deny"`, so a model
   only reachable through a provider that retains prompts fails rather than runs.
   A candidate's `params` cannot override it.
-- `data/` and `runs/` hold transcripts and summaries. Both are gitignored.
+- `data/` and `runs/` hold transcripts and summaries, including each run's
+  copy of its inputs. Both are gitignored.
 
 ### Prompts
 
