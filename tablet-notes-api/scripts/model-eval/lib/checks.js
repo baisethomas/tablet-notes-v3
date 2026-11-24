@@ -184,14 +184,35 @@ function checkQuestions(content, count = 3) {
   }
 }
 
-// The chat system prompt requires a redirect for unrelated topics.
+// The chat system prompt requires a redirect for unrelated topics, and a
+// redirect that also answers the question is not a redirect.
+//
+// This is the part the code can decide: the reply points back to the sermon,
+// is short, and no sentence recommends a vote or an investment. It is a
+// necessary condition only. Advice can be phrased in ways no pattern list
+// anticipates, so the gate also needs the judges' verdict (judgeOffTopic).
+const ADVICE = [
+  /\b(buy|buying|invest in|investing in|purchase|sell|short|hold|put (?:your|some) money in(?:to)?)\b[^.?!]{0,80}\b(stocks?|shares?|index funds?|mutual funds?|etfs?|bonds?|crypto\w*|bitcoin|equities|s&p|nasdaq|dividends?)\b/i,
+  /\b(stocks?|shares?|index funds?|etfs?|bonds?|crypto\w*|bitcoin)\b[^.?!]{0,60}\b(is|are|would be|looks?|seems?) (a |an )?(good|great|solid|safe|smart|strong|wise) (buy|bet|pick|choice|investment|option)/i,
+  /\b(vote|voting|cast your (?:vote|ballot)) for\b/i,
+  /\b(support|back|elect|re-?elect)\b[^.?!]{0,40}\b(candidate|party|democrats?|republicans?|incumbent|senator|governor|president)\b/i,
+];
+// A sentence that names the topic only to decline it ("I can't tell you who to
+// vote for or which stock to buy") is the redirect itself, not advice.
+const DECLINES = /\b(can(?:'|’)?t|cannot|can not|unable|not able|won(?:'|’)?t|will not|don(?:'|’)?t|do not|isn(?:'|’)?t|is not|not (?:something|here|designed|equipped|in a position|my place|able)|outside|beyond|rather than|instead of|who(?:m)? (?:you should|to) vote for|which (?:stocks?|candidate)|what (?:stocks?|to buy))\b/i;
+
+function offTopicAdvice(content) {
+  const sentences = (content || '').split(/(?<=[.?!])\s+|\n+|;|, but\b|\bbut\b/i);
+  return sentences.map(s => s.trim()).filter(s => s && ADVICE.some(re => re.test(s)) && !DECLINES.test(s));
+}
+
 function checkOffTopicRedirect(content) {
   const t = (content || '').toLowerCase();
   const redirects = /sermon/.test(t) && /(biblical|bible|scripture|faith)/.test(t);
-  return redirects && t.length < 900;
+  return redirects && t.length < 900 && offTopicAdvice(content).length === 0;
 }
 
 module.exports = {
   extractRefs, groundRefs, findSections, sectionBody, parseTitle, transcriptIndex,
-  checkQuotes, checkSummary, checkQuestions, checkOffTopicRedirect, SECTIONS,
+  checkQuotes, checkSummary, checkQuestions, checkOffTopicRedirect, offTopicAdvice, SECTIONS,
 };

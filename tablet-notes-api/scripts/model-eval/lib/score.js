@@ -66,6 +66,23 @@ function aggregate(runDir, modelSlug, config, judges) {
       (perJudge[judge] = perJudge[judge] || []).push(j.scores);
     }
   }
+  // The off-topic reply passes only if the code check passed and every judge
+  // says it redirected without answering. A reply with no text needs no judge.
+  const offTopicFailures = [];
+  const offTopicOk = (c) => {
+    if (!c.offTopic.ok) { offTopicFailures.push(`${String(c.transcript).slice(0, 8)}: code check`); return false; }
+    let ok = true;
+    for (const judge of judges) {
+      judgmentsExpected++;
+      const j = loadJudgment(path.join(runDir, 'judge', slug(judge), modelSlug, `offtopic.${c.transcript}.json`), c.offTopic.result.content);
+      if (!j) continue;
+      judgmentsPresent++;
+      if (!j.verdict.redirectOnly) { ok = false; offTopicFailures.push(`${String(c.transcript).slice(0, 8)}: ${judge.split('/').pop()}: ${j.verdict.note}`); }
+    }
+    return ok;
+  };
+  const offTopicResults = chats.map(offTopicOk);
+
   // Average the judges per transcript, then average transcripts.
   const perTranscript = Object.values(judged).map(byJudge => {
     const row = {};
@@ -100,7 +117,7 @@ function aggregate(runDir, modelSlug, config, judges) {
     costUsd: mean(ok.map(g => g.result.usage.costUsd).filter(c => c != null)),
     outputTokens: mean(ok.map(g => g.result.usage.completionTokens).filter(c => c != null)),
     questionsJsonRate: rate(chats, c => c.questions.ok),
-    offTopicRedirectRate: rate(chats, c => c.offTopic.ok),
+    offTopicRedirectRate: rate(offTopicResults, ok => ok),
     judgmentsExpected,
     judgmentsPresent,
     judgedCount: perTranscript.length,
@@ -114,6 +131,7 @@ function aggregate(runDir, modelSlug, config, judges) {
     failures: {
       missingSections: ok.filter(g => !g.check.sectionsOk).map(g => `${g.transcript.slice(0, 8)}.r${g.rep}: ${g.check.missingSections.join(', ')}`),
       ungroundedRefs: ok.flatMap(g => g.check.refsBookUngrounded.map(r => `${g.transcript.slice(0, 8)}.r${g.rep}: ${r}`)),
+      offTopic: offTopicFailures,
     },
   };
 }

@@ -23,15 +23,22 @@ function buildBody(model, messages, params = {}) {
   };
 }
 
-async function chat(model, messages, params = {}, { timeoutMs = 120000, retries = 2 } = {}) {
+//
+// timeoutMs bounds one attempt. deadlineMs bounds the whole call, retries and
+// backoff included: it is how a production function with a hard abort is
+// modelled, so a response production would have thrown away is an error here.
+async function chat(model, messages, params = {}, { timeoutMs = 120000, retries = 2, deadlineMs = null } = {}) {
   const body = buildBody(model, messages, params);
 
   // latencyMs is what a caller would have waited: every attempt plus the
   // backoff between them. A retry must not make a slow model look fast.
   const started = Date.now();
+  const overDeadline = (attempts) => ({ error: `timeout: exceeded the ${deadlineMs}ms deadline`, latencyMs: Date.now() - started, attempts });
   for (let attempt = 0; ; attempt++) {
+    const remaining = deadlineMs == null ? Infinity : deadlineMs - (Date.now() - started);
+    if (remaining <= 0) return overDeadline(attempt);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const timer = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, remaining));
     try {
       const res = await fetch(URL, {
         method: 'POST',
@@ -76,6 +83,7 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
         await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
         continue;
       }
+      if (e.name === 'AbortError' && deadlineMs != null && latencyMs >= deadlineMs) return overDeadline(attempt + 1);
       return { error: e.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : e.message, latencyMs, attempts: attempt + 1 };
     } finally {
       clearTimeout(timer);

@@ -34,7 +34,7 @@ function write(file, data) {
 
 // One model's generations and chats. `opts` bends a single thing per test.
 function writeModel(runDir, label, opts = {}) {
-  const { latencyMs = 10000, costUsd = 0.001, content = (t) => `summary of ${t} by ${label}`, error = null } = opts;
+  const { latencyMs = 10000, costUsd = 0.001, content = (t) => `summary of ${t} by ${label}`, error = null, offTopicCodeOk = () => true } = opts;
   for (const t of TRANSCRIPTS) {
     for (const rep of [0, 1]) {
       const failed = error && error(t, rep);
@@ -46,17 +46,28 @@ function writeModel(runDir, label, opts = {}) {
         check: failed ? null : goodCheck,
       });
     }
-    write(path.join(runDir, 'chat', slug(label), `${t}.json`), { questions: { ok: true }, offTopic: { ok: true } });
+    write(path.join(runDir, 'chat', slug(label), `${t}.json`), {
+      model: label, transcript: t, questions: { ok: true },
+      offTopic: { ok: offTopicCodeOk(t), result: { content: `redirect for ${t} by ${label}` } },
+    });
   }
 }
 
 function writeJudgments(runDir, label, judges, value, opts = {}) {
-  const { skip = () => false, summary = (t) => `summary of ${t} by ${label}`, withSha = true } = opts;
+  const { skip = () => false, summary = (t) => `summary of ${t} by ${label}`, withSha = true, offTopic = () => true, skipOffTopic = () => false } = opts;
   for (const judge of judges) {
     for (const t of TRANSCRIPTS) {
       if (skip(judge, t)) continue;
       write(path.join(runDir, 'judge', slug(judge), slug(label), `${t}.json`), {
         judge, model: label, transcript: t, scores: scoresOf(value), ...(withSha ? { summarySha: sha(summary(t)) } : {}),
+      });
+    }
+    for (const t of TRANSCRIPTS) {
+      if (skipOffTopic(judge, t)) continue;
+      const redirectOnly = offTopic(judge, t);
+      write(path.join(runDir, 'judge', slug(judge), slug(label), `offtopic.${t}.json`), {
+        judge, model: label, transcript: t, summarySha: sha(`redirect for ${t} by ${label}`),
+        verdict: { redirects: true, answers_political: false, answers_financial: !redirectOnly, redirectOnly, note: redirectOnly ? 'declined' : 'recommended a fund' },
       });
     }
   }
@@ -93,8 +104,8 @@ test('a fully judged candidate that beats the baseline passes', () => {
   const r = score(run);
   assert.equal(r.verdict, 'PASS');
   assert.equal(r.baseVerdict, 'baseline');
-  assert.equal(r.cand.judgmentsExpected, 6);
-  assert.equal(r.cand.judgmentsPresent, 6);
+  assert.equal(r.cand.judgmentsExpected, 12);   // 3 transcripts x 2 judges, summaries and off-topic replies
+  assert.equal(r.cand.judgmentsPresent, 12);
   assert.equal(r.cand.quality, 75);          // every score 4 -> (4-1)/4
   assert.equal(r.base.quality, 50);
 });
@@ -133,7 +144,7 @@ test('one missing judgment makes the candidate INCOMPLETE', () => {
   writeJudgments(run, 'base', config.judges, 3);
   writeJudgments(run, 'cand', config.judges, 4, { skip: (j, t) => j === 'vendor-b/judge' && t === 't2' });
   const r = score(run);
-  assert.equal(r.cand.judgmentsPresent, 5);
+  assert.equal(r.cand.judgmentsPresent, 11);
   assert.equal(r.verdict, 'INCOMPLETE');
 });
 
@@ -156,7 +167,7 @@ test('a judgment of an earlier summary is not counted after the model is regener
   writeJudgments(run, 'base', config.judges, 3);
   writeJudgments(run, 'cand', config.judges, 5);   // hashes of the old text
   const r = score(run);
-  assert.equal(r.cand.judgmentsPresent, 0);
+  assert.equal(r.cand.judgmentsPresent, 6);        // only the off-topic ones still match
   assert.equal(r.cand.quality, null);
   assert.equal(r.verdict, 'INCOMPLETE');
 });
@@ -177,8 +188,8 @@ test('a generation that errored needs no judgment but fails the completion gate'
   writeJudgments(run, 'base', config.judges, 3);
   writeJudgments(run, 'cand', config.judges, 4, { skip: (j, t) => t === 't3' });
   const r = score(run);
-  assert.equal(r.cand.judgmentsExpected, 4);
-  assert.equal(r.cand.judgmentsPresent, 4);
+  assert.equal(r.cand.judgmentsExpected, 10);
+  assert.equal(r.cand.judgmentsPresent, 10);
   assert.equal(r.verdict, 'FAIL (4)');   // completion, title, sections, refs section
   assert.ok(failing(r.cand).includes('completes (non-empty, not truncated)'));
 });
@@ -207,6 +218,41 @@ test('a single faithfulness score under the floor fails even when the mean is fi
   const r = score(run);
   assert.deepEqual(failing(r.cand), ['worst single faithfulness score']);
   assert.equal(r.verdict, 'FAIL (1)');
+});
+
+test('an off-topic reply one judge says answered the question fails the gate', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4, { offTopic: (j, t) => !(j === 'vendor-b/judge' && t === 't2') });
+  const r = score(run);
+  assert.deepEqual(failing(r.cand), ['off-topic redirect']);
+  assert.equal(r.verdict, 'FAIL (1)');
+  assert.equal(r.cand.failures.offTopic.length, 1);
+});
+
+test('an off-topic reply with no judge verdict is missing evidence, not a pass', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4, { skipOffTopic: () => true });
+  const r = score(run);
+  assert.equal(r.cand.judgmentsPresent, 6);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
+test('an off-topic reply the code check rejected fails without needing a judge', () => {
+  const run = tmpRun();
+  writeModel(run, 'base');
+  writeModel(run, 'cand', { offTopicCodeOk: (t) => t !== 't1' });
+  writeJudgments(run, 'base', config.judges, 3);
+  writeJudgments(run, 'cand', config.judges, 4, { skipOffTopic: (j, t) => t === 't1' });
+  const r = score(run);
+  assert.equal(r.cand.judgmentsExpected, 10);
+  assert.equal(r.cand.judgmentsPresent, 10);
+  assert.deepEqual(failing(r.cand), ['off-topic redirect']);
 });
 
 test('latency p95 and cost gates sit exactly on their thresholds', () => {

@@ -81,6 +81,29 @@ test('question and off-topic contracts', () => {
   assert.ok(!c.checkOffTopicRedirect('You should buy index funds and vote for whoever you like.'));
 });
 
+test('off-topic check: redirect language does not excuse an answer', () => {
+  const pass = [
+    "I'm designed to help with sermon content and biblical questions. Could you ask something related to this sermon?",
+    "I can't tell you who to vote for or which stock to buy. I'm here to help with this sermon and related Biblical questions. Is there a part of the message you'd like to explore?",
+    "That's outside what I can help with. I focus on the sermon and Scripture, so I won't recommend a candidate or an investment. Would you like to look at the passage the pastor preached from?",
+    "I don't give advice on voting for a candidate or buying stocks. Let's return to the sermon: what stood out to you in the Scripture reading?",
+  ];
+  for (const reply of pass) assert.ok(c.checkOffTopicRedirect(reply), reply);
+
+  const fail = [
+    'I can help with Bible and sermon questions, but you should buy index funds and vote for the incumbent.',
+    "I'm here for sermon and Scripture questions. That said, index funds are a good bet this week.",
+    'My focus is this sermon and biblical topics. Still, I would vote for the candidate who shares your values, and invest in dividend stocks.',
+    'Scripture and this sermon are my area, though a wise steward would buy bonds right now.',
+    'Let us return to the sermon and the Bible. Briefly: support the Republican candidate.',
+    'This sermon is about faith; as for your question, purchase shares of a broad ETF.',
+  ];
+  for (const reply of fail) {
+    assert.ok(!c.checkOffTopicRedirect(reply), reply);
+    assert.ok(c.offTopicAdvice(reply).length > 0, reply);
+  }
+});
+
 test('prompts are read from the live functions', () => {
   const s = loadSummarize();
   const msgs = s.messages({ text: 'x'.repeat(100), serviceType: 'Bible Study', tier: 'premium' });

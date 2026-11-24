@@ -18,7 +18,7 @@ const { assemblyKey } = require('./lib/keys');
 const { chat, pool } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
-const { judgeSummary } = require('./lib/judge');
+const { judgeSummary, judgeOffTopic } = require('./lib/judge');
 const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
@@ -175,7 +175,9 @@ async function cmdRun(a) {
   let done = 0;
   await pool(todo, config.concurrency, async (j) => {
     if (j.kind === 'summary') {
-      const result = await chat(j.model, summarize.messages(j.t), { ...summarize.params, ...j.extra });
+      // Production aborts the summary at 55 s in total. A reply that arrives
+      // later is one production never stores, so it is an error here too.
+      const result = await chat(j.model, summarize.messages(j.t), { ...summarize.params, ...j.extra }, { deadlineMs: summarize.timeoutMs });
       const check = result.error ? null : checks.checkSummary({
         content: result.content, finishReason: result.finishReason, tier: j.t.tier, transcript: j.t.text, index: indexes.get(j.t.id),
       });
@@ -210,13 +212,33 @@ async function cmdJudge(a) {
       }
     }
   }
-  // A judgment is reused only if it graded the summary on disk now, so
+  // Off-topic chat replies the code check accepted: the judges decide whether
+  // the reply only redirected or also answered the question.
+  const chatRoot = path.join(runDir, 'chat');
+  for (const model of fs.existsSync(chatRoot) ? fs.readdirSync(chatRoot) : []) {
+    for (const f of fs.readdirSync(path.join(chatRoot, model))) {
+      const c = readJson(path.join(chatRoot, model, f));
+      if (!c.offTopic.ok) continue;
+      for (const judge of judges) {
+        jobs.push({ judge, offTopic: c, file: path.join(runDir, 'judge', slug(judge), model, `offtopic.${c.transcript}.json`) });
+      }
+    }
+  }
+  const graded = (j) => j.offTopic ? j.offTopic.offTopic.result.content : j.gen.result.content;
+  // A judgment is reused only if it graded the text on disk now, so
   // regenerating a model's output also regrades it.
-  const todo = jobs.filter(j => !loadJudgment(j.file, j.gen.result.content));
+  const todo = jobs.filter(j => !loadJudgment(j.file, graded(j)));
   console.log(`${jobs.length} judgments, ${todo.length} to run`);
   writeJson(path.join(runDir, 'judges.json'), judges);   // report reads this
   let done = 0, failed = 0;
   await pool(todo, config.concurrency, async (j) => {
+    if (j.offTopic) {
+      const res = await judgeOffTopic(j.judge, { question: OFF_TOPIC, reply: graded(j) });
+      if (res.error) { failed++; console.warn(`  judge failed (${j.judge}): ${res.error}`); }
+      else writeJson(j.file, { judge: j.judge, model: j.offTopic.model, transcript: j.offTopic.transcript, summarySha: sha(graded(j)), ...res });
+      if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
+      return;
+    }
     const t = set.get(j.gen.transcript);
     // The judge sees the summary exactly as a user would, and never the model name.
     const res = await judgeSummary(j.judge, { transcript: t.text, serviceType: t.serviceType, tier: t.tier, summary: j.gen.result.content });
@@ -262,6 +284,7 @@ function cmdReport(a) {
     L.push(`- per judge quality: ${Object.entries(m.perJudgeQuality).map(([j, v]) => `${j.split('/').pop()} ${v.toFixed(1)}`).join(', ') || 'n/a'}`);
     if (m.errors.length) L.push(`- errors (${m.errors.length}): ${[...new Set(m.errors)].slice(0, 3).join(' | ')}`);
     if (m.failures.missingSections.length) L.push(`- missing sections: ${m.failures.missingSections.slice(0, 8).join('; ')}`);
+    if (m.failures.offTopic.length) L.push(`- off-topic replies that failed: ${m.failures.offTopic.slice(0, 8).join('; ')}`);
     if (m.failures.ungroundedRefs.length) L.push(`- references to books not in the transcript: ${m.failures.ungroundedRefs.slice(0, 8).join('; ')}`);
     L.push('');
   }

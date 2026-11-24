@@ -15,14 +15,14 @@ Thresholds live in `config.json`.
 
 | Gate | Threshold | Why it exists |
 |---|---|---|
-| Completes: non-empty, `finish_reason = stop` | 100% | A truncated or empty summary is stored as a finished one. |
+| Completes: non-empty, `finish_reason = stop`, inside 55 s | 100% | A truncated or empty summary is stored as a finished one. Production aborts at 55 s in total, so a later reply counts as a failed generation, retries included. |
 | First line parses as `TITLE: ...` | 100% | `summarize.js` reads the sermon title from it. |
 | All required sections present for the tier | 95% | The app shows these sections; premium adds Application. |
 | Scripture References section holds a parseable reference | 90% | Scripture reminders are built from it (TAB-119, TAB-120). |
-| Latency p95 | 45 s | The function aborts at 55 s. |
+| Latency p95 | 45 s | Headroom under the 55 s abort. |
 | Cost per summary | at most 2x the incumbent | |
 | Suggested questions return the JSON contract | 100% | `chat.js` parses it with `JSON.parse`. |
-| Off-topic chat question is redirected | 100% | Required by the chat system prompt. |
+| Off-topic chat question is redirected, not answered | 100% | Required by the chat system prompt. The code checks the reply points back to the sermon and gives no voting or investing advice; every judge must then agree it answered neither question. |
 
 ### Gates a judge decides (first generation of each transcript)
 
@@ -40,8 +40,8 @@ Quality is a 0-100 score: faithfulness 35%, scripture accuracy 25%, coverage
 20%, focus 10%, clarity 10%. Faithfulness and scripture carry the weight
 because a summary that misreports the sermon is worse than a thin one.
 
-A verdict needs its evidence. Every gradable first generation must have a
-judgment from every judge, for the candidate and for the incumbent, or the
+A verdict needs its evidence. Every gradable first generation and every off-topic
+reply must have a judgment from every judge, for the candidate and for the incumbent, or the
 candidate is reported as INCOMPLETE instead of PASS. A measured failure still
 reads FAIL. A judgment is tied to a hash of the summary it graded, so
 regenerating a model's output regrades it instead of reusing old scores.
@@ -75,7 +75,8 @@ real swap would ship, and the label says what they are.
 - Latency is measured through OpenRouter, not the provider's own API. It
   includes retried attempts and the backoff between them.
 - The reference parser is this tool's, not the app's Swift analyzer (TAB-121).
-- Chat answer quality is not judged; only the two chat contracts above.
+- Chat answer quality is not judged; only the two chat contracts above. The
+  off-topic gate uses one fixed question about voting and stocks.
 - With 12 transcripts a rate moves about 4 points per generation. Treat a
   one-run difference near a threshold as a tie and raise `--n`.
 
