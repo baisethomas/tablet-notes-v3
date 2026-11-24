@@ -40,6 +40,12 @@ Quality is a 0-100 score: faithfulness 35%, scripture accuracy 25%, coverage
 20%, focus 10%, clarity 10%. Faithfulness and scripture carry the weight
 because a summary that misreports the sermon is worse than a thin one.
 
+A verdict needs its evidence. Every gradable first generation must have a
+judgment from every judge, for the candidate and for the incumbent, or the
+candidate is reported as INCOMPLETE instead of PASS. A measured failure still
+reads FAIL. A judgment is tied to a hash of the summary it graded, so
+regenerating a model's output regrades it instead of reusing old scores.
+
 The judged gates are relative to the incumbent on purpose. The judges grade
 hard: on the first run the incumbent averaged 3.5 for faithfulness, so an
 absolute bar of 4.0 would have failed the model users have today. 4.0 is kept
@@ -66,7 +72,8 @@ real swap would ship, and the label says what they are.
 
 ## What it does not measure
 
-- Latency is measured through OpenRouter, not the provider's own API.
+- Latency is measured through OpenRouter, not the provider's own API. It
+  includes retried attempts and the backoff between them.
 - The reference parser is this tool's, not the app's Swift analyzer (TAB-121).
 - Chat answer quality is not judged; only the two chat contracts above.
 - With 12 transcripts a rate moves about 4 points per generation. Treat a
@@ -79,12 +86,15 @@ node eval.js pull   --source supabase --users <uuid,uuid> --n 12
 node eval.js run    --run 2026-11-22
 node eval.js judge  --run 2026-11-22
 node eval.js report --run 2026-11-22
-node --test __tests__/checks.test.js
+node --test __tests__/*.test.js
 ```
 
 `run` and `judge` skip work that already has a result file, so an interrupted
 run resumes. Delete a model's folder under `runs/<name>/gen/` to redo it.
-`--models "a;b"` limits `run` to some labels, and `--judges a,b` overrides the judges (one judge roughly halves the cost). The report is written to
+`--models "a;b"` limits `run` to some labels, and `--judges a,b` overrides the
+judges (one judge roughly halves the cost). `judge` records the judges it used
+in `runs/<name>/judges.json` and `report` reads that, so the two cannot
+disagree. The report is written to
 `runs/<name>/report.md` with the raw numbers in `scores.json`.
 
 ### Transcript sources
@@ -93,7 +103,8 @@ run resumes. Delete a model's folder under `runs/<name>/gen/` to redo it.
   `--users` is required: it names whose sermons are sent to third-party models.
 - `--source assemblyai` lists completed transcripts from the AssemblyAI account.
   It needs `ASSEMBLYAI_API_KEY` in the environment; the Netlify copy is a masked
-  secret and cannot be read back. This source spans every user's recordings.
+  secret and cannot be read back. This source spans every user's recordings
+  and cannot be filtered by user, so it refuses to run without `--all-users`.
 
 ### Keys and data handling
 
@@ -102,6 +113,7 @@ run resumes. Delete a model's folder under `runs/<name>/gen/` to redo it.
   Nothing is written to disk.
 - Every OpenRouter request sets `provider.data_collection = "deny"`, so a model
   only reachable through a provider that retains prompts fails rather than runs.
+  A candidate's `params` cannot override it.
 - `data/` and `runs/` hold transcripts and summaries. Both are gitignored.
 
 ### Prompts

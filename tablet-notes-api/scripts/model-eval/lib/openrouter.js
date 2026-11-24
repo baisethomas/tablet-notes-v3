@@ -10,17 +10,26 @@ const URL = 'https://openrouter.ai/api/v1/chat/completions';
 // provider.data_collection = 'deny' restricts routing to providers that do not
 // retain or train on prompts. Transcripts are user content; a model that is
 // only reachable through a logging provider fails here, on purpose.
-async function chat(model, messages, params = {}, { timeoutMs = 120000, retries = 2 } = {}) {
-  const body = {
+//
+// Candidate params are spread first so they can never replace the model, the
+// messages, usage accounting or the data-collection denial.
+function buildBody(model, messages, params = {}) {
+  return {
+    ...params,
     model,
     messages,
     usage: { include: true },
-    provider: { data_collection: 'deny' },
-    ...params,
+    provider: { ...(params.provider || {}), data_collection: 'deny' },
   };
+}
 
+async function chat(model, messages, params = {}, { timeoutMs = 120000, retries = 2 } = {}) {
+  const body = buildBody(model, messages, params);
+
+  // latencyMs is what a caller would have waited: every attempt plus the
+  // backoff between them. A retry must not make a slow model look fast.
+  const started = Date.now();
   for (let attempt = 0; ; attempt++) {
-    const started = Date.now();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
@@ -86,4 +95,4 @@ async function pool(items, concurrency, worker) {
   return out;
 }
 
-module.exports = { chat, pool };
+module.exports = { chat, pool, buildBody };

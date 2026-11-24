@@ -5,21 +5,21 @@
 // See README.md for the standards this implements.
 //
 //   node eval.js pull   --source supabase --users <uuid,uuid> [--n 12]
-//   node eval.js pull   --source assemblyai [--n 12]
+//   node eval.js pull   --source assemblyai --all-users [--n 12]
 //   node eval.js run    --run <name> [--models "a;b"] [--repeats 2]
-//   node eval.js judge  --run <name>
-//   node eval.js report --run <name>
+//   node eval.js judge  --run <name> [--judges a,b]
+//   node eval.js report --run <name> [--judges a,b]
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const { assemblyKey } = require('./lib/keys');
 const { chat, pool } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
-const { judgeSummary, KEYS } = require('./lib/judge');
+const { judgeSummary } = require('./lib/judge');
+const { slug, sha, readJson, gradable, resolveJudges, loadJudgment, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -39,17 +39,7 @@ function args(argv) {
   }
   return out;
 }
-const slug = (s) => s.replace(/[^a-zA-Z0-9.-]+/g, '_');
-const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
-const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const writeJson = (f, d) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(d, null, 2)); };
-const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
-const rate = (xs, f) => xs.length ? xs.filter(f).length / xs.length : null;
-function pct(xs, p) {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
-}
 
 // ---------- pull ----------
 
@@ -79,6 +69,10 @@ async function pullSupabase(a) {
 }
 
 async function pullAssembly(a) {
+  // The AssemblyAI account holds every user's recordings and cannot be
+  // filtered by user, so this source needs the same explicit decision the
+  // supabase source gets from --users.
+  if (!a['all-users']) throw new Error('--source assemblyai spans every user\'s recordings; pass --all-users to confirm their transcripts may be sent to third-party models, or use --source supabase --users <uuid,uuid>');
   const key = assemblyKey();
   const want = Number(a.n || 12) * 3;
   const listed = [];
@@ -204,132 +198,36 @@ async function cmdRun(a) {
 
 async function cmdJudge(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
+  const judges = a.judges ? a.judges.split(',') : config.judges;
   const set = new Map(loadSet().map(t => [t.id, t]));
   const jobs = [];
   for (const model of fs.readdirSync(path.join(runDir, 'gen'))) {
     for (const f of fs.readdirSync(path.join(runDir, 'gen', model)).filter(f => f.endsWith('.r0.json'))) {
       const gen = readJson(path.join(runDir, 'gen', model, f));
-      if (gen.result.error || !gen.result.content.trim()) continue;   // nothing to grade; the gate already fails it
-      for (const judge of config.judges) {
+      if (!gradable(gen)) continue;   // nothing to grade; the gate already fails it
+      for (const judge of judges) {
         jobs.push({ judge, gen, file: path.join(runDir, 'judge', slug(judge), model, `${gen.transcript}.json`) });
       }
     }
   }
-  const todo = jobs.filter(j => !fs.existsSync(j.file));
+  // A judgment is reused only if it graded the summary on disk now, so
+  // regenerating a model's output also regrades it.
+  const todo = jobs.filter(j => !loadJudgment(j.file, j.gen.result.content));
   console.log(`${jobs.length} judgments, ${todo.length} to run`);
+  writeJson(path.join(runDir, 'judges.json'), judges);   // report reads this
   let done = 0, failed = 0;
   await pool(todo, config.concurrency, async (j) => {
     const t = set.get(j.gen.transcript);
     // The judge sees the summary exactly as a user would, and never the model name.
     const res = await judgeSummary(j.judge, { transcript: t.text, serviceType: t.serviceType, tier: t.tier, summary: j.gen.result.content });
     if (res.error) { failed++; console.warn(`  judge failed (${j.judge}): ${res.error}`); }
-    else writeJson(j.file, { judge: j.judge, model: j.gen.model, transcript: j.gen.transcript, ...res });
+    else writeJson(j.file, { judge: j.judge, model: j.gen.model, transcript: j.gen.transcript, summarySha: sha(j.gen.result.content), ...res });
     if (++done % 10 === 0 || done === todo.length) console.log(`  ${done}/${todo.length}`);
   });
-  if (failed) console.warn(`${failed} judgments failed; re-run "judge" to retry them`);
+  if (failed) console.warn(`${failed} judgments failed; re-run "judge" to retry them (the report stays INCOMPLETE until they exist)`);
 }
 
 // ---------- report ----------
-
-function aggregate(runDir, modelSlug) {
-  const gens = fs.readdirSync(path.join(runDir, 'gen', modelSlug)).map(f => readJson(path.join(runDir, 'gen', modelSlug, f)));
-  const ok = gens.filter(g => g.check);
-  const chatDir = path.join(runDir, 'chat', modelSlug);
-  const chats = fs.existsSync(chatDir) ? fs.readdirSync(chatDir).map(f => readJson(path.join(chatDir, f))) : [];
-  const refTotal = ok.reduce((n, g) => n + g.check.refCount, 0);
-  const quoteTotal = ok.reduce((n, g) => n + g.check.quoteCount, 0);
-
-  const judged = {};          // transcript -> judge -> scores
-  const perJudge = {};
-  for (const judge of config.judges) {
-    const dir = path.join(runDir, 'judge', slug(judge), modelSlug);
-    if (!fs.existsSync(dir)) continue;
-    for (const f of fs.readdirSync(dir)) {
-      const j = readJson(path.join(dir, f));
-      (judged[j.transcript] = judged[j.transcript] || {})[judge] = j.scores;
-      (perJudge[judge] = perJudge[judge] || []).push(j.scores);
-    }
-  }
-  // Average the judges per transcript, then average transcripts.
-  const perTranscript = Object.values(judged).map(byJudge => {
-    const row = {};
-    for (const k of KEYS) row[k] = mean(Object.values(byJudge).map(s => s[k]));
-    return row;
-  });
-  const scores = {};
-  for (const k of KEYS) scores[k] = mean(perTranscript.map(r => r[k]));
-  const quality = perTranscript.length
-    ? 100 * KEYS.reduce((n, k) => n + config.weights[k] * (scores[k] - 1) / 4, 0)
-    : null;
-  const allScores = Object.values(judged).flatMap(b => Object.values(b));
-
-  return {
-    model: gens[0] ? gens[0].model : modelSlug,
-    runs: gens.length,
-    errors: gens.filter(g => g.result.error).map(g => g.result.error),
-    completionRate: rate(gens, g => g.check && g.check.completed),
-    truncatedRate: rate(gens, g => g.check && g.check.truncated),
-    titleRate: rate(gens, g => g.check && g.check.titleOk),
-    sectionsRate: rate(gens, g => g.check && g.check.sectionsOk),
-    scriptureSectionWithRefRate: rate(gens, g => g.check && g.check.scriptureSectionHasRef),
-    premiumLeakRate: rate(ok.filter(g => g.tier === 'basic'), g => g.check.premiumLeak.length > 0),
-    bookUngroundedRefRate: refTotal ? ok.reduce((n, g) => n + g.check.refsBookUngrounded.length, 0) / refTotal : 0,
-    chapterGroundedRefRate: refTotal ? ok.reduce((n, g) => n + g.check.refsChapterGrounded, 0) / refTotal : null,
-    refsPerSummary: ok.length ? refTotal / ok.length : null,
-    quotesPerSummary: ok.length ? quoteTotal / ok.length : null,
-    quoteVerbatimRate: quoteTotal ? ok.reduce((n, g) => n + g.check.quotesVerbatim, 0) / quoteTotal : null,
-    quoteFabricatedRate: quoteTotal ? ok.reduce((n, g) => n + g.check.quotesFabricated.length, 0) / quoteTotal : null,
-    latencyP50Ms: pct(gens.map(g => g.result.latencyMs), 0.5),
-    latencyP95Ms: pct(gens.map(g => g.result.latencyMs), 0.95),
-    overBudget: gens.filter(g => g.result.latencyMs > 55000).length,
-    costUsd: mean(ok.map(g => g.result.usage.costUsd).filter(c => c != null)),
-    outputTokens: mean(ok.map(g => g.result.usage.completionTokens).filter(c => c != null)),
-    questionsJsonRate: rate(chats, c => c.questions.ok),
-    offTopicRedirectRate: rate(chats, c => c.offTopic.ok),
-    judgedCount: perTranscript.length,
-    scores,
-    quality,
-    worstFaithfulness: allScores.length ? Math.min(...allScores.map(s => s.faithfulness)) : null,
-    unsupportedClaimsPerSummary: allScores.length ? mean(allScores.map(s => s.unsupported_claims.length)) : null,
-    mainScriptureWrong: allScores.filter(s => s.main_scripture_correct === false).length,
-    perJudgeFaithfulness: Object.fromEntries(Object.entries(perJudge).map(([j, ss]) => [j, mean(ss.map(s => s.faithfulness))])),
-    perJudgeQuality: Object.fromEntries(Object.entries(perJudge).map(([j, ss]) => [j,
-      100 * KEYS.reduce((n, k) => n + config.weights[k] * (mean(ss.map(s => s[k])) - 1) / 4, 0)])),
-    failures: {
-      missingSections: ok.filter(g => !g.check.sectionsOk).map(g => `${g.transcript.slice(0, 8)}.r${g.rep}: ${g.check.missingSections.join(', ')}`),
-      ungroundedRefs: ok.flatMap(g => g.check.refsBookUngrounded.map(r => `${g.transcript.slice(0, 8)}.r${g.rep}: ${r}`)),
-    },
-  };
-}
-
-function applyGates(m, base) {
-  const g = config.gates;
-  const isBase = m === base;
-  const pc = (v) => `${Math.round(v * 100)}%`;
-  const n2 = (v) => v.toFixed(2);
-  const sg = (v) => (v >= 0 ? '+' : '') + v.toFixed(2);
-  const rows = [
-    ['completes (non-empty, not truncated)', m.completionRate, v => v >= g.completionRate, pc],
-    ['TITLE: line parseable', m.titleRate, v => v >= g.titleRate, pc],
-    ['all required sections', m.sectionsRate, v => v >= g.sectionsRate, pc],
-    ['Scripture References has a reference', m.scriptureSectionWithRefRate, v => v >= g.scriptureSectionWithRefRate, pc],
-    ['latency p95', m.latencyP95Ms, v => v <= g.latencyP95MsMax, v => `${(v / 1000).toFixed(1)} s`],
-    ['questions JSON contract', m.questionsJsonRate, v => v >= g.questionsJsonRate, pc],
-    ['off-topic redirect', m.offTopicRedirectRate, v => v >= g.offTopicRedirectRate, pc],
-  ];
-  if (m.judgedCount) {
-    rows.push(['worst single faithfulness score', m.worstFaithfulness, v => v >= g.worstFaithfulnessMin, n2]);
-  }
-  if (!isBase && base) {
-    if (m.judgedCount && base.judgedCount) {
-      rows.push(['faithfulness vs baseline', m.scores.faithfulness - base.scores.faithfulness, v => v >= g.faithfulnessVsBaselineMin, sg]);
-      rows.push(['scripture accuracy vs baseline', m.scores.scripture - base.scores.scripture, v => v >= g.scriptureVsBaselineMin, sg]);
-      rows.push(['quality vs baseline (pts)', m.quality - base.quality, v => v >= g.qualityVsBaselineMin, sg]);
-    }
-    if (m.costUsd != null && base.costUsd) rows.push(['cost vs baseline', m.costUsd / base.costUsd, v => v <= g.costVsBaselineMax, v => `${v.toFixed(2)}x`]);
-  }
-  return rows.map(([name, value, test, fmt]) => ({ name, value, shown: value == null ? 'n/a' : fmt(value), pass: value != null && test(value) }));
-}
 
 const f2 = (v) => v == null ? 'n/a' : v.toFixed(2);
 const p0 = (v) => v == null ? 'n/a' : `${Math.round(v * 100)}%`;
@@ -337,29 +235,29 @@ const p0 = (v) => v == null ? 'n/a' : `${Math.round(v * 100)}%`;
 function cmdReport(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
   const manifest = readJson(path.join(DATA, 'manifest.json'));
-  const all = fs.readdirSync(path.join(runDir, 'gen')).map(s => aggregate(runDir, s));
+  const judges = resolveJudges(runDir, config, a.judges ? a.judges.split(',') : null);
+  const all = fs.readdirSync(path.join(runDir, 'gen')).map(s => aggregate(runDir, s, config, judges));
   const base = all.find(m => m.model === config.baseline);
   for (const m of all) {
-    m.gates = applyGates(m, base);
+    m.gates = applyGates(m, base, config);
     m.pass = m.gates.every(x => x.pass);
+    m.verdict = verdict(m, m === base);
   }
   all.sort((x, y) => (y.pass - x.pass) || ((y.quality ?? -1) - (x.quality ?? -1)));
 
   const L = [];
   L.push(`# Model evaluation: ${a.run}`, '');
-  L.push(`${manifest.length} transcripts (${manifest.filter(m => m.tier === 'premium').length} premium, ${manifest.filter(m => m.tier === 'basic').length} basic), ${config.repeats} generations each, production prompt. A bare model id uses production parameters unchanged; a [bracketed] label names the request changes. Judges: ${config.judges.join(', ')} (blind, first generation only).`, '');
+  L.push(`${manifest.length} transcripts (${manifest.filter(m => m.tier === 'premium').length} premium, ${manifest.filter(m => m.tier === 'basic').length} basic), ${config.repeats} generations each, production prompt. A bare model id uses production parameters unchanged; a [bracketed] label names the request changes. Judges: ${judges.join(', ')} (blind, first generation only).`, '');
   L.push('## Result', '');
   L.push('| Model | Verdict | Quality /100 | Faithful | Scripture | Coverage | Sections | Refs section | p95 s | $ / summary |');
   L.push('|---|---|---|---|---|---|---|---|---|---|');
   for (const m of all) {
-    const failed = m.gates.filter(x => !x.pass).length;
-    const verdict = m === base ? (m.pass ? 'baseline' : `baseline (${failed} gate${failed > 1 ? 's' : ''} failed)`) : m.pass ? 'PASS' : `FAIL (${failed})`;
-    L.push(`| ${m.model} | ${verdict} | ${m.quality == null ? 'n/a' : m.quality.toFixed(1)} | ${f2(m.scores.faithfulness)} | ${f2(m.scores.scripture)} | ${f2(m.scores.coverage)} | ${p0(m.sectionsRate)} | ${p0(m.scriptureSectionWithRefRate)} | ${m.latencyP95Ms == null ? 'n/a' : (m.latencyP95Ms / 1000).toFixed(1)} | ${m.costUsd == null ? 'n/a' : m.costUsd.toFixed(4)} |`);
+    L.push(`| ${m.model} | ${m.verdict} | ${m.quality == null ? 'n/a' : m.quality.toFixed(1)} | ${f2(m.scores.faithfulness)} | ${f2(m.scores.scripture)} | ${f2(m.scores.coverage)} | ${p0(m.sectionsRate)} | ${p0(m.scriptureSectionWithRefRate)} | ${m.latencyP95Ms == null ? 'n/a' : (m.latencyP95Ms / 1000).toFixed(1)} | ${m.costUsd == null ? 'n/a' : m.costUsd.toFixed(4)} |`);
   }
   L.push('', '## Gates', '');
   for (const m of all) {
     L.push(`### ${m.model}`, '');
-    for (const x of m.gates) L.push(`- ${x.pass ? 'pass' : '**FAIL**'}: ${x.name} = ${x.shown}`);
+    for (const x of m.gates) L.push(`- ${x.pass ? 'pass' : x.evidence ? '**MISSING**' : '**FAIL**'}: ${x.name} = ${x.shown}`);
     L.push(`- info: faithfulness ${f2(m.scores.faithfulness)} (target ${config.gates.faithfulnessTarget}); references to a book the speaker never named ${p0(m.bookUngroundedRefRate)}; premium sections leaked into basic ${p0(m.premiumLeakRate)}; quotes verbatim ${p0(m.quoteVerbatimRate)}, not found in transcript ${p0(m.quoteFabricatedRate)} (${f2(m.quotesPerSummary)} quotes/summary); references per summary ${f2(m.refsPerSummary)}, chapter found in transcript ${p0(m.chapterGroundedRefRate)}; unsupported claims per summary ${f2(m.unsupportedClaimsPerSummary)}; main scripture judged wrong ${m.mainScriptureWrong}x; truncated ${p0(m.truncatedRate)}; over the 55 s budget ${m.overBudget}x; p50 ${m.latencyP50Ms == null ? 'n/a' : (m.latencyP50Ms / 1000).toFixed(1)} s; avg output tokens ${m.outputTokens == null ? 'n/a' : Math.round(m.outputTokens)}`);
     L.push(`- per judge quality: ${Object.entries(m.perJudgeQuality).map(([j, v]) => `${j.split('/').pop()} ${v.toFixed(1)}`).join(', ') || 'n/a'}`);
     if (m.errors.length) L.push(`- errors (${m.errors.length}): ${[...new Set(m.errors)].slice(0, 3).join(' | ')}`);
@@ -378,8 +276,6 @@ function cmdReport(a) {
   const a = args(process.argv.slice(2));
   const cmd = a._[0];
   if (cmd !== 'pull' && !a.run) throw new Error('--run <name> is required');
-  // --judges a,b overrides config (one judge roughly halves the cost of a run).
-  if (a.judges) config.judges = a.judges.split(',');
   if (cmd === 'pull') await cmdPull(a);
   else if (cmd === 'run') await cmdRun(a);
   else if (cmd === 'judge') await cmdJudge(a);

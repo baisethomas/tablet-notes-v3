@@ -5,7 +5,7 @@
     "main": "index.js",
     "scripts": {
         "start": "netlify dev",
-        "test": "node --test netlify/functions/utils/__tests__/*.test.js"
+        "test": "node --test netlify/functions/utils/__tests__/*.test.js scripts/model-eval/__tests__/*.test.js"
     },
     "dependencies": {
         "@apple/app-store-server-library": "^3.1.0",
