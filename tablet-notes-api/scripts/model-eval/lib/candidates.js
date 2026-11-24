@@ -15,6 +15,13 @@ function candidates(config, want) {
       ? { label: c, model: c, params: {}, chatParams: {} }
       : { params: {}, chatParams: {}, ...c });
   if (!want) return all;
+  // A label that matches nothing is a typo, not an empty selection: running
+  // nothing and exiting cleanly would look like the model had been evaluated.
+  const known = new Set(all.map(c => c.label));
+  const unknown = want.filter(l => !known.has(l));
+  if (unknown.length || !want.length) {
+    throw new Error(`--models names no candidate in config.json: ${unknown.map(l => `"${l}"`).join(', ') || '(none given)'}. Labels are: ${[...known].join('; ')}`);
+  }
   return all.filter(c => want.includes(c.label));
 }
 

@@ -42,7 +42,16 @@ test('chatParams reach the chat calls and leave the production caps alone', () =
 });
 
 test('--models selects by label', () => {
-  assert.deepEqual(candidates(config, ['vendor/big [5000 tok]', 'nope']).map(c => c.model), ['vendor/big']);
+  assert.deepEqual(candidates(config, ['vendor/big [5000 tok]', 'vendor/base']).map(c => c.model), ['vendor/base', 'vendor/big']);
+});
+
+test('a --models label that matches no candidate is refused, not run as nothing', () => {
+  assert.throws(() => candidates(config, ['vendor/bgi [5000 tok]']), /names no candidate in config\.json: "vendor\/bgi \[5000 tok\]"/);
+  // One good label does not excuse a bad one.
+  assert.throws(() => candidates(config, ['vendor/plain', 'nope']), /"nope"/);
+  assert.throws(() => candidates(config, []), /none given/);
+  // A model id is not a label when the candidate has its own label.
+  assert.throws(() => candidates(config, ['vendor/big']), /"vendor\/big"/);
 });
 
 test('no candidate in config.json changes a chat token cap', () => {

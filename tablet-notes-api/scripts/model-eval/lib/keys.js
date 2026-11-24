@@ -18,7 +18,9 @@ function fromEnvFile(file, name) {
   if (!fs.existsSync(file)) return null;
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && m[1] === name) return m[2].replace(/^['"]|['"]$/g, '');
+    // Trim before unquoting: trailing spaces after a closing quote would
+    // otherwise leave the quote in the key.
+    if (m && m[1] === name) return m[2].trim().replace(/^['"]|['"]$/g, '');
   }
   return null;
 }
@@ -46,4 +48,4 @@ function openRouterKey() {
   throw new Error(`OPENROUTER_API_KEY not set and not found in ${file}`);
 }
 
-module.exports = { assemblyKey, openRouterKey, API_ROOT };
+module.exports = { assemblyKey, openRouterKey, fromEnvFile, API_ROOT };

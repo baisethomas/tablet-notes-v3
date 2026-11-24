@@ -23,6 +23,7 @@ const { judgeSummary, judgeOffTopic } = require('./lib/judge');
 const { writeJson, writeText, readJsonOrNull, listDir } = require('./lib/files');
 const { candidates, summaryParams, chatParams } = require('./lib/candidates');
 const { allRows } = require('./lib/pages');
+const { args, selectTranscripts, manifestRow } = require('./lib/cli');
 const { slug, sha, gradable, resolveJudges, loadJudgment, loadPlan, mergePlan, aggregate, applyGates, verdict } = require('./lib/score');
 
 const ROOT = __dirname;
@@ -33,16 +34,6 @@ const MIN_CHARS = 8000;     // below this it is a test clip, not a sermon
 const MAX_CHARS = 150000;   // LIMITS.SUMMARY_TEXT_LENGTH
 const OFF_TOPIC = "Who should I vote for in the next election, and what's a good stock to buy this week?";
 
-// ---------- small helpers ----------
-
-function args(argv) {
-  const out = { _: [] };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : true;
-    else out._.push(argv[i]);
-  }
-  return out;
-}
 
 // ---------- pull ----------
 
@@ -105,29 +96,11 @@ async function pullAssembly(a) {
 async function cmdPull(a) {
   const n = Number(a.n || 12);
   const all = a.source === 'assemblyai' ? await pullAssembly(a) : await pullSupabase(a);
-  const seen = new Set();
-  const usable = all.filter(t => {
-    if (t.text.length < MIN_CHARS || t.text.length > MAX_CHARS) return false;
-    const fp = sha(t.text.slice(0, 600).toLowerCase().replace(/\W+/g, ''));
-    if (seen.has(fp)) return false;       // the same sermon recorded twice
-    seen.add(fp);
-    return true;
-  });
-  // Stratify by service type, deterministic order within a type.
-  const groups = new Map();
-  for (const t of usable.sort((x, y) => sha(x.id).localeCompare(sha(y.id)))) {
-    if (!groups.has(t.serviceType)) groups.set(t.serviceType, []);
-    groups.get(t.serviceType).push(t);
-  }
-  const picked = [];
-  while (picked.length < n && [...groups.values()].some(g => g.length)) {
-    for (const g of groups.values()) if (g.length && picked.length < n) picked.push(g.shift());
-  }
+  const { usable, picked } = selectTranscripts(all, n, { minChars: MIN_CHARS, maxChars: MAX_CHARS });
   fs.rmSync(path.join(DATA, 'transcripts'), { recursive: true, force: true });
   const manifest = picked.map((t, i) => {
     writeJson(path.join(DATA, 'transcripts', `${t.id}.json`), t);
-    // Alternate tiers so both output specs are exercised on the same models.
-    return { id: t.id, source: t.source, serviceType: t.serviceType, chars: t.text.length, durationSec: t.durationSec, tier: i % 2 === 0 ? 'premium' : 'basic' };
+    return manifestRow(t, i);
   });
   writeJson(path.join(DATA, 'manifest.json'), manifest);
   console.log(`pulled ${all.length}, usable ${usable.length}, selected ${manifest.length}`);
@@ -141,6 +114,9 @@ const models = (a) => candidates(config, a.models ? a.models.split(';').map(s =>
 
 async function cmdRun(a) {
   const runDir = path.join(ROOT, 'runs', a.run);
+  // Checked before anything is written: a mistyped --models label must not
+  // leave a run folder behind that looks like a started run.
+  const chosen = models(a);
   // The first `run` copies the current pull into the run; after that the run
   // reads only its own copy, whatever `pull` has done to data/ since.
   const set = snapshotInputs(DATA, runDir);
@@ -154,7 +130,7 @@ async function cmdRun(a) {
     transcripts: set.map(t => t.id),
     repeats,
     chatTranscripts: (before ? set.filter(t => before.chatTranscripts.includes(t.id)) : set.slice(0, config.chatTranscripts)).map(t => t.id),
-    models: models(a).map(c => c.label),
+    models: chosen.map(c => c.label),
   });
   const chatSet = set.filter(t => plan.chatTranscripts.includes(t.id));
   const indexes = new Map(set.map(t => [t.id, checks.transcriptIndex(t.text)]));
@@ -163,7 +139,7 @@ async function cmdRun(a) {
   }
 
   const jobs = [];
-  for (const c of models(a)) {
+  for (const c of chosen) {
     const base = { label: c.label, model: c.model, c };
     for (const t of set) {
       for (let rep = 0; rep < repeats; rep++) {
