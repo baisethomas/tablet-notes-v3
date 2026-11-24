@@ -160,6 +160,20 @@ test('an incompletely judged baseline makes every candidate INCOMPLETE', () => {
   assert.equal(r.baseVerdict, 'baseline (incomplete)');
 });
 
+test('a baseline with a failed first generation cannot anchor a PASS', () => {
+  const run = tmpRun();
+  // The baseline's first generation errored for t3, so it has nothing graded
+  // there; its own judgments are complete for what it did produce.
+  writeModel(run, 'base', { error: (t, rep) => t === 't3' && rep === 0 });
+  writeModel(run, 'cand');
+  writeJudgments(run, 'base', config.judges, 3, { skip: (j, t) => t === 't3' });
+  writeJudgments(run, 'cand', config.judges, 4);
+  const r = score(run);
+  assert.equal(r.base.judgmentsPresent, r.base.judgmentsExpected);
+  assert.deepEqual(failing(r.cand), ['baseline graded on every transcript the candidate was']);
+  assert.equal(r.verdict, 'INCOMPLETE');
+});
+
 test('a judgment of an earlier summary is not counted after the model is regenerated', () => {
   const run = tmpRun();
   writeModel(run, 'base');

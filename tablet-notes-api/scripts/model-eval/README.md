@@ -42,7 +42,8 @@ because a summary that misreports the sermon is worse than a thin one.
 
 A verdict needs its evidence. Every gradable first generation and every off-topic
 reply must have a judgment from every judge, for the candidate and for the incumbent, or the
-candidate is reported as INCOMPLETE instead of PASS. A measured failure still
+candidate is reported as INCOMPLETE instead of PASS. The same holds when the
+incumbent produced no summary for a transcript the candidate was graded on. A measured failure still
 reads FAIL. A judgment is tied to a hash of the summary it graded, so
 regenerating a model's output regrades it instead of reusing old scores.
 

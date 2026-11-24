@@ -57,6 +57,7 @@ function aggregate(runDir, modelSlug, config, judges) {
   const judged = {};          // transcript -> judge -> scores
   const perJudge = {};
   let judgmentsExpected = 0, judgmentsPresent = 0;
+  const gradedTranscripts = gens.filter(g => g.rep === 0 && gradable(g)).map(g => g.transcript);
   for (const gen of gens.filter(g => g.rep === 0 && gradable(g))) {
     for (const judge of judges) {
       judgmentsExpected++;
@@ -121,6 +122,7 @@ function aggregate(runDir, modelSlug, config, judges) {
     offTopicRedirectRate: rate(offTopicResults, ok => ok),
     judgmentsExpected,
     judgmentsPresent,
+    gradedTranscripts,
     judgedCount: perTranscript.length,
     scores,
     quality,
@@ -168,6 +170,12 @@ function applyGates(m, base, config) {
       evidence('baseline present in this run', false, 'missing');
     } else {
       if (!judgmentsComplete(base)) evidence('baseline judgments complete', false, `${base.judgmentsPresent}/${base.judgmentsExpected}`);
+      // The comparison is only fair over the same sermons. If the baseline's
+      // first generation failed for a transcript the candidate was graded on,
+      // the two means cover different populations.
+      const have = new Set(base.gradedTranscripts);
+      const unmatched = m.gradedTranscripts.filter(t => !have.has(t));
+      if (unmatched.length) evidence('baseline graded on every transcript the candidate was', false, `${unmatched.length} without a baseline summary`);
       if (m.judgedCount && base.judgedCount) {
         add('faithfulness vs baseline', m.scores.faithfulness - base.scores.faithfulness, v => v >= g.faithfulnessVsBaselineMin, sg);
         add('scripture accuracy vs baseline', m.scores.scripture - base.scores.scripture, v => v >= g.scriptureVsBaselineMin, sg);
