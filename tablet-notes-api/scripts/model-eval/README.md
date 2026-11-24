@@ -112,7 +112,7 @@ be parsed is treated as absent: it is redone, and until then the report counts
 it as missing. The first `run` fixes the sample: a later one may add models,
 but a different `--repeats` is refused rather than rewriting the plan. A job that throws is reported and retried by the next
 invocation; it does not stop the others. Delete a model's folder under `runs/<name>/gen/` to redo it.
-`--models "a;b"` limits `run` to some labels (a label that matches no candidate is an error), and `--judges a,b` overrides the
+`--models "a;b"` limits `run` to some labels (a label that matches no candidate is an error, as is an unknown option or one missing its value), and `--judges a,b` overrides the
 judges. One judge roughly halves the cost, but judges from a single vendor can
 only fail a model: the best verdict they give is PROVISIONAL, because nothing
 then checks a judge that favours its own vendor. A PASS needs two vendors. `judge` records the judges it used

@@ -7,12 +7,33 @@ const crypto = require('node:crypto');
 
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
 
-// `--name value` pairs, bare `--flag` as true, everything else positional.
+// Flags that take a value, and flags that are switches. Anything else is a
+// typo, and a typo that silently changes what runs is worse than an error.
+const VALUE_FLAGS = new Set(['run', 'models', 'judges', 'repeats', 'n', 'users', 'source']);
+const SWITCHES = new Set(['all-users']);
+
+// `--name value` or `--name=value`, bare switches as true, the rest positional.
+// A value flag with no value, or followed by another flag, is refused: write
+// `--name=value` for a value that itself begins with dashes.
 function args(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : true;
-    else out._.push(argv[i]);
+    const token = argv[i];
+    if (!token.startsWith('--')) { out._.push(token); continue; }
+    const eq = token.indexOf('=');
+    const name = token.slice(2, eq === -1 ? undefined : eq);
+    if (SWITCHES.has(name)) {
+      if (eq !== -1) throw new Error(`--${name} takes no value`);
+      out[name] = true;
+    } else if (VALUE_FLAGS.has(name)) {
+      let value;
+      if (eq !== -1) value = token.slice(eq + 1);
+      else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) value = argv[++i];
+      if (value === undefined || value === '') throw new Error(`--${name} needs a value (use --${name}=<value> if it begins with dashes)`);
+      out[name] = value;
+    } else {
+      throw new Error(`unknown option --${name}`);
+    }
   }
   return out;
 }

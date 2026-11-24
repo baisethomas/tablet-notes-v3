@@ -22,6 +22,20 @@ function readSet(dir) {
   return manifest.map(m => ({ ...m, text: readJson(path.join(dir, 'transcripts', `${m.id}.json`)).text }));
 }
 
+// Replace the pulled set in data/. The new transcripts are written first, the
+// manifest is then renamed into place, and only after that are transcripts
+// the new manifest does not name removed. Interrupted at any point, data/
+// holds a manifest whose transcripts all exist: the old one or the new one.
+function writePull(dataDir, picked, rowFor) {
+  const dir = path.join(dataDir, 'transcripts');
+  for (const t of picked) writeJson(path.join(dir, `${t.id}.json`), t);
+  const manifest = picked.map(rowFor);
+  writeJson(path.join(dataDir, 'manifest.json'), manifest);
+  const keep = new Set(picked.map(t => `${t.id}.json`));
+  for (const name of fs.readdirSync(dir)) if (!keep.has(name)) fs.rmSync(path.join(dir, name), { force: true });
+  return manifest;
+}
+
 // Copy the current pull into the run, once. A run that already has inputs
 // keeps them: a later pull never changes what an existing run is about.
 function snapshotInputs(dataDir, runDir, { planned = false } = {}) {
@@ -65,4 +79,4 @@ function assertRunName(name) {
   return name;
 }
 
-module.exports = { snapshotInputs, loadInputs, hasInputs, assertRunName };
+module.exports = { snapshotInputs, loadInputs, hasInputs, assertRunName, writePull };

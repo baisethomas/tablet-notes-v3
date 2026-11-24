@@ -18,7 +18,7 @@ const { assemblyKey } = require('./lib/keys');
 const { chat, poolSettled } = require('./lib/openrouter');
 const { loadSummarize, loadChat } = require('./lib/prompt');
 const checks = require('./lib/checks');
-const { snapshotInputs, loadInputs, assertRunName } = require('./lib/inputs');
+const { snapshotInputs, loadInputs, assertRunName, writePull } = require('./lib/inputs');
 const { judgeSummary, judgeOffTopic } = require('./lib/judge');
 const { writeJson, writeText, readJsonOrNull, listDir } = require('./lib/files');
 const { candidates, summaryParams, chatParams } = require('./lib/candidates');
@@ -97,12 +97,8 @@ async function cmdPull(a) {
   const n = Number(a.n || 12);
   const all = a.source === 'assemblyai' ? await pullAssembly(a) : await pullSupabase(a);
   const { usable, picked } = selectTranscripts(all, n, { minChars: MIN_CHARS, maxChars: MAX_CHARS });
-  fs.rmSync(path.join(DATA, 'transcripts'), { recursive: true, force: true });
-  const manifest = picked.map((t, i) => {
-    writeJson(path.join(DATA, 'transcripts', `${t.id}.json`), t);
-    return manifestRow(t, i);
-  });
-  writeJson(path.join(DATA, 'manifest.json'), manifest);
+  // New set written first, old one removed last: see writePull.
+  const manifest = writePull(DATA, picked, manifestRow);
   console.log(`pulled ${all.length}, usable ${usable.length}, selected ${manifest.length}`);
   for (const m of manifest) console.log(`  ${m.id.slice(0, 8)}  ${m.serviceType.padEnd(16)} ${String(m.chars).padStart(6)} chars  ${m.tier}`);
 }

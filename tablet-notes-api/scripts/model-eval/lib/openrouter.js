@@ -104,6 +104,8 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
   }
 }
 
+// Internal: a worker that throws rejects the whole batch and abandons the
+// jobs in flight. Callers use poolSettled, which is the only export.
 async function pool(items, concurrency, worker) {
   const out = new Array(items.length);
   let next = 0;
@@ -126,4 +128,4 @@ async function poolSettled(items, concurrency, worker, onError = () => {}) {
   return failed;
 }
 
-module.exports = { chat, pool, poolSettled, buildBody };
+module.exports = { chat, poolSettled, buildBody };

@@ -13,7 +13,17 @@ test('arguments: values, bare flags and positionals', () => {
   assert.equal(a['all-users'], true);
   assert.equal(a.repeats, '2');
   assert.equal(args(['pull', '--all-users', '--n', '5'])['all-users'], true);
-  assert.equal(args(['report', '--run']).run, true);
+  assert.equal(args(['run', '--run=smoke', '--models=--odd label']).models, '--odd label');
+  assert.equal(args(['run', '--run=a=b']).run, 'a=b');
+});
+
+test('a value flag with no value, or an unknown flag, is an error and not a silent switch', () => {
+  assert.throws(() => args(['report', '--run']), /--run needs a value/);
+  assert.throws(() => args(['run', '--run', 'x', '--models', '--judges', 'a']), /--models needs a value/);
+  assert.throws(() => args(['run', '--run', 'x', '--models', '--odd label']), /--models needs a value/);
+  assert.throws(() => args(['run', '--run=']), /--run needs a value/);
+  assert.throws(() => args(['run', '--run', 'x', '--model', 'a']), /unknown option --model/);
+  assert.throws(() => args(['pull', '--all-users=yes']), /--all-users takes no value/);
 });
 
 const LIMITS = { minChars: 100, maxChars: 1000 };

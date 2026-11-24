@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { snapshotInputs, loadInputs, hasInputs, assertRunName } = require('../lib/inputs');
+const { snapshotInputs, loadInputs, hasInputs, assertRunName, writePull: replacePull } = require('../lib/inputs');
 
 function write(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -95,4 +95,45 @@ test('a planned run whose inputs are gone is refused, not given a fresh copy of 
   assert.throws(() => snapshotInputs(data, run, { planned: true }), /has a plan but its input snapshot .* is missing/);
   assert.equal(hasInputs(run), false);
   assert.equal(fs.existsSync(path.join(run, 'inputs')), false);
+});
+
+function pullFixture() {
+  const data = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-pull-')), 'data');
+  const row = (t, i) => ({ id: t.id, tier: i % 2 === 0 ? 'premium' : 'basic' });
+  const set = (ids) => ids.map(id => ({ id, text: `text of ${id}` }));
+  const complete = () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(data, 'manifest.json'), 'utf8'));
+    for (const m of manifest) assert.ok(fs.existsSync(path.join(data, 'transcripts', `${m.id}.json`)), `${m.id} is in the manifest but not on disk`);
+    return manifest.map(m => m.id);
+  };
+  return { data, row, set, complete };
+}
+
+test('a pull replaces the previous set and leaves no transcript the manifest does not name', () => {
+  const { data, row, set, complete } = pullFixture();
+  replacePull(data, set(['a', 'b', 'c']), row);
+  assert.deepEqual(complete(), ['a', 'b', 'c']);
+  replacePull(data, set(['c', 'd']), row);
+  assert.deepEqual(complete(), ['c', 'd']);
+  assert.deepEqual(fs.readdirSync(path.join(data, 'transcripts')).sort(), ['c.json', 'd.json']);
+});
+
+test('a pull interrupted while writing leaves the previous set whole', () => {
+  const { data, row, set, complete } = pullFixture();
+  replacePull(data, set(['a', 'b', 'c']), row);
+  // The disk fills on the second new transcript.
+  const realWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (...a) => { if (++writes === 2) throw new Error('ENOSPC'); return realWrite(...a); };
+  try { assert.throws(() => replacePull(data, set(['d', 'e', 'f']), row), /ENOSPC/); } finally { fs.writeFileSync = realWrite; }
+  assert.deepEqual(complete(), ['a', 'b', 'c']);
+  // And a failure on the manifest itself, after every transcript landed.
+  writes = 0;
+  fs.writeFileSync = (...a) => { if (++writes === 4) throw new Error('ENOSPC'); return realWrite(...a); };
+  try { assert.throws(() => replacePull(data, set(['d', 'e', 'f']), row), /ENOSPC/); } finally { fs.writeFileSync = realWrite; }
+  assert.deepEqual(complete(), ['a', 'b', 'c']);
+  // The next pull that succeeds cleans up what the failed ones left.
+  replacePull(data, set(['g']), row);
+  assert.deepEqual(complete(), ['g']);
+  assert.deepEqual(fs.readdirSync(path.join(data, 'transcripts')), ['g.json']);
 });
