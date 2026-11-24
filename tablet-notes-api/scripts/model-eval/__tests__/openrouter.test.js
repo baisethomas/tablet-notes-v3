@@ -116,3 +116,25 @@ test('a 200 with an empty or non-JSON body is an error result, not a throw', asy
     assert.equal(r.content, undefined);
   }
 });
+
+test('a reply that finishes after the deadline is an error even if the abort never interrupted it', async (t) => {
+  const realFetch = global.fetch;
+  t.after(() => { global.fetch = realFetch; });
+  // Headers come back at once and the body takes 400 ms, ignoring the abort
+  // signal: the timer cannot help, only the clock can.
+  const late = (status, body) => async () => ({ ok: status === 200, status, json: async () => { await new Promise(r => setTimeout(r, 400)); return body; } });
+  global.fetch = late(200, { choices: [{ message: { content: 'late' }, finish_reason: 'stop' }], usage: {} });
+  const res = await chat('vendor/model', MESSAGES, {}, { deadlineMs: 200 });
+  assert.match(res.error, /exceeded the 200ms deadline/);
+  assert.equal(res.content, undefined);
+  assert.equal(res.attempts, 1);
+  // A late error is reported as the deadline too, and is not retried.
+  let calls = 0;
+  global.fetch = async (...a) => { calls++; return late(503, { error: { message: 'overloaded' } })(...a); };
+  const err = await chat('vendor/model', MESSAGES, {}, { deadlineMs: 200 });
+  assert.match(err.error, /exceeded the 200ms deadline/);
+  assert.equal(calls, 1);
+  // The same reply inside the deadline is accepted.
+  global.fetch = late(200, { choices: [{ message: { content: 'in time' }, finish_reason: 'stop' }], usage: {} });
+  assert.equal((await chat('vendor/model', MESSAGES, {}, { deadlineMs: 5000 })).content, 'in time');
+});

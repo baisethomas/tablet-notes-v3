@@ -54,6 +54,10 @@ async function chat(model, messages, params = {}, { timeoutMs = 120000, retries 
       // keep-alive whitespace long before the completion is finished.
       const json = await res.json().catch(() => null);
       const latencyMs = Date.now() - started;
+      // The abort timer stops a body still in flight, but a reply that
+      // finishes as the timer is about to fire can get here late. Production
+      // would not have stored it, so the clock decides, not the timer.
+      if (deadlineMs != null && latencyMs >= deadlineMs) return overDeadline(attempt + 1);
       const err = !res.ok ? (json?.error?.message || `HTTP ${res.status}`) : json?.error?.message;
       if (err) {
         const retryable = res.status === 429 || res.status >= 500;
