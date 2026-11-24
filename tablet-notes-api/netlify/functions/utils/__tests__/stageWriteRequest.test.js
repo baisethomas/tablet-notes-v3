@@ -274,3 +274,27 @@ test('a database error is returned, not reported as "already terminal"', async (
   assert.equal(result.applied, false);
   assert.equal(result.error.message, 'statement timeout');
 });
+
+test('a guarded write with no scope is refused before any request is sent', async () => {
+  // Without a scope the update would hit every sermon whose stage has not
+  // stopped. Two sermons, two owners: neither may change.
+  for (const scope of [undefined, null, {}]) {
+    const { supabase, requests, rows } = fakePostgrest([
+      sermon(),
+      sermon({ id: '33333333-3333-4333-8333-333333333333', user_id: '44444444-4444-4444-8444-444444444444' })
+    ]);
+
+    await assert.rejects(
+      updateWhileStageNotTerminal({
+        supabase,
+        patch: { transcription_status: 'complete' },
+        column: 'transcription_status',
+        scope
+      }),
+      /requires a non-empty scope/
+    );
+
+    assert.equal(requests.length, 0, 'no request left the client');
+    assert.deepEqual(rows.map((row) => row.transcription_status), ['processing', 'processing']);
+  }
+});

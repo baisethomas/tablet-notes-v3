@@ -251,10 +251,26 @@ function terminalStatusList() {
  * whose column was never set, so the first request alone would never match it.
  * It only runs when the first matched nothing.
  *
+ * The two requests are not one atomic step. For a row whose column is NULL, a
+ * concurrent writer can set a non-terminal value between them; the second
+ * request then matches nothing and the write is skipped and reported as not
+ * applied, although the stage is not terminal. A terminal state is still never
+ * overwritten. The reaper retries on its next sweep, and prod has no NULL
+ * stage columns (the default is 'processing'). TAB-140 moves the check and
+ * the write into one database step.
+ *
+ * `scope` is required and must not be empty: without it the update would hit
+ * every sermon whose stage has not stopped. That is a caller bug, so it
+ * throws rather than returning an error the callers treat as non-fatal.
+ *
  * @param {object} scope  equality filters identifying the row, e.g. `{ id }`
  * @returns {{ applied: boolean, error: object|null }}
  */
-async function updateWhileStageNotTerminal({ supabase, patch, column, scope = {} }) {
+async function updateWhileStageNotTerminal({ supabase, patch, column, scope }) {
+  if (!scope || Object.keys(scope).length === 0) {
+    throw new Error('updateWhileStageNotTerminal requires a non-empty scope');
+  }
+
   const attempt = async (guard) => {
     let query = supabase.from('sermons').update(patch);
     for (const [key, value] of Object.entries(scope)) {
