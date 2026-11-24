@@ -24,6 +24,12 @@ const {
 const { completeTranscriptionJob } = require('./utils/completeTranscription');
 const { applySermonStageTerminal } = require('./utils/sermonStatus');
 const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobClaim');
+const {
+  collectJoblessPlan,
+  applyRepairsUnlessJobAppeared,
+  RECONCILE_MIN_AGE_MS
+} = require('./utils/joblessSermons');
+const { TERMINAL_STATUSES, STATUS_COMPLETE, STATUS_TOO_SHORT } = require('./utils/sermonStatus');
 
 /**
  * Scheduled reaper for processing_jobs (TAB-72).
@@ -32,6 +38,8 @@ const { claimJob, releaseClaim, markUncertainHandoff } = require('./utils/jobCla
  * submit call failed after the row was written. This sweep is the safety net
  * that makes "no job is ever silently lost" true rather than aspirational:
  *
+ *   0. sermons still expecting work with NO job row    -> write the queued row the
+ *      client never managed to request (TAB-122)
  *   1. queued transcription jobs whose backoff elapsed  -> (re)submit to AssemblyAI
  *   2. submitted/running jobs past the stale window     -> reconcile against the
  *      provider's actual state, completing or failing them
@@ -46,6 +54,170 @@ const BATCH_LIMIT = 20;
 
 function supabaseClient() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+/**
+ * Step 0 (TAB-122): give every sermon that still expects work a job row.
+ *
+ * Both sweeps key off `processing_jobs` — this one iterates it, and the client
+ * only re-asks POST /api/jobs for sermons it sees as pending/failed. A sermon
+ * the legacy queue left at "processing", or whose job request never reached
+ * the server, therefore had no owner at all and read "processing" forever.
+ * Measured 2026-10-25: 19 transcription and 14 summary stages in that state.
+ *
+ * The decision logic is pure and tested (utils/joblessSermons.js); this
+ * function only fetches, applies, and logs. Everything downstream is the
+ * existing path: the queued row is submitted below in this same sweep, dead
+ * audio dies honestly, and TAB-85 writes `failed_permanent` onto the sermon.
+ *
+ * Fails closed: if the sermon, job, transcript or summary lookups fail, nothing
+ * is created, because creating a job without knowing whether one exists (or
+ * whether a transcript already does) is exactly the double-billing this avoids.
+ *
+ * The scan pages (utils/joblessSermons.js#collectJoblessPlan). Candidates that
+ * can never be acted on stay candidates forever, so a single fixed window
+ * fills up with them and hides the sermons behind it. One sweep reads a
+ * bounded number of pages; past that bound the window rotates, so every
+ * candidate is still reached.
+ */
+async function reconcileJoblessSermons({ supabase, logger, now = Date.now() }) {
+  const outcome = { scanned: 0, created: 0, repaired: 0, tooShort: 0, repairsSkipped: 0, deferred: 0, skipped: {} };
+  const cutoff = new Date(now - RECONCILE_MIN_AGE_MS).toISOString();
+  const terminal = `(${TERMINAL_STATUSES.join(',')})`;
+
+  // One definition of "candidate" for both the count and the pages, so the
+  // rotation is sized against the same rows it then reads.
+  const candidates = (columns, options) => supabase
+    .from('sermons')
+    .select(columns, options)
+    .or(
+      `transcription_status.not.in.${terminal},transcription_status.is.null,` +
+      `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.not.in.${terminal}),` +
+      `and(transcription_status.eq.${STATUS_COMPLETE},summary_status.is.null)`
+    )
+    .not('audio_file_path', 'is', null)
+    .lt('updated_at', cutoff);
+
+  const countCandidates = async () => {
+    const { count, error } = await candidates('id', { count: 'exact', head: true });
+    if (error) throw new Error(`sermon count failed: ${error.message}`);
+    return count || 0;
+  };
+
+  const fetchPage = async ({ offset, limit }) => {
+    const { data, error } = await candidates(
+      'id, local_id, user_id, transcription_status, summary_status, audio_file_path, updated_at'
+    )
+      .order('updated_at', { ascending: false })
+      // Tie-break so the pages of one sweep never overlap or skip a row.
+      .order('id', { ascending: true })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw new Error(`sermon scan failed: ${error.message}`);
+    return data || [];
+  };
+
+  const fetchContext = async (ids) => {
+    const [jobs, transcripts, summaries] = await Promise.all([
+      supabase.from('processing_jobs').select('sermon_id, kind, status').in('sermon_id', ids),
+      supabase.from('transcripts').select('sermon_id, text').in('sermon_id', ids),
+      supabase.from('summaries').select('sermon_id, text').in('sermon_id', ids)
+    ]);
+    if (jobs.error) throw new Error(`job lookup failed: ${jobs.error.message}`);
+    if (transcripts.error) throw new Error(`transcript lookup failed: ${transcripts.error.message}`);
+    if (summaries.error) throw new Error(`summary lookup failed: ${summaries.error.message}`);
+    return { jobs: jobs.data || [], transcripts: transcripts.data || [], summaries: summaries.data || [] };
+  };
+
+  let collected;
+  try {
+    collected = await collectJoblessPlan({ countCandidates, fetchPage, fetchContext, now });
+  } catch (lookupError) {
+    logger.error('[jobs-reaper] reconcile: lookup failed; creating nothing', { error: lookupError.message });
+    return outcome;
+  }
+
+  const { plan, scanned, exhausted, rotating, total } = collected;
+  if (scanned === 0) return outcome;
+  outcome.scanned = scanned;
+
+  for (const entry of plan.skipped) {
+    outcome.skipped[entry.reason] = (outcome.skipped[entry.reason] || 0) + 1;
+  }
+  outcome.deferred = plan.deferred;
+
+  // The plan's "no job" answer can be many pages old by now. Ask again right
+  // before each stage write, and leave a stage that has gained a job to it.
+  const hasJob = async ({ sermon_id: sermonId, stage }) => {
+    const { data, error } = await supabase
+      .from('processing_jobs')
+      .select('id')
+      .eq('sermon_id', sermonId)
+      .eq('kind', stage)
+      .limit(1);
+    if (error) throw new Error(`job re-check failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  };
+  const stageWrite = (status) => ({ sermon_id: sermonId, stage }) => applySermonStageTerminal({
+    supabase,
+    sermonId,
+    stage,
+    status,
+    onlyIfNotTerminal: true,
+    logger
+  });
+
+  // A transcript already exists: advance the stage rather than pay for it
+  // again. Non-fatal and guarded, like every stage write — a stage that has
+  // stopped in the meantime keeps its outcome.
+  const completed = await applyRepairsUnlessJobAppeared({
+    repairs: plan.markComplete,
+    hasJob,
+    apply: stageWrite(STATUS_COMPLETE)
+  });
+  outcome.repaired = completed.applied;
+
+  // The transcript is below the summarizer's floor: stop the summary stage on
+  // `too_short`, the state the normal pipeline writes for the same transcript
+  // (completeTranscription.js), instead of queuing a job that can only fail.
+  const stopped = await applyRepairsUnlessJobAppeared({
+    repairs: plan.markTooShort,
+    hasJob,
+    apply: stageWrite(STATUS_TOO_SHORT)
+  });
+  outcome.tooShort = stopped.applied;
+
+  outcome.repairsSkipped = completed.jobAppeared + completed.unknown + stopped.jobAppeared + stopped.unknown;
+
+  if (plan.create.length > 0) {
+    // `ignoreDuplicates: true` is INSERT ... ON CONFLICT DO NOTHING. jobs.js
+    // rightly refuses a plain upsert because that rewrites `status` under a
+    // concurrent claim; DO NOTHING never touches an existing row, which is the
+    // same construct completeTranscription.js uses to chain the summary job.
+    const { error: insertError } = await supabase
+      .from('processing_jobs')
+      .upsert(plan.create, { onConflict: 'idempotency_key', ignoreDuplicates: true });
+
+    if (insertError) {
+      logger.error('[jobs-reaper] reconcile: job insert failed', { error: insertError.message });
+    } else {
+      outcome.created = plan.create.length;
+    }
+  }
+
+  // Logged on every sweep that saw a candidate, including the ones that did
+  // nothing: a scan that quietly stops finding work is otherwise invisible.
+  logger.info('[jobs-reaper] reconcile: sweep', { ...outcome, exhausted, rotating, total });
+  if (rotating) {
+    // Not a fault, but worth seeing: the backlog of candidates that can never
+    // be acted on has outgrown one sweep, so each sweep reads a different
+    // window and a job-less sermon may wait a few sweeps to be reached.
+    logger.warn('[jobs-reaper] reconcile: more candidates than one sweep reads; scanning a rotating window', {
+      scanned,
+      total
+    });
+  }
+  return outcome;
 }
 
 async function resubmitTranscription({ supabase, assembly, job, logger }) {
@@ -511,6 +683,16 @@ exports.handler = withLogging('jobs-reaper', async () => {
   const assembly = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
   const nowIso = new Date().toISOString();
 
+  // Step 0 runs BEFORE the job fetch so a row written here is picked up by
+  // this same sweep. Isolated like every phase (docs/OPERATING-MANUAL.md §6):
+  // a failure here must never stop the job sweep below.
+  let reconciled = null;
+  try {
+    reconciled = await reconcileJoblessSermons({ supabase, logger });
+  } catch (reconcileError) {
+    console.error('[jobs-reaper] reconcile step threw; continuing with the job sweep', reconcileError);
+  }
+
   const { data: jobs, error } = await supabase
     .from('processing_jobs')
     .select('*')
@@ -539,5 +721,8 @@ exports.handler = withLogging('jobs-reaper', async () => {
   }
 
   console.log(`[jobs-reaper] Swept ${jobs?.length || 0} candidate job(s), acted on ${handled}`);
-  return { statusCode: 200, body: JSON.stringify({ candidates: jobs?.length || 0, handled }) };
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ candidates: jobs?.length || 0, handled, reconciled })
+  };
 });
