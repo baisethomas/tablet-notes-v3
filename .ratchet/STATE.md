@@ -26,7 +26,7 @@ This branch: TAB-120 summarize heading contract, branched from `cursor/macos-ci-
 
 ## Working on
 
-- TAB-120 [in flight `cursor/tab-120-summarize-format-5691`]: option 2 (mandatory headings + one retry). This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
+- TAB-120 [open PR #101] on `cursor/tab-120-summarize-format-5691` @ 265e3fd: option 2 (mandatory headings + one retry). This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
 - macOS CI [open PR #99] on `cursor/macos-ci-861a` at 93ace86: verified, not merged. Inherited by this branch so `ios-simulator` runs. Do not modify the workflow.
 - Open PRs as of 2026-11-24, none of them from the TAB-122/141 workstream: #92 (TAB-138, replacement-model evaluation harness, In Review; its branch carries its own copy of this file), #82 (TAB-118, website import and Vercel cutover plan), #86 and #87 (two competing attempts at TAB-123; one needs picking and the other closing), #89 and #90 (briefs). Check each PR for its current state before touching its branch.
 - TAB-126 (moved to LOO-238 in Linear, Verified) merged to `main` @ a6ccf89 (PR #91): Help Scout mailbox 371514 (Granted AI) routes to Linear team LOO plus project Granted AI. The live `SUPPORT_INBOX_ROUTES` env update was operator-reserved; whether it has been applied was not checked here. No GRA team ID remains in `support-automation/`.
@@ -35,7 +35,7 @@ This branch: TAB-120 summarize heading contract, branched from `cursor/macos-ci-
 
 ## Next
 
-1. Open the TAB-120 PR against `main`, move Linear to In Review, wait for a green `ios-simulator` run on the head SHA.
+1. Wait for a green `ios-simulator` run on PR #101 head `265e3fd`. If CI is waiting on #99 merging, say so; do not re-implement CI.
 2. Owner runs the live-model 20/20: `cd tablet-notes-api && OPENAI_API_KEY=... node scripts/dry-run-summarize-headings.js --transcript /path/to/real-transcript.txt --runs 20`. Headings: Main Scripture Text, Brief Summary, Key Points, Memorable Elements, Scripture References. No prod writes. Do not commit the transcript.
 3. After TAB-120: TAB-121 on its own branch from `cursor/macos-ci-861a`. Do not merge #99. Do not bump `MARKETING_VERSION`.
 
@@ -83,5 +83,5 @@ This branch: TAB-120 summarize heading contract, branched from `cursor/macos-ci-
 
 - Updated: 2026-11-25 (TAB-120 option 2 implemented; 20/20 dry-run skipped for missing OPENAI_API_KEY)
 - By: agent (Cursor Grok 4.6, cloud)
-- Branch/worktree: `cursor/tab-120-summarize-format-5691` [in flight]
-- Last known-good commit: pending the fix commit on this branch; inherited CI green at `93ace86` / PR #99
+- Branch/worktree: `cursor/tab-120-summarize-format-5691` [open PR #101]
+- Last known-good commit: `265e3fd` (`npm test` 315/315, `RRR: PROVEN`); inherited CI green at `93ace86` / PR #99
