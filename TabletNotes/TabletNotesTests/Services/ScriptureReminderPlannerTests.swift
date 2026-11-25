@@ -161,6 +161,33 @@ struct ScriptureReminderPlannerTests {
         #expect(references(plan(summary, transcript: transcript)) == ["Matthew 11:28"])
     }
 
+    @Test func spokenTranscriptFallbackYieldsReferencesInReadingOrder() {
+        let summary = """
+        Key Points
+        - Rest is an act of trust, not a reward for finishing.
+        """
+        let transcript = """
+        in Joshua 14, verse 12
+        Psalms 18, verse 32
+        Psalms 37, verse 23
+        John 5, verse 4
+        Jesus says in Mark's gospel, the 11th chapter, verse 23
+        James 1, and let's start at verse 2
+        """
+        // The planner caps at four reminders; the first four spoken lines win.
+        #expect(references(plan(summary, transcript: transcript)) == [
+            "Joshua 14:12", "Psalms 18:32", "Psalms 37:23", "John 5:4"
+        ])
+    }
+
+    @Test func writtenReferenceAfterAWordInTheTranscriptIsKept() {
+        let summary = """
+        Key Points
+        - Rest is an act of trust, not a reward for finishing.
+        """
+        #expect(references(plan(summary, transcript: "we read in Romans 8:28 today")) == ["Romans 8:28"])
+    }
+
     @Test func transcriptIsNotConsultedOnceFourAreFound() {
         let summary = """
         Scripture References
