@@ -58,6 +58,8 @@ jobs:
           # Placeholder only. Clearly fake; not a production Firebase project.
           # Generated in the job so the test host can call FirebaseApp.configure()
           # without a real GoogleService-Info.plist in git.
+          # FIRInstallations validates API_KEY at configure(): length 39, starts with A.
+          # A first run crashed the test host on `ci-placeholder-not-a-real-key`.
           python3 - <<'PY'
           from pathlib import Path
           Path("TabletNotes/TabletNotes/GoogleService-Info.plist").write_text("""<?xml version="1.0" encoding="UTF-8"?>
@@ -65,7 +67,7 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>API_KEY</key>
-            <string>ci-placeholder-not-a-real-key</string>
+            <string>AIzaSy000000000000000000000000000000000</string>
             <key>GCM_SENDER_ID</key>
             <string>000000000000</string>
             <key>PLIST_VERSION</key>
