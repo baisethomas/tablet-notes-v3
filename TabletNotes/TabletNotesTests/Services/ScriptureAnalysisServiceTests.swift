@@ -79,8 +79,9 @@ struct ScriptureAnalysisServiceTests {
     @Test func writtenReferenceAfterAWordIsKept() {
         let line = "in Romans 8:28"
         #expect(readingOrder(line) == ["Romans 8:28"])
-        #expect(analyzer.analyzeScriptureReferences(in: line).first?.raw == "Romans 8:28"
-            || analyzer.analyzeScriptureReferences(in: line).first?.raw == "in Romans 8:28")
+        // raw must be the reference itself. "in Romans 8:28" means the old
+        // greedy book group swallowed the preceding word.
+        #expect(analyzer.analyzeScriptureReferences(in: line).first?.raw == "Romans 8:28")
     }
 
     // MARK: - False positives

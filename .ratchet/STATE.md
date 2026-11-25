@@ -36,9 +36,10 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Next
 
-1. Wait for a green `ios-simulator` run on PR #102 after the throwing `#require` test compile fix. Run 45711320421 failed on `5ed6a92` at `ScriptureAnalysisServiceTests.swift:118` (`errors thrown from here are not handled`). If CI is waiting on #99 merging, say so; do not re-implement CI.
-2. `skip: xcodebuild` is not available on this Linux VM; CI is the iOS proof. `skip: rrr.sh` for the same reason.
-3. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched. TAB-143 is a linked follow-up, not this PR.
+1. Wait for a green `ios-simulator` run on this PR #102 head after tightening `writtenReferenceAfterAWordIsKept` so `raw` is exactly `Romans 8:28`. Throwaway red-run draft PR #103 (`ci-red/tab-121-bc2dfae`) is done: do not merge; Baise will close it. If CI is waiting on #99 merging, say so; do not re-implement CI.
+2. `skip: xcodebuild` is not available on this Linux VM; CI is the iOS proof.
+3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are listed in `docs/OPERATING-MANUAL.md` §3. A later change that actually fixes them should drop the matching `-skip-testing` lines in `.github/workflows/ios.yml`.
+4. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched. TAB-143 is a linked follow-up, not this PR.
 
 ## Blocked
 
@@ -56,7 +57,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Verification status
 
-- TAB-121 on this branch: `skip: xcodebuild` (no Xcode on this Linux VM). `skip: rrr.sh` (the proof command needs `xcodebuild test -only-testing:TabletNotesTests/ScriptureAnalysisServiceTests`). New tests cover the six spoken lines, written-after-a-word, false-positive "chapter 3 of this book", written-form regressions (including dotted abbreviations `Jn. 3:16` / `Rom. 8:28` / `1 Cor. 13:4-7`), and planner transcript fallback. No new `-skip-testing` lines. iOS proof is the `ios-simulator` job on this PR.
+- TAB-121 on this branch: `skip: xcodebuild` (no Xcode on this Linux VM). **RRR: PROVEN** via throwaway draft PR #103 (`ci-red/tab-121-bc2dfae`). Red: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45714983280 job `ios-simulator` on `7198f72` (tests without the analyzer fix; `bc2dfae` plus `throws` so the test target compiles). Build TabletNotes success; Test TabletNotesTests failure, 14 issues in `ScriptureAnalysisServiceTests` / `ScriptureReminderPlannerTests` (not a build error). Prior green on this PR: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45712495560 job `ios-simulator` on `1b7b09e`. New tests cover the six spoken lines, written-after-a-word with `raw == "Romans 8:28"` (fails if raw is `in Romans 8:28`), false-positive "chapter 3 of this book", written-form regressions (including dotted abbreviations `Jn. 3:16` / `Rom. 8:28` / `1 Cor. 13:4-7`), and planner transcript fallback. No new `-skip-testing` lines.
 - macOS CI [open PR #99]: green `ios-simulator` at https://github.com/baisethomas/tablet-notes-v3/actions/runs/45568080502 (403 tests; artifact `ios-ci-results` downloaded). Red proof https://github.com/baisethomas/tablet-notes-v3/actions/runs/45570066667 reverted by `997721f`. Post-revert green https://github.com/baisethomas/tablet-notes-v3/actions/runs/45571732568. `xcodebuild` was not run on the Linux VM.
 - TAB-141 on `main` @ c29d65a: `npm test` 301/301 before merge (10 new in `stageWriteRequest.test.js`, which run the real Supabase client against a stand-in PostgREST that rejects an `or`/`and` filter the way production did; with the old `or` filter restored 13 tests fail), `node --check` on `sermonStatus.js`, the reaper and `update-sermon.js`. In prod after deploy (read-only, 2026-11-24 06:55 UTC sweep): all 9 pending repairs landed (7 to `transcription_status = complete`, 2 to `summary_status = too_short`), the 9 `PATCH /rest/v1/sermons` requests carrying `not.in.` returned 200, and the Postgres log has no `column sermons.* does not exist` errors since the merge. The `is.null` follow-up request has not run against real PostgREST (no NULL stage columns exist).
 - TAB-122 on `main` @ 414d6fc: `npm test` 291/291 before merge. In prod after deploy (read-only, 2026-11-23 21:30 UTC sweep): 9 jobs created, 4 sermons transcribed with summary jobs chained, 1 `no_speech`, 2 summary stages `complete`, 2 jobs failing transcoding; all 9 stage repairs rejected with 400 (TAB-141).
@@ -82,7 +83,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Last handoff
 
-- Updated: 2026-11-25 (TAB-121 Codex round: restore dotted abbreviations; TAB-143 filed)
+- Updated: 2026-11-25 (TAB-121 verifier round: red-run throwaway + tighten written-after-a-word raw)
 - By: agent (Cursor Grok 4.6, cloud)
 - Branch/worktree: `cursor/tab-121-spoken-scripture-5691` [open PR #102]
-- Last known-good commit: pending push of dotted-abbreviation restore; inherited CI green at `93ace86` / PR #99
+- Last known-good commit: `1b7b09e` (ios-simulator run 45712495560). This commit tightens `writtenReferenceAfterAWordIsKept`; it needs its own green `ios-simulator` run. Inherited CI at `93ace86` / PR #99.
