@@ -26,7 +26,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Working on
 
-- TAB-121 [open PR #102] on `cursor/tab-121-spoken-scripture-5691` @ d5b1b35: spoken patterns plus written-after-a-word. This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
+- TAB-121 [open PR #102] on `cursor/tab-121-spoken-scripture-5691`: spoken patterns plus written-after-a-word, plus a Codex-round restore of optional abbreviation periods (`Jn.`, `Rom.`, `1 Cor.`). This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push). Follow-up: TAB-143 (unspaced hyphen in spoken verse ranges).
 - TAB-120 [open PR #101] on `cursor/tab-120-summarize-format-5691` (separate branch). Option 2 heading retry; live 20/20 skipped for missing OPENAI_API_KEY.
 - macOS CI [open PR #99] on `cursor/macos-ci-861a` at 93ace86: verified, not merged. Inherited by this branch so `ios-simulator` runs. Do not modify the workflow.
 - Open PRs as of 2026-11-24, none of them from the TAB-122/141 workstream: #92 (TAB-138, replacement-model evaluation harness, In Review; its branch carries its own copy of this file), #82 (TAB-118, website import and Vercel cutover plan), #86 and #87 (two competing attempts at TAB-123; one needs picking and the other closing), #89 and #90 (briefs). Check each PR for its current state before touching its branch.
@@ -36,9 +36,9 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Next
 
-1. Wait for a green `ios-simulator` run on PR #102 head `d5b1b35` (`ScriptureAnalysisServiceTests` and `ScriptureReminderPlannerTests`). If CI is waiting on #99 merging, say so; do not re-implement CI.
+1. Wait for a green `ios-simulator` run on PR #102's new head after the dotted-abbreviation restore (`ScriptureAnalysisServiceTests` including `dottedAbbreviatedWrittenFormStillMatches`, plus `ScriptureReminderPlannerTests`). Pushing this fix cancels the in-progress run on `d5b1b35`. If CI is waiting on #99 merging, say so; do not re-implement CI.
 2. `skip: xcodebuild` is not available on this Linux VM; CI is the iOS proof. `skip: rrr.sh` for the same reason.
-3. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched.
+3. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched. TAB-143 is a linked follow-up, not this PR.
 
 ## Blocked
 
@@ -56,7 +56,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Verification status
 
-- TAB-121 on this branch: `skip: xcodebuild` (no Xcode on this Linux VM). `skip: rrr.sh` (the proof command needs `xcodebuild test -only-testing:TabletNotesTests/ScriptureAnalysisServiceTests`). New tests cover the six spoken lines, written-after-a-word, false-positive "chapter 3 of this book", written-form regressions, and planner transcript fallback. No new `-skip-testing` lines. iOS proof is the `ios-simulator` job on this PR.
+- TAB-121 on this branch: `skip: xcodebuild` (no Xcode on this Linux VM). `skip: rrr.sh` (the proof command needs `xcodebuild test -only-testing:TabletNotesTests/ScriptureAnalysisServiceTests`). New tests cover the six spoken lines, written-after-a-word, false-positive "chapter 3 of this book", written-form regressions (including dotted abbreviations `Jn. 3:16` / `Rom. 8:28` / `1 Cor. 13:4-7`), and planner transcript fallback. No new `-skip-testing` lines. iOS proof is the `ios-simulator` job on this PR.
 - macOS CI [open PR #99]: green `ios-simulator` at https://github.com/baisethomas/tablet-notes-v3/actions/runs/45568080502 (403 tests; artifact `ios-ci-results` downloaded). Red proof https://github.com/baisethomas/tablet-notes-v3/actions/runs/45570066667 reverted by `997721f`. Post-revert green https://github.com/baisethomas/tablet-notes-v3/actions/runs/45571732568. `xcodebuild` was not run on the Linux VM.
 - TAB-141 on `main` @ c29d65a: `npm test` 301/301 before merge (10 new in `stageWriteRequest.test.js`, which run the real Supabase client against a stand-in PostgREST that rejects an `or`/`and` filter the way production did; with the old `or` filter restored 13 tests fail), `node --check` on `sermonStatus.js`, the reaper and `update-sermon.js`. In prod after deploy (read-only, 2026-11-24 06:55 UTC sweep): all 9 pending repairs landed (7 to `transcription_status = complete`, 2 to `summary_status = too_short`), the 9 `PATCH /rest/v1/sermons` requests carrying `not.in.` returned 200, and the Postgres log has no `column sermons.* does not exist` errors since the merge. The `is.null` follow-up request has not run against real PostgREST (no NULL stage columns exist).
 - TAB-122 on `main` @ 414d6fc: `npm test` 291/291 before merge. In prod after deploy (read-only, 2026-11-23 21:30 UTC sweep): 9 jobs created, 4 sermons transcribed with summary jobs chained, 1 `no_speech`, 2 summary stages `complete`, 2 jobs failing transcoding; all 9 stage repairs rejected with 400 (TAB-141).
@@ -70,7 +70,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 ## Open risks / assumptions
 
 - macOS CI skips the named tests now listed in `docs/OPERATING-MANUAL.md` §3, including the two extra ones that failed on the first full Actions test host (run 45566567214) with no product-code change. They may fail on `main` locally too; they were not re-run in isolation. The fake Firebase plist is format-valid but not a real project; configure() no longer crashes, but no Firebase backend is contacted by design. The workflow writes that plist on every CI checkout so the test host never bundles a real Firebase project.
-- TAB-119: reminders depend on the summary carrying scripture. TAB-120 (PR #101) makes Scripture References mandatory and retries once. TAB-121 (this branch) matches spoken forms and written-after-a-word; a reference split across a line break is still missed because the planner feeds one line at a time.
+- TAB-119: reminders depend on the summary carrying scripture. TAB-120 (PR #101) makes Scripture References mandatory and retries once. TAB-121 (this branch) matches spoken forms, written-after-a-word, and dotted abbreviations; a reference split across a line break is still missed because the planner feeds one line at a time. Spoken `verses 16-18` without spaces around the hyphen is TAB-143.
 
 - App Review may exercise the app on a fresh Sign in with Apple account (trial state); the always-visible Premium row is what addresses that.
 - The auto-stop save handler skips the save if the stop event carries no session id. Unreachable while audio is present, but it should fall back rather than skip if that invariant ever changes.
@@ -82,7 +82,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Last handoff
 
-- Updated: 2026-11-25 (TAB-121 spoken analyzer; xcodebuild skipped on Linux)
+- Updated: 2026-11-25 (TAB-121 Codex round: restore dotted abbreviations; TAB-143 filed)
 - By: agent (Cursor Grok 4.6, cloud)
 - Branch/worktree: `cursor/tab-121-spoken-scripture-5691` [open PR #102]
-- Last known-good commit: `d5b1b35`; inherited CI green at `93ace86` / PR #99
+- Last known-good commit: pending push of dotted-abbreviation restore; inherited CI green at `93ace86` / PR #99

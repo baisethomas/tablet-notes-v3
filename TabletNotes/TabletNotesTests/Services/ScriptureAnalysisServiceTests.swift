@@ -103,6 +103,12 @@ struct ScriptureAnalysisServiceTests {
         #expect(readingOrder("Jn 3:16") == ["John 3:16"])
     }
 
+    @Test func dottedAbbreviatedWrittenFormStillMatches() {
+        #expect(readingOrder("Jn. 3:16") == ["John 3:16"])
+        #expect(readingOrder("Rom. 8:28") == ["Romans 8:28"])
+        #expect(readingOrder("1 Cor. 13:4-7") == ["1 Corinthians 13:4-7"])
+    }
+
     @Test func writtenRangeAndMultipleOnOneLineKeepReadingOrder() {
         #expect(readingOrder("John 3:16-18 and Romans 8:28") == ["John 3:16-18", "Romans 8:28"])
     }

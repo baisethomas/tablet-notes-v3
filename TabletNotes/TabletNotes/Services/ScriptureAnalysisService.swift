@@ -81,8 +81,10 @@ class ScriptureAnalysisService: ObservableObject, ScriptureAnalysisServiceProtoc
 
     private lazy var regex: NSRegularExpression = {
         let book = Self.bookAlternation
+        // Optional period after the book restores the old abbreviated pattern
+        // (`Jn.`, `Rom.`, `1 Cor.`) that `\b([1-3]?\s?[A-Za-z]{2,4}\.?)` allowed.
         let pattern = """
-        (?<book>\(book))(?:\
+        (?<book>\(book))\\.?(?:\
         \\s+(?<chColon>\\d+)\\s*:\\s*(?<vsColon>\\d+)(?:-(?<enColon>\\d+))?|\
         \\s*,?\\s+the\\s+(?<chOrd>\\d+)(?:st|nd|rd|th)\\s+chapter\\s*,?\\s+verses?\\s+(?<vsOrd>\\d+)(?:\\s+(?:to|through|-)\\s+(?<enOrd>\\d+))?|\
         \\s+chapter\\s+(?<chWord>\\d+)\\s*,?\\s+verses?\\s+(?<vsWord>\\d+)(?:\\s+(?:to|through|-)\\s+(?<enWord>\\d+))?|\
