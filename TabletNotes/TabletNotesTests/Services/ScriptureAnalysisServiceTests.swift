@@ -107,7 +107,7 @@ struct ScriptureAnalysisServiceTests {
         #expect(readingOrder("John 3:16-18 and Romans 8:28") == ["John 3:16-18", "Romans 8:28"])
     }
 
-    @Test func rawIsTheMatchedTextSoThePlannerCanLocateIt() {
+    @Test func rawIsTheMatchedTextSoThePlannerCanLocateIt() throws {
         let line = "in Joshua 14, verse 12 we stand"
         let ref = try #require(analyzer.analyzeScriptureReferences(in: line).first)
         #expect(line.contains(ref.raw))
