@@ -220,3 +220,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** A later PR that actually fixes those tests should delete the matching `-skip-testing` lines. If skip-with-parens still does not skip, the next lever is skipping the suite.
 - **Revisit when:** the skip flags are observed in a green run, or TAB-76 / the SyncServiceMergeTests failure is fixed.
 - **Approved by:** agent (medium impact, within the macos-ci brief)
+
+### D-20261125-2210-scripture-book-catalog-anchor — Scripture regex is anchored to the known book catalog
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-11-25
+- **Decision:** `ScriptureAnalysisService` builds its book group from the known book list (plus `Matthew|Mark|Luke|John's gospel`) instead of `[A-Za-z]+`. Spoken patterns (`Book N, verse M`, `the Nth chapter, verse M`, `Book N, and let's start at verse M`, optional `verses M to/through K`) normalise to the existing `ScriptureReference`. `raw` stays the matched text.
+- **Why:** The greedy letter pattern swallowed the preceding word ("in Romans 8:28" became book "in Romans") and could not see spoken forms in transcripts. Anchoring to the catalog is the smallest change that fixes both without a new parser.
+- **Rejected / alternatives:** Keeping `[A-Za-z]+` and stripping a leading stopword list — incomplete for arbitrary preceding words. A full NLP pass — out of scope.
+- **Consequences:** A reference split across a line break is still missed (the planner feeds one line at a time). "chapter 3 of this book" without a book name is not a match.
+- **Revisit when:** a real transcript still misses a spoken form the catalog does not list (e.g. "First Corinthians").
+- **Approved by:** agent (medium impact, within TAB-121 authorized scope)
