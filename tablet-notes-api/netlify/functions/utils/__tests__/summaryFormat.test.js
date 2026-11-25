@@ -9,6 +9,7 @@ const {
   buildRetryUserMessage,
   MANDATORY_SCRIPTURE_REFERENCES_INSTRUCTION
 } = require('../summaryFormat');
+const { buildSummarizeSystemPrompt } = require('../summarizePrompt');
 
 // TAB-120: gpt-4o-mini at temperature 0.7 often returns narrative prose and
 // drops Scripture References. Option 2 (smallest that can meet 20/20): the
@@ -180,4 +181,14 @@ test('the retry instruction names every missing heading and None stated', () => 
 test('the prompt contract requires Scripture References even when empty', () => {
   assert.match(MANDATORY_SCRIPTURE_REFERENCES_INSTRUCTION, /None stated/i);
   assert.match(MANDATORY_SCRIPTURE_REFERENCES_INSTRUCTION, /Scripture References/);
+});
+
+test('the production system prompt interpolates the heading contract', () => {
+  const prompt = buildSummarizeSystemPrompt({ userTier: 'basic', serviceType: 'Sermon' });
+  assert.match(prompt, /User Tier: basic/);
+  assert.match(prompt, /Service Type: Sermon/);
+  assert.match(prompt, /None stated/i);
+  for (const heading of REQUIRED_HEADINGS) {
+    assert.match(prompt, new RegExp(heading));
+  }
 });

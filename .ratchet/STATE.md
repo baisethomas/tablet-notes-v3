@@ -14,7 +14,7 @@ TabletNotes is live on the App Store (1.0 since 2026-09-11; 1.0.1 with the recor
 
 ## Current phase
 
-This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-11-24-macos-ci.md`, brief PR #98). Product workstream on `main` remains post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. No release in preparation.
+This branch: TAB-120 summarize heading contract, branched from `cursor/macos-ci-861a` so the `ios-simulator` workflow is present until PR #99 merges. Product workstream on `main` remains post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. No release in preparation.
 
 ## Completed
 
@@ -26,7 +26,8 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Working on
 
-- macOS CI [open PR #99] on `cursor/macos-ci-861a`: workflow is green. Evidence is in the PR #99 body and in the comment on brief PR #98. Ternary review on the red-run commit asked that the two extra CI skips be listed in `docs/OPERATING-MANUAL.md` §3; that is now in this branch. Stale findings (skip ids without `()`, unvalidated workflow, red-run test still present) were answered on the threads; `Package.resolved` cache-key and UI-test-target-build suggestions were declined with reasons. Green run: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45568080502 job `ios-simulator` (12m18s run / 12m14s job; 403 tests passed). Red run: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45570066667 (`deliberateCIRedCheck`), reverted by `997721f`. Post-revert green: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45571732568 (9m33s). Artifact `ios-ci-results` downloaded from the first green run; contains `test.xcresult`, `build.xcresult`, `xcodebuild-build.log`, `xcodebuild-test.log`. Runner `macos-15` (ImageOS=macos15, ImageVersion=20261118.0550.1). `xcodebuild -version`: Xcode 26.2 / Build version 17C52. Destination `platform=iOS Simulator,name=CI-TabletNotes,OS=26.2` (fresh iPhone 16 Pro). Do not merge; do not make the workflow a required check.
+- TAB-120 [in flight `cursor/tab-120-summarize-format-5691`]: option 2 (mandatory headings + one retry). This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
+- macOS CI [open PR #99] on `cursor/macos-ci-861a` at 93ace86: verified, not merged. Inherited by this branch so `ios-simulator` runs. Do not modify the workflow.
 - Open PRs as of 2026-11-24, none of them from the TAB-122/141 workstream: #92 (TAB-138, replacement-model evaluation harness, In Review; its branch carries its own copy of this file), #82 (TAB-118, website import and Vercel cutover plan), #86 and #87 (two competing attempts at TAB-123; one needs picking and the other closing), #89 and #90 (briefs). Check each PR for its current state before touching its branch.
 - TAB-126 (moved to LOO-238 in Linear, Verified) merged to `main` @ a6ccf89 (PR #91): Help Scout mailbox 371514 (Granted AI) routes to Linear team LOO plus project Granted AI. The live `SUPPORT_INBOX_ROUTES` env update was operator-reserved; whether it has been applied was not checked here. No GRA team ID remains in `support-automation/`.
 - TAB-141 merged to `main` @ c29d65a (PR #93, squash, 2026-11-24), deployed and verified in prod. Every sermon stage write guarded by "only while the stage has not already stopped" was rejected by PostgREST with 400 (`column sermons.<stage column> does not exist`) and wrote nothing: the guard was sent as an `or=(...)` filter with `select=id`, and on an update PostgREST re-applies `or`/`and` filters to the returned rows, which carry only the selected columns. Found on 2026-11-23 when the first reaper sweep after TAB-122 had all 9 of its stage repairs rejected. Four callers share the call: the reaper's job-less repairs, the dead-job `failed_permanent` write-back (`processingJobs.js`), `completeTranscription.js`, and `applyStageStatusWrites` (update-sermon). Fix: `updateWhileStageNotTerminal` in `utils/sermonStatus.js` sends plain filters only (`not.in` the terminal list, then `is.null` if that matched nothing). Do not put an `or`/`and` filter on a PostgREST update that returns a narrower `select`, and do not "fix" it by selecting the filtered column: the filter would then be tested against the new value. The helper throws on a missing or empty `scope`. Its two requests are not one atomic step for a NULL stage column (a concurrent non-terminal write between them skips the write; a terminal state is still never overwritten); TAB-140 covers that.
@@ -34,9 +35,9 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Next
 
-1. Owner reviews PR #99. Do not merge until the owner says so. Do not mark the workflow as a required status check.
-2. After this PR: the next release must bump `MARKETING_VERSION` to 1.0.2 or higher before archiving. Product backlog is unchanged (TAB-103 step 2, redesign issues TAB-128…).
-3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are listed in `docs/OPERATING-MANUAL.md` §3. A later change that actually fixes them should drop the matching `-skip-testing` lines in `.github/workflows/ios.yml`.
+1. Open the TAB-120 PR against `main`, move Linear to In Review, wait for a green `ios-simulator` run on the head SHA.
+2. Owner runs the live-model 20/20: `cd tablet-notes-api && OPENAI_API_KEY=... node scripts/dry-run-summarize-headings.js --transcript /path/to/real-transcript.txt --runs 20`. Headings: Main Scripture Text, Brief Summary, Key Points, Memorable Elements, Scripture References. No prod writes. Do not commit the transcript.
+3. After TAB-120: TAB-121 on its own branch from `cursor/macos-ci-861a`. Do not merge #99. Do not bump `MARKETING_VERSION`.
 
 ## Blocked
 
@@ -54,6 +55,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Verification status
 
+- TAB-120 on this branch: `npm test` 315/315. `node --check` on `summarize.js`, `summaryFormat.js`, `summarizePrompt.js`, `dry-run-summarize-headings.js`. `rrr.sh` on `tablet-notes-api/netlify/functions/utils/summaryFormat.js`: `RRR: PROVEN` (14/14 with the fix, 6/14 with HEAD stub, 14/14 restored). Live-model 20/20: `skip: OPENAI_API_KEY is not set`. No new `-skip-testing` lines. `xcodebuild` not run (no Swift change).
 - macOS CI [open PR #99]: green `ios-simulator` at https://github.com/baisethomas/tablet-notes-v3/actions/runs/45568080502 (403 tests; artifact `ios-ci-results` downloaded). Red proof https://github.com/baisethomas/tablet-notes-v3/actions/runs/45570066667 reverted by `997721f`. Post-revert green https://github.com/baisethomas/tablet-notes-v3/actions/runs/45571732568. `xcodebuild` was not run on the Linux VM.
 - TAB-141 on `main` @ c29d65a: `npm test` 301/301 before merge (10 new in `stageWriteRequest.test.js`, which run the real Supabase client against a stand-in PostgREST that rejects an `or`/`and` filter the way production did; with the old `or` filter restored 13 tests fail), `node --check` on `sermonStatus.js`, the reaper and `update-sermon.js`. In prod after deploy (read-only, 2026-11-24 06:55 UTC sweep): all 9 pending repairs landed (7 to `transcription_status = complete`, 2 to `summary_status = too_short`), the 9 `PATCH /rest/v1/sermons` requests carrying `not.in.` returned 200, and the Postgres log has no `column sermons.* does not exist` errors since the merge. The `is.null` follow-up request has not run against real PostgREST (no NULL stage columns exist).
 - TAB-122 on `main` @ 414d6fc: `npm test` 291/291 before merge. In prod after deploy (read-only, 2026-11-23 21:30 UTC sweep): 9 jobs created, 4 sermons transcribed with summary jobs chained, 1 `no_speech`, 2 summary stages `complete`, 2 jobs failing transcoding; all 9 stage repairs rejected with 400 (TAB-141).
@@ -67,7 +69,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 ## Open risks / assumptions
 
 - macOS CI skips the named tests now listed in `docs/OPERATING-MANUAL.md` §3, including the two extra ones that failed on the first full Actions test host (run 45566567214) with no product-code change. They may fail on `main` locally too; they were not re-run in isolation. The fake Firebase plist is format-valid but not a real project; configure() no longer crashes, but no Firebase backend is contacted by design. The workflow writes that plist on every CI checkout so the test host never bundles a real Firebase project.
-- TAB-119: reminders depend on the summary carrying scripture. Two upstream gaps found on the first device test (2026-10-14) and filed: TAB-120, the summarize model returns narrative without the Scripture References section about a third of the time; TAB-121, the analyzer cannot read spoken references ("Joshua 14, verse 12") or a written one that follows another word ("in Romans 8:28"), so the transcript fallback is weak until it is fixed. Neither is in PR #84's scope.
+- TAB-119: reminders depend on the summary carrying scripture. TAB-120 (this branch) makes Scripture References mandatory and retries once; the live-model 20/20 was skipped here (`OPENAI_API_KEY` unset). TAB-121 still needed: the analyzer cannot read spoken references ("Joshua 14, verse 12") or a written one that follows another word ("in Romans 8:28").
 
 - App Review may exercise the app on a fresh Sign in with Apple account (trial state); the always-visible Premium row is what addresses that.
 - The auto-stop save handler skips the save if the stop event carries no session id. Unreachable while audio is present, but it should fall back rather than skip if that invariant ever changes.
@@ -79,7 +81,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Last handoff
 
-- Updated: 2026-11-25 (PR #99: STATE.md §3 skip wording matches the operating manual)
+- Updated: 2026-11-25 (TAB-120 option 2 implemented; 20/20 dry-run skipped for missing OPENAI_API_KEY)
 - By: agent (Cursor Grok 4.6, cloud)
-- Branch/worktree: `cursor/macos-ci-861a` [open PR #99]
-- Last known-good commit: this branch's green workflow SHA `033925b` (first green run 45568080502); post-revert SHA `997721f` (run 45571732568)
+- Branch/worktree: `cursor/tab-120-summarize-format-5691` [in flight]
+- Last known-good commit: pending the fix commit on this branch; inherited CI green at `93ace86` / PR #99
