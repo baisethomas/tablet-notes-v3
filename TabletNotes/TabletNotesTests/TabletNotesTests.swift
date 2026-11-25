@@ -15,4 +15,8 @@ struct TabletNotesTests {
         // Write your test here and use APIs like `#expect(...)` to check expected conditions.
     }
 
+    @Test func deliberateCIRedCheck() {
+        #expect(false, "deliberate CI red check")
+    }
+
 }
