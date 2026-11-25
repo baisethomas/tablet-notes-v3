@@ -26,7 +26,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Working on
 
-- TAB-121 [in flight `cursor/tab-121-spoken-scripture-5691`]: spoken patterns plus written-after-a-word. This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
+- TAB-121 [open PR #102] on `cursor/tab-121-spoken-scripture-5691` @ d5b1b35: spoken patterns plus written-after-a-word. This branch contains PR #99's commits until #99 merges; then bring `main` in with a normal merge commit (no rebase, no force-push).
 - TAB-120 [open PR #101] on `cursor/tab-120-summarize-format-5691` (separate branch). Option 2 heading retry; live 20/20 skipped for missing OPENAI_API_KEY.
 - macOS CI [open PR #99] on `cursor/macos-ci-861a` at 93ace86: verified, not merged. Inherited by this branch so `ios-simulator` runs. Do not modify the workflow.
 - Open PRs as of 2026-11-24, none of them from the TAB-122/141 workstream: #92 (TAB-138, replacement-model evaluation harness, In Review; its branch carries its own copy of this file), #82 (TAB-118, website import and Vercel cutover plan), #86 and #87 (two competing attempts at TAB-123; one needs picking and the other closing), #89 and #90 (briefs). Check each PR for its current state before touching its branch.
@@ -36,7 +36,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Next
 
-1. Open the TAB-121 PR against `main`, move Linear to In Review, wait for a green `ios-simulator` run on the head SHA (`ScriptureAnalysisServiceTests` and `ScriptureReminderPlannerTests`).
+1. Wait for a green `ios-simulator` run on PR #102 head `d5b1b35` (`ScriptureAnalysisServiceTests` and `ScriptureReminderPlannerTests`). If CI is waiting on #99 merging, say so; do not re-implement CI.
 2. `skip: xcodebuild` is not available on this Linux VM; CI is the iOS proof. `skip: rrr.sh` for the same reason.
 3. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched.
 
@@ -84,5 +84,5 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 - Updated: 2026-11-25 (TAB-121 spoken analyzer; xcodebuild skipped on Linux)
 - By: agent (Cursor Grok 4.6, cloud)
-- Branch/worktree: `cursor/tab-121-spoken-scripture-5691` [in flight]
-- Last known-good commit: pending the TAB-121 commit; inherited CI green at `93ace86` / PR #99
+- Branch/worktree: `cursor/tab-121-spoken-scripture-5691` [open PR #102]
+- Last known-good commit: `d5b1b35`; inherited CI green at `93ace86` / PR #99
