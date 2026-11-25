@@ -36,7 +36,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 1. Owner reviews PR #99. Do not merge until the owner says so. Do not mark the workflow as a required status check.
 2. After this PR: the next release must bump `MARKETING_VERSION` to 1.0.2 or higher before archiving. Product backlog is unchanged (TAB-103 step 2, redesign issues TAB-128…).
-3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are not in §3; a later issue could own fixing them and removing those `-skip-testing` lines.
+3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are listed in `docs/OPERATING-MANUAL.md` §3. A later change that actually fixes them should drop the matching `-skip-testing` lines in `.github/workflows/ios.yml`.
 
 ## Blocked
 
@@ -66,7 +66,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Open risks / assumptions
 
-- macOS CI skips two tests that are not in §3 (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) because they failed on the first full Actions test host (run 45566567214) with no product-code change. They may fail on `main` locally too; they were not re-run in isolation. The fake Firebase plist is format-valid but not a real project; configure() no longer crashes, but no Firebase backend is contacted by design.
+- macOS CI skips the named tests now listed in `docs/OPERATING-MANUAL.md` §3, including the two extra ones that failed on the first full Actions test host (run 45566567214) with no product-code change. They may fail on `main` locally too; they were not re-run in isolation. The fake Firebase plist is format-valid but not a real project; configure() no longer crashes, but no Firebase backend is contacted by design. The workflow writes that plist on every CI checkout so the test host never bundles a real Firebase project.
 - TAB-119: reminders depend on the summary carrying scripture. Two upstream gaps found on the first device test (2026-10-14) and filed: TAB-120, the summarize model returns narrative without the Scripture References section about a third of the time; TAB-121, the analyzer cannot read spoken references ("Joshua 14, verse 12") or a written one that follows another word ("in Romans 8:28"), so the transcript fallback is weak until it is fixed. Neither is in PR #84's scope.
 
 - App Review may exercise the app on a fresh Sign in with Apple account (trial state); the always-visible Premium row is what addresses that.
@@ -79,7 +79,7 @@ This branch: adding GitHub-hosted macOS CI for the iOS app (brief `briefs/2026-1
 
 ## Last handoff
 
-- Updated: 2026-11-25 (PR #99 green + red-run reverted; evidence on brief PR #98)
+- Updated: 2026-11-25 (PR #99: STATE.md §3 skip wording matches the operating manual)
 - By: agent (Cursor Grok 4.6, cloud)
 - Branch/worktree: `cursor/macos-ci-861a` [open PR #99]
 - Last known-good commit: this branch's green workflow SHA `033925b` (first green run 45568080502); post-revert SHA `997721f` (run 45571732568)

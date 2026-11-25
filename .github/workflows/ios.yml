@@ -56,8 +56,8 @@ jobs:
         run: |
           set -euo pipefail
           # Placeholder only. Clearly fake; not a production Firebase project.
-          # Generated in the job so the test host can call FirebaseApp.configure()
-          # without a real GoogleService-Info.plist in git.
+          # Always overwrite: CI must not bundle a real plist if one is later
+          # committed. The write is on the runner workspace and is not pushed.
           # FIRInstallations validates API_KEY at configure(): length 39, starts with A.
           # A first run crashed the test host on `ci-placeholder-not-a-real-key`.
           python3 - <<'PY'
