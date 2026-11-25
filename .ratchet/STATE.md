@@ -36,7 +36,7 @@ This branch: TAB-121 spoken scripture analyzer, branched from `cursor/macos-ci-8
 
 ## Next
 
-1. Wait for a green `ios-simulator` run on PR #102's new head after the dotted-abbreviation restore (`ScriptureAnalysisServiceTests` including `dottedAbbreviatedWrittenFormStillMatches`, plus `ScriptureReminderPlannerTests`). Pushing this fix cancels the in-progress run on `d5b1b35`. If CI is waiting on #99 merging, say so; do not re-implement CI.
+1. Wait for a green `ios-simulator` run on PR #102 after the throwing `#require` test compile fix. Run 45711320421 failed on `5ed6a92` at `ScriptureAnalysisServiceTests.swift:118` (`errors thrown from here are not handled`). If CI is waiting on #99 merging, say so; do not re-implement CI.
 2. `skip: xcodebuild` is not available on this Linux VM; CI is the iOS proof. `skip: rrr.sh` for the same reason.
 3. Do not merge #99. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched. TAB-143 is a linked follow-up, not this PR.
 
