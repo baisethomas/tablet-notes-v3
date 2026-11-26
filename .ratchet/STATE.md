@@ -86,4 +86,4 @@ This branch: TAB-120 summarize heading contract [open PR #101]. `main` @ `6e6a1b
 - Updated: 2026-11-26 (TAB-120: merged `main` @ 6e6a1bf; Ternary 2a/2b done locally)
 - By: agent (Cursor Grok 4.6, cloud)
 - Branch/worktree: `cursor/tab-120-summarize-format-5691` [open PR #101]
-- Last known-good commit: local `npm test` 317/317 and `RRR: PROVEN` for same-line headings (unpushed). Prior API head `632d623`. Wait for `ios-simulator` on the pushed SHA.
+- Last known-good commit: `27a5066` (`npm test` 317/317, same-line heading `RRR: PROVEN`). Needs its own green `ios-simulator` run after push. Prior API head `632d623`.
