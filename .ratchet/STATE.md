@@ -14,7 +14,7 @@ TabletNotes is live on the App Store (1.0 since 2026-09-11; 1.0.1 with the recor
 
 ## Current phase
 
-This branch: TAB-120 summarize heading contract [open PR #101]. `main` is `6e6a1bf` after #99 (macOS CI) and #102 (TAB-121) merged; this branch is merging that `main` in. Product workstream on `main` remains post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. No release in preparation.
+This branch: TAB-120 summarize heading contract [open PR #101]. `main` @ `6e6a1bf` (#99 and #102 merged) is already merged into this branch. Product workstream on `main` remains post-launch monitoring. 1.0.1 (build 1) approved and READY_FOR_SALE 2026-09-15. No release in preparation.
 
 ## Completed
 
@@ -28,7 +28,7 @@ This branch: TAB-120 summarize heading contract [open PR #101]. `main` is `6e6a1
 
 ## Working on
 
-- TAB-120 [open PR #101] on `cursor/tab-120-summarize-format-5691`: option 2 (mandatory headings + one retry). Merging `main` @ 6e6a1bf (no rebase, no force-push). Ternary at 632d623: (a) `requiredHeadingInLine` misses `**Heading** content` on the same line; (b) no integration test that retry is wired into `summarize.js`. Live 20/20 skipped for missing OPENAI_API_KEY.
+- TAB-120 [open PR #101] on `cursor/tab-120-summarize-format-5691`: option 2 (mandatory headings + one retry). Merged `main` @ 6e6a1bf (merge commit, no rebase, no force-push). Ternary at 632d623 both taken: (a) `requiredHeadingInLine` now accepts `**Heading** content` on the same line; (b) handler integration test that retry is wired into `summarize.js`. Live 20/20 skipped for missing OPENAI_API_KEY.
 - Open PRs as of 2026-11-24, none of them from the TAB-122/141 workstream: #92 (TAB-138, replacement-model evaluation harness, In Review; its branch carries its own copy of this file), #82 (TAB-118, website import and Vercel cutover plan), #86 and #87 (two competing attempts at TAB-123; one needs picking and the other closing), #89 and #90 (briefs). Check each PR for its current state before touching its branch.
 - TAB-126 (moved to LOO-238 in Linear, Verified) merged to `main` @ a6ccf89 (PR #91): Help Scout mailbox 371514 (Granted AI) routes to Linear team LOO plus project Granted AI. The live `SUPPORT_INBOX_ROUTES` env update was operator-reserved; whether it has been applied was not checked here. No GRA team ID remains in `support-automation/`.
 - TAB-141 merged to `main` @ c29d65a (PR #93, squash, 2026-11-24), deployed and verified in prod. Every sermon stage write guarded by "only while the stage has not already stopped" was rejected by PostgREST with 400 (`column sermons.<stage column> does not exist`) and wrote nothing: the guard was sent as an `or=(...)` filter with `select=id`, and on an update PostgREST re-applies `or`/`and` filters to the returned rows, which carry only the selected columns. Found on 2026-11-23 when the first reaper sweep after TAB-122 had all 9 of its stage repairs rejected. Four callers share the call: the reaper's job-less repairs, the dead-job `failed_permanent` write-back (`processingJobs.js`), `completeTranscription.js`, and `applyStageStatusWrites` (update-sermon). Fix: `updateWhileStageNotTerminal` in `utils/sermonStatus.js` sends plain filters only (`not.in` the terminal list, then `is.null` if that matched nothing). Do not put an `or`/`and` filter on a PostgREST update that returns a narrower `select`, and do not "fix" it by selecting the filtered column: the filter would then be tested against the new value. The helper throws on a missing or empty `scope`. Its two requests are not one atomic step for a NULL stage column (a concurrent non-terminal write between them skips the write; a terminal state is still never overwritten); TAB-140 covers that.
@@ -36,9 +36,9 @@ This branch: TAB-120 summarize heading contract [open PR #101]. `main` is `6e6a1
 
 ## Next
 
-1. Finish Ternary 2a/2b on this branch: same-line `**Heading** content` in `requiredHeadingInLine` (failing test first), plus a `summarize.js` retry-wiring integration test. Then `npm test`, `rrr.sh`, push, wait for `ios-simulator` and Ternary on the new head.
+1. Push this head and wait for a green `ios-simulator` run plus Ternary on the new SHA. Do not merge this PR.
 2. Owner runs the live-model 20/20: `cd tablet-notes-api && OPENAI_API_KEY=... node scripts/dry-run-summarize-headings.js --transcript /path/to/real-transcript.txt --runs 20`. Headings: Main Scripture Text, Brief Summary, Key Points, Memorable Elements, Scripture References. No prod writes. Do not commit the transcript.
-3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are listed in `docs/OPERATING-MANUAL.md` §3. A later change that actually fixes them should drop the matching `-skip-testing` lines in `.github/workflows/ios.yml`. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched. Do not merge this PR.
+3. The two extra CI skips (`recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly`, `summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults`) are listed in `docs/OPERATING-MANUAL.md` §3. A later change that actually fixes them should drop the matching `-skip-testing` lines in `.github/workflows/ios.yml`. Do not bump `MARKETING_VERSION`. TAB-40 / TAB-133 stay untouched.
 
 ## Blocked
 
@@ -56,7 +56,7 @@ This branch: TAB-120 summarize heading contract [open PR #101]. `main` is `6e6a1
 
 ## Verification status
 
-- TAB-120 on this branch: `npm test` 315/315 at 632d623 before this merge. `node --check` on `summarize.js`, `summaryFormat.js`, `summarizePrompt.js`, `dry-run-summarize-headings.js`. `rrr.sh` on `tablet-notes-api/netlify/functions/utils/summaryFormat.js`: `RRR: PROVEN` (14/14 with the fix, 6/14 with HEAD stub, 14/14 restored). Live-model 20/20: `skip: OPENAI_API_KEY is not set`. No new `-skip-testing` lines. `xcodebuild` not run (no Swift change on this branch).
+- TAB-120 on this branch: `npm test` 317/317 (2 new: same-line `**Heading** content`, summarize.js retry-wiring handler test). `node --check` on `summarize.js`, `summaryFormat.js`, and the new test/child files. Same-line heading fix `rrr.sh --base HEAD --test 'cd tablet-notes-api && node --test --test-name-pattern "same line after" netlify/functions/utils/__tests__/summaryFormat.test.js' -- tablet-notes-api/netlify/functions/utils/summaryFormat.js`: **`RRR: PROVEN`**. Live-model 20/20: `skip: OPENAI_API_KEY is not set`. No new `-skip-testing` lines. `xcodebuild` not run (no Swift change on this branch's own commits; TAB-121 Swift arrived via the merge of `main`).
 - TAB-121 on `main` @ 6e6a1bf (PR #102): **RRR: PROVEN** via throwaway draft PR #103 (`ci-red/tab-121-bc2dfae`). Red: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45714983280 job `ios-simulator` on `7198f72`. Green: https://github.com/baisethomas/tablet-notes-v3/actions/runs/45717740326 on `21d27d7`.
 - macOS CI [merged #99]: green `ios-simulator` at https://github.com/baisethomas/tablet-notes-v3/actions/runs/45568080502 (403 tests; artifact `ios-ci-results` downloaded). Red proof https://github.com/baisethomas/tablet-notes-v3/actions/runs/45570066667 reverted by `997721f`. Post-revert green https://github.com/baisethomas/tablet-notes-v3/actions/runs/45571732568. `xcodebuild` was not run on the Linux VM.
 - TAB-141 on `main` @ c29d65a: `npm test` 301/301 before merge (10 new in `stageWriteRequest.test.js`, which run the real Supabase client against a stand-in PostgREST that rejects an `or`/`and` filter the way production did; with the old `or` filter restored 13 tests fail), `node --check` on `sermonStatus.js`, the reaper and `update-sermon.js`. In prod after deploy (read-only, 2026-11-24 06:55 UTC sweep): all 9 pending repairs landed (7 to `transcription_status = complete`, 2 to `summary_status = too_short`), the 9 `PATCH /rest/v1/sermons` requests carrying `not.in.` returned 200, and the Postgres log has no `column sermons.* does not exist` errors since the merge. The `is.null` follow-up request has not run against real PostgREST (no NULL stage columns exist).
@@ -83,7 +83,7 @@ This branch: TAB-120 summarize heading contract [open PR #101]. `main` is `6e6a1
 
 ## Last handoff
 
-- Updated: 2026-11-26 (TAB-120: merge `main` @ 6e6a1bf; Ternary 2a/2b in flight)
+- Updated: 2026-11-26 (TAB-120: merged `main` @ 6e6a1bf; Ternary 2a/2b done locally)
 - By: agent (Cursor Grok 4.6, cloud)
 - Branch/worktree: `cursor/tab-120-summarize-format-5691` [open PR #101]
-- Last known-good commit: `632d623` (`npm test` 315/315, `RRR: PROVEN` for heading retry). This merge is uncommitted until DECISIONS/STATE resolve; then Ternary 2a/2b.
+- Last known-good commit: local `npm test` 317/317 and `RRR: PROVEN` for same-line headings (unpushed). Prior API head `632d623`. Wait for `ios-simulator` on the pushed SHA.

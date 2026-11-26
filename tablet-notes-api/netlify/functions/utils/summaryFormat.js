@@ -103,8 +103,10 @@ function classifyNormalizedName(normalized) {
 }
 
 /**
- * A line is a required heading in the same four forms `SummaryDocument` accepts:
- * `**Heading**`, `## Heading`, a bare line, or `**Heading:** content`.
+ * A line is a required heading in the same forms `SummaryDocument` accepts:
+ * `**Heading**`, `## Heading`, a bare line, `**Heading:** content`, or
+ * `**Heading** content` on the same line (the model sometimes inlines the
+ * first sentence instead of breaking after the heading).
  * List items are never headings.
  */
 function requiredHeadingInLine(line) {
@@ -122,16 +124,7 @@ function requiredHeadingInLine(line) {
     const close = text.indexOf('**', 2);
     if (close !== -1) {
       const inner = text.slice(2, close);
-      let rest = text.slice(close + 2).trim();
-      const restStartsWithColon = rest.startsWith(':');
-      if (restStartsWithColon) rest = rest.replace(/^:\s*/, '');
-      if (rest === '') {
-        return classifyNormalizedName(normalizeHeadingName(inner));
-      }
-      if (inner.trim().endsWith(':') || restStartsWithColon) {
-        return classifyNormalizedName(normalizeHeadingName(inner));
-      }
-      return null;
+      return classifyNormalizedName(normalizeHeadingName(inner));
     }
   }
 

@@ -121,6 +121,20 @@ test('"None stated" under Scripture References still satisfies the heading', () 
   assert.deepEqual(missingRequiredHeadings(noneStated), []);
 });
 
+test('a required heading with content on the same line after **Heading** still counts', () => {
+  // The prompt prefers a newline after the heading, but the model sometimes
+  // inlines the first sentence: **Brief Summary** Hope is remembrance.
+  const text = `TITLE: Hope
+
+**Main Scripture Text** Romans 8:28
+**Brief Summary** Hope is disciplined remembrance.
+**Key Points** Trust God's hands.
+**Memorable Elements** Hope is not denial.
+**Scripture References** None stated
+`;
+  assert.deepEqual(missingRequiredHeadings(text), []);
+});
+
 test('a bullet that names a heading is not itself a heading', () => {
   const text = `TITLE: Hope
 
