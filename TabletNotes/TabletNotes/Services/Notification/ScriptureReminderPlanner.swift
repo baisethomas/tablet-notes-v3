@@ -108,13 +108,10 @@ struct ScriptureReminderPlanner {
         return ordered
     }
 
-    /// The analyzer is fed one line at a time: across a line break its pattern
-    /// reads the previous line's last word as part of the book name and drops
-    /// the reference. The same thing happens after any word within a line
-    /// ("in Romans 8:28" is dropped), which line splitting cannot fix; that is an
-    /// analyzer bug tracked separately. Summaries mostly list references at the
-    /// start of a line, so the summary passes are affected far less than the
-    /// transcript fallback. The analyzer also sorts by book, so reading order is
+    /// The analyzer is fed one line at a time so a reference split across a
+    /// line break is still missed. Spoken forms ("Joshua 14, verse 12") and a
+    /// written reference after another word ("in Romans 8:28") are matched
+    /// (TAB-121). The analyzer still sorts by book, so reading order is
     /// restored from where each match sits in the line.
     private func referencesInReadingOrder(in line: String) -> [ScriptureReference] {
         scriptureAnalyzer.analyzeScriptureReferences(in: line).sorted { lhs, rhs in
