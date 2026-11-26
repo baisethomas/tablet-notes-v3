@@ -48,8 +48,8 @@ enum SermonStageStatus: String, CaseIterable, Sendable {
     /// never heard of is excluded by construction.
     var isDispatchable: Bool {
         switch self {
-        case .pending, .failed: return true
-        case .processing, .complete, .noSpeech, .failedPermanent, .tooShort: return false
+        case .pending, .failed, .processing: return true
+        case .complete, .noSpeech, .failedPermanent, .tooShort: return false
         }
     }
 
