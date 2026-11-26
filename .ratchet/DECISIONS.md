@@ -244,3 +244,15 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** A reference split across a line break is still missed (the planner feeds one line at a time). "chapter 3 of this book" without a book name is not a match.
 - **Revisit when:** a real transcript still misses a spoken form the catalog does not list (e.g. "First Corinthians").
 - **Approved by:** agent (medium impact, within TAB-121 authorized scope)
+
+### D-20261126-1715-summarize-same-line-heading-client — Client SummaryDocument accepts no-colon **Heading** content
+
+- **Status:** accepted
+- **Impact:** medium
+- **Date:** 2026-11-26
+- **Decision:** `SummaryDocument.heading(in:)` treats `**Heading** content` (no colon) as a known section whose remainder is the section's first content line, matching `summaryFormat.js`. Colon and newline heading forms are unchanged. An unknown inner heading with trailing text (`**Grace** is enough`) stays a content line, not a section.
+- **Why:** The server can now accept a same-line heading that the planner still classified as `.other`, so a server-valid summary dropped Scripture References in the app. Aligning the client is the smallest change that keeps D-20261125-2200's "a pass on the server is a pass in the planner".
+- **Rejected / alternatives:** Leaving the client as-is — a server pass the app cannot parse. Dropping the trailing content — loses the reference. Teaching only Scripture References — the model inlines any of the five headings.
+- **Consequences:** `**Heading** content` now opens a section on both sides. List items and unknown bold phrases are still not headings.
+- **Revisit when:** a real summary still drops a heading form the prompt uses.
+- **Approved by:** agent (medium impact, within TAB-120 authorized scope)
