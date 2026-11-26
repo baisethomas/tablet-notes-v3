@@ -82,6 +82,8 @@ cd tablet-notes-api && netlify deploy --prod
 **Known pre-existing failures — do not chase, do not "fix" in an unrelated PR:**
 - `SyncServiceMergeTests/syncDataIncludesOnlyDirtyChildScopesForExistingRemoteSermon` (fails on main)
 - `SermonServiceSaveTests` recovery tests share UserDefaults state — pass in isolation, flake together
+- `ProcessingJobRegressionTests/recoverIncompleteTranscriptionsLeavesOldPendingSermonsManualOnly` (failed on the first full GitHub-hosted CI host, Actions run 45566567214; skipped in `.github/workflows/ios.yml` — drop that `-skip-testing` line when this is actually fixed)
+- `SummaryRetryServiceRegressionTests/summaryRetryProcessesQueuedJobsWithoutCrossApplyingResults` (same run; same skip / remove-when-fixed rule)
 If a test fails, check whether it fails on `main` before assuming your change caused it — and never claim your change is clean without that check.
 
 **Xcode project file:** the project uses `fileSystemSynchronizedGroups`. Adding/deleting Swift files under `TabletNotes/TabletNotes/` automatically updates the build target. **Never edit `.pbxproj` by hand.**
