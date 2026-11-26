@@ -509,4 +509,47 @@ struct ScriptureReminderPlannerTests {
         #expect(SummaryDocument.heading(in: "Romans 8:28 was framed as a promise.") == nil)
         #expect(SummaryDocument.heading(in: "**Grace** is enough for today.") == nil)
     }
+
+    // TAB-120: the server accepts **Heading** content with no colon (the model
+    // sometimes inlines the first sentence). The client parser must match, or
+    // a server-valid summary still drops the section in the planner.
+    @Test func noColonBoldHeadingCarriesSameLineContent() {
+        #expect(SummaryDocument.heading(in: "**Main Scripture Text** Romans 8:28") == .section(.mainScripture, remainder: "Romans 8:28"))
+        #expect(SummaryDocument.heading(in: "**Brief Summary** Hope is remembrance.") == .section(.overview, remainder: "Hope is remembrance."))
+        #expect(SummaryDocument.heading(in: "**Key Points** Trust God's hands.") == .section(.keyPoints, remainder: "Trust God's hands."))
+        #expect(SummaryDocument.heading(in: "**Memorable Elements** Hope is not denial.") == .section(.memorableElements, remainder: "Hope is not denial."))
+        #expect(SummaryDocument.heading(in: "**Scripture References** Romans 8:28") == .section(.scriptureReferences, remainder: "Romans 8:28"))
+    }
+
+    @Test func noColonBoldHeadingAlignsWithColonAndNewlineForms() {
+        let noColon = SummaryDocument.heading(in: "**Scripture References** Romans 8:28")
+        #expect(noColon == SummaryDocument.heading(in: "**Scripture References:** Romans 8:28"))
+        #expect(noColon == SummaryDocument.heading(in: "**Scripture References**: Romans 8:28"))
+        #expect(noColon == .section(.scriptureReferences, remainder: "Romans 8:28"))
+
+        let newlineDoc = SummaryDocument(parsing: """
+        **Scripture References**
+        Romans 8:28
+        """)
+        let sameLineDoc = SummaryDocument(parsing: """
+        **Scripture References** Romans 8:28
+        """)
+        #expect(newlineDoc.lines(of: [.scriptureReferences]) == ["Romans 8:28"])
+        #expect(sameLineDoc.lines(of: [.scriptureReferences]) == ["Romans 8:28"])
+    }
+
+    @Test func noColonSameLineContentIsPreservedInEachRequiredSection() {
+        let doc = SummaryDocument(parsing: """
+        **Main Scripture Text** Romans 8:28
+        **Brief Summary** Hope is disciplined remembrance.
+        **Key Points** Trust God's hands.
+        **Memorable Elements** Hope is not denial.
+        **Scripture References** Philippians 4:13
+        """)
+        #expect(doc.lines(of: [.mainScripture]) == ["Romans 8:28"])
+        #expect(doc.lines(of: [.overview]) == ["Hope is disciplined remembrance."])
+        #expect(doc.lines(of: [.keyPoints]) == ["Trust God's hands."])
+        #expect(doc.lines(of: [.memorableElements]) == ["Hope is not denial."])
+        #expect(doc.lines(of: [.scriptureReferences]) == ["Philippians 4:13"])
+    }
 }
