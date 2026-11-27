@@ -1633,14 +1633,12 @@ struct SyncServiceMergeTests {
         try await engine.sync(userId: UUID())
 
         // Reaching here without a SwiftData assertion is the regression check.
-        // The transcript scope was skipped mid-push ("snapshot unavailable"),
-        // so transcriptNeedsSync legitimately survives the ack — the sermon
-        // still has queued work, and since TAB-98 syncStatus says so honestly
-        // ("pending") instead of stamping "synced" over a dirty flag. The
-        // re-push behavior is unchanged: this sermon was re-attempted every
-        // cycle before TAB-98 too, only labeled "synced" while it happened.
-        #expect(sermon.syncStatus == "pending")
-        #expect(sermon.transcriptNeedsSync)
+        // Payload is built before onUpdate. TAB-40 falls back to the SwiftData
+        // transcript when TranscriptSnapshotStore is empty, so the transcript
+        // scope is included and acked. Deleting the local row mid-push must
+        // not crash markSermonSynced.
+        #expect(sermon.syncStatus == "synced")
+        #expect(!sermon.transcriptNeedsSync)
         #expect(sermon.transcript == nil)
     }
 

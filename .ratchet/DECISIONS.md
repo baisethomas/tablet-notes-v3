@@ -256,3 +256,27 @@ Rules that are already binding text in `docs/OPERATING-MANUAL.md` are not repeat
 - **Consequences:** `**Heading** content` now opens a section on both sides. List items and unknown bold phrases are still not headings.
 - **Revisit when:** a real summary still drops a heading form the prompt uses.
 - **Approved by:** agent (medium impact, within TAB-120 authorized scope)
+
+### D-20261127-0305-transcript-segments-string-wire — get-sermons stringifies JSONB timings; 1.0.1 String? stays safe
+
+- **Status:** superseded by D-20261127-0315-transcript-segments-string-wire
+- **Impact:** medium
+- **Date:** 2026-11-27
+- **Decision:** TAB-40 uses the existing `transcripts.segments` JSONB column. Push writes a JSON array of `{id, text, startTime, endTime}` (seconds). `get-sermons` stringifies that JSONB onto the existing `segments` key (never a JSON array). Null/missing stay omitted; an already-string DB value is passed through. No schema change and no production backfill of rows already stored as null. 1.0.2 parses the string into timings (and still tolerates a leftover array without failing the library). Client-format objects apply as-is; AssemblyAI `{text, start, end}` milliseconds are grouped by the same 0.7s gap as local transcription. A missing `TranscriptSnapshotStore` falls back to the SwiftData transcript (text plus segments) instead of skipping the scope.
+- **Why:** Shipped 1.0.1 decodes `segments` as a synthesized `String?`. Putting a JSON array on that key is the TAB-93 library-import crash. Stringifying keeps 1.0.1 importing a library that includes a timed transcript, while 1.0.2 can restore tap-to-seek. A new wire key was unnecessary; TAB-93 already round-tripped leftover strings.
+- **Rejected / alternatives:** Sending a JSON array on `segments` — crashes 1.0.1. A new `segmentTimings` array field — also 1.0.1-safe (unknown keys are ignored) but adds a second public field when the existing key can carry a string. Versioned Accept headers — more moving parts than the string contract. Backfilling null JSONB rows — operator-reserved.
+- **Consequences:** API auto-deploys on merge; 1.0.1 clients stay safe the moment it does. 1.0.2 clients receive timings only after this client ships. Rows whose JSONB is still null stay untimed until a 1.0.2 recorder pushes. This is not TAB-74 / the persistence rewrite.
+- **Revisit when:** 1.0.1 is out of the wild and the wire can carry a native array, or TAB-74 replaces the sync contract.
+- **Approved by:** agent (medium impact, within TAB-40 authorized scope)
+
+### D-20261127-0315-transcript-segments-string-wire — get-sermons stringifies JSONB timings; 1.0.1 String? stays safe
+
+- **Status:** accepted
+- **Impact:** high
+- **Date:** 2026-11-27
+- **Decision:** Same wire contract as D-20261127-0305: TAB-40 uses the existing `transcripts.segments` JSONB column. Push writes a JSON array of `{id, text, startTime, endTime}` (seconds). `get-sermons` stringifies that JSONB onto the existing `segments` key (never a JSON array). Null/missing stay omitted; an already-string DB value is passed through. No schema change and no production backfill of rows already stored as null. 1.0.2 parses the string into timings (and still tolerates a leftover array without failing the library). Client-format objects apply as-is; AssemblyAI `{text, start, end}` milliseconds are grouped by the same 0.7s gap as local transcription. A missing `TranscriptSnapshotStore` falls back to the SwiftData transcript (text plus segments) instead of skipping the scope.
+- **Why:** `get-sermons` response shape is a public API / shared-contract surface (`AGENTS.md`). The TAB-40 brief (PR #105) specified this exact stringify-on-`segments` contract so shipped 1.0.1's synthesized `String?` stays safe (TAB-93). Reclassified from medium after Codex review of PR #107; the brief is the owner approval, not a new contract.
+- **Rejected / alternatives:** Sending a JSON array on `segments` — crashes 1.0.1. A new `segmentTimings` array field — also 1.0.1-safe (unknown keys are ignored) but adds a second public field when the existing key can carry a string. Versioned Accept headers — more moving parts than the string contract. Backfilling null JSONB rows — operator-reserved. Leaving D-20261127-0305 as agent-approved medium — durable memory would understate the blast radius.
+- **Consequences:** API auto-deploys on merge; 1.0.1 clients stay safe the moment it does. 1.0.2 clients receive timings only after this client ships. Rows whose JSONB is still null stay untimed until a 1.0.2 recorder pushes. This is not TAB-74 / the persistence rewrite.
+- **Revisit when:** 1.0.1 is out of the wild and the wire can carry a native array, or TAB-74 replaces the sync contract.
+- **Approved by:** owner, via the TAB-40 brief (PR #105). The brief required stringify onto the existing `segments` key.

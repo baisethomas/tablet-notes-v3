@@ -1,11 +1,12 @@
 /**
  * Shape `get-sermons` rows into the client `RemoteSermonData` payload.
  *
- * `transcripts.segments` is jsonb in production. The shipped client decodes
- * it as `String?`, so a single word-timing array fails the entire library
- * import (TAB-93). Pull already discards remote segments (`segments: []`),
- * so they must not go on the wire — that heals already-shipped builds.
- * TAB-40 is the follow-up that would actually deserialize them.
+ * `transcripts.segments` is jsonb in production. Shipped 1.0.1 decodes it as
+ * a synthesized `String?`, so a JSON array fails the entire library import
+ * (TAB-93). TAB-40 therefore stringifies the JSONB onto the existing
+ * `segments` key: 1.0.1's String? succeeds and ignores the value; 1.0.2
+ * parses the string into timings. Null/missing stay omitted. No schema
+ * change and no production backfill of rows already stored as null.
  */
 
 function firstChild(value) {
@@ -38,17 +39,36 @@ function transformNotes(notes) {
   }));
 }
 
+function wireSegments(segments) {
+  if (segments == null) {
+    return undefined;
+  }
+  if (typeof segments === 'string') {
+    return segments;
+  }
+  try {
+    return JSON.stringify(segments);
+  } catch {
+    return undefined;
+  }
+}
+
 function transformTranscript(transcripts) {
   const row = firstChild(transcripts);
   if (!row) {
     return null;
   }
-  return {
+  const payload = {
     id: row.id,
     localId: row.local_id,
     text: row.text,
     status: row.status
   };
+  const segments = wireSegments(row.segments);
+  if (segments !== undefined) {
+    payload.segments = segments;
+  }
+  return payload;
 }
 
 function transformSummary(summaries) {
@@ -95,5 +115,6 @@ module.exports = {
   childCount,
   firstChild,
   transformSermon,
-  transformSermons
+  transformSermons,
+  wireSegments
 };

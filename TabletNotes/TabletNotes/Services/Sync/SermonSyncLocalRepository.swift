@@ -295,11 +295,33 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
 
         if let existingTranscript = sermon.transcript {
             // Update in-place to preserve in-memory references — prevents invalidation crashes
-            // when other services hold a reference to the same Transcript object
+            // when other services hold a reference to the same Transcript object.
+            // Replace segments too (TAB-40): a restore onto an already-imported
+            // text-only transcript must pick up timings for tap-to-seek.
+            // Delete first: TranscriptSegment.id is unique, and a client-format
+            // pull reuses those ids.
+            // Keep local timings when the remote row has none (1.0.1 uploads
+            // stored NSNull). Wiping would destroy the only copy; mark dirty
+            // so the next push heals the cloud.
+            let incomingHasTimings = !snapshot.segments.isEmpty
+            let localHasTimings = !existingTranscript.segments.isEmpty
+            if incomingHasTimings || !localHasTimings {
+                let oldSegments = Array(existingTranscript.segments)
+                existingTranscript.segments.removeAll()
+                for segment in oldSegments {
+                    modelContext.delete(segment)
+                }
+                existingTranscript.segments = makeTranscriptSegments(from: snapshot.segments)
+                existingTranscript.needsSync = false
+            } else {
+                print("[SyncService] ⚠️ Preserving \(existingTranscript.segments.count) local transcript timings; remote supplied none")
+                existingTranscript.needsSync = true
+                sermon.markPendingSync(transcript: true)
+            }
+
             existingTranscript.text = snapshot.text
             existingTranscript.remoteId = snapshot.remoteId ?? existingTranscript.remoteId
             existingTranscript.updatedAt = snapshot.updatedAt
-            existingTranscript.needsSync = false
             TranscriptSnapshotStore.save(
                 transcriptId: existingTranscript.id,
                 text: snapshot.text,
@@ -308,14 +330,7 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             return
         }
 
-        let newSegments = snapshot.segments.map { segment in
-            TranscriptSegment(
-                id: segment.id,
-                text: segment.text,
-                startTime: segment.startTime,
-                endTime: segment.endTime
-            )
-        }
+        let newSegments = makeTranscriptSegments(from: snapshot.segments)
 
         let transcript = Transcript(
             id: snapshot.id,
@@ -373,11 +388,29 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
         sermon.summaryPreviewText = Sermon.makeSummaryPreview(from: snapshot.text)
     }
 
+    private func makeTranscriptSegments(from snapshots: [TranscriptSegmentSnapshot]) -> [TranscriptSegment] {
+        snapshots.map { segment in
+            TranscriptSegment(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+    }
+
     private func transcriptSnapshot(from remoteData: RemoteTranscriptData, sermonUpdatedAt: Date) -> TranscriptSnapshot {
         TranscriptSnapshot(
             id: remoteData.localId,
             text: remoteData.text,
-            segments: [],
+            segments: remoteData.timedSegments.map { segment in
+                TranscriptSegmentSnapshot(
+                    id: segment.id,
+                    text: segment.text,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            },
             remoteId: remoteData.id,
             updatedAt: sermonUpdatedAt
         )
@@ -420,12 +453,28 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
     }
 
     private func transcriptSyncPayload(for sermon: Sermon) -> TranscriptSyncPayload? {
-        if let snapshot = TranscriptSnapshotStore.snapshot(for: sermon.id) {
-            return TranscriptSyncPayload(id: snapshot.transcriptId, text: snapshot.text)
+        let snapshot = TranscriptSnapshotStore.snapshot(for: sermon.id)
+        let local = sermon.transcript
+        guard snapshot != nil || local != nil else {
+            print("[SyncService] ⚠️ Skipping transcript sync for sermon \(sermon.id); transcript snapshot unavailable")
+            return nil
         }
 
-        print("[SyncService] ⚠️ Skipping transcript sync for sermon \(sermon.id); transcript snapshot unavailable")
-        return nil
+        let text = snapshot?.text ?? local?.text ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let id = snapshot?.transcriptId ?? local?.id ?? UUID()
+        let segments = (local?.segments ?? []).map { segment in
+            TranscriptSegmentSyncPayload(
+                id: segment.id,
+                text: segment.text,
+                startTime: segment.startTime,
+                endTime: segment.endTime
+            )
+        }
+        return TranscriptSyncPayload(id: id, text: text, segments: segments)
     }
 
     private func mergeRemoteNotes(_ remoteNotes: [RemoteNoteData]?, into sermon: Sermon, remoteUpdatedAt: Date) {
