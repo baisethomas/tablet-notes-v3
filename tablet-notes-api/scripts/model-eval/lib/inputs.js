@@ -1,0 +1,92 @@
+'use strict';
+
+// A run's inputs. `pull` replaces data/ wholesale, so a run that kept only
+// transcript ids would later be judged against whatever text those ids (or
+// none of them) point at now. The first `run` therefore copies the selected
+// transcripts into runs/<run>/inputs/, and every later step of that run reads
+// only that copy. runs/ is gitignored, like data/.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+
+const { readJson, writeJson } = require('./files');
+
+const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
+
+const inputsDir = (runDir) => path.join(runDir, 'inputs');
+const hasInputs = (runDir) => fs.existsSync(path.join(inputsDir(runDir), 'manifest.json'));
+
+// A manifest row names its transcript file. Rows written before files were
+// named by content (and every run snapshot) use `<id>.json`.
+function readSet(dir) {
+  const manifest = readJson(path.join(dir, 'manifest.json'));
+  return manifest.map(m => ({ ...m, text: readJson(path.join(dir, 'transcripts', m.file || `${m.id}.json`)).text }));
+}
+
+// A pulled transcript's file name carries a hash of its text, so a new pull
+// never writes over a file the current manifest points at: the same id with
+// different text is a different file.
+const pulledFile = (t) => `${t.id}.${sha(t.text).slice(0, 12)}.json`;
+
+// Replace the pulled set in data/. The new transcripts are written beside
+// the old ones, the manifest that names them is then renamed into place, and
+// only after that are files the new manifest does not name removed.
+// Interrupted at any point, data/ holds one whole set: the manifest on disk,
+// old or new, resolves to exactly the text it was written for.
+function writePull(dataDir, picked, rowFor) {
+  const dir = path.join(dataDir, 'transcripts');
+  for (const t of picked) writeJson(path.join(dir, pulledFile(t)), t);
+  const manifest = picked.map((t, i) => ({ ...rowFor(t, i), file: pulledFile(t) }));
+  writeJson(path.join(dataDir, 'manifest.json'), manifest);
+  const keep = new Set(manifest.map(m => m.file));
+  for (const name of fs.readdirSync(dir)) if (!keep.has(name)) fs.rmSync(path.join(dir, name), { force: true });
+  return manifest;
+}
+
+// Copy the current pull into the run, once. A run that already has inputs
+// keeps them: a later pull never changes what an existing run is about.
+function snapshotInputs(dataDir, runDir, { planned = false } = {}) {
+  if (hasInputs(runDir)) return loadInputs(runDir);
+  // A run that already has a plan had its inputs copied when it started. If
+  // they are gone, copying today's pull in their place would bind old results
+  // to different transcripts, so the run is refused before anything is written.
+  if (planned) {
+    throw new Error(`${path.basename(runDir)} has a plan but its input snapshot (runs/<run>/inputs/) is missing; start a new run`);
+  }
+  const set = readSet(dataDir);
+  const dir = inputsDir(runDir);
+  // The snapshot is written once and never replaced, so its files are named
+  // by id alone; the pull's own file names are not carried over.
+  for (const t of set) {
+    const { text, file, ...meta } = t;
+    writeJson(path.join(dir, 'transcripts', `${t.id}.json`), { ...meta, text });
+  }
+  // Written last, so a half-finished copy is not mistaken for a snapshot.
+  writeJson(path.join(dir, 'manifest.json'), set.map(({ text, file, ...meta }) => ({ ...meta, sha: sha(text) })));
+  return loadInputs(runDir);
+}
+
+// The run's own transcripts, verified against the hashes taken when they
+// were copied. Throws rather than fall back to data/.
+function loadInputs(runDir) {
+  if (!hasInputs(runDir)) {
+    throw new Error(`${path.basename(runDir)} has no input snapshot (runs/<run>/inputs/). It was created before inputs were recorded, so it cannot be judged or reported against known transcripts; start a new run.`);
+  }
+  const set = readSet(inputsDir(runDir));
+  for (const t of set) {
+    if (sha(t.text) !== t.sha) throw new Error(`input snapshot for transcript ${String(t.id).slice(0, 8)} does not match its recorded hash`);
+  }
+  return set;
+}
+
+// A run name becomes a folder under runs/. Anything but one plain path
+// segment could put transcripts and summaries outside the gitignored tree.
+function assertRunName(name) {
+  if (typeof name !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(name) || /^\.+$/.test(name)) {
+    throw new Error('invalid --run name: use letters, digits, dot, dash and underscore only');
+  }
+  return name;
+}
+
+module.exports = { snapshotInputs, loadInputs, hasInputs, assertRunName, writePull };
