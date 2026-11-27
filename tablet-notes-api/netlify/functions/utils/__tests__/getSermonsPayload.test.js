@@ -19,9 +19,26 @@ const baseSermon = {
   updated_at: '2026-08-16T12:00:00Z'
 };
 
-test('jsonb array segments never appear on the wire', () => {
-  // Shipped clients decode segments as String?. An array here is what
-  // dropped the entire get-sermons payload (TAB-93).
+const timedWords = [{ text: 'In', start: 0, end: 200 }];
+
+/**
+ * Shipped 1.0.1 `RemoteTranscriptData.segments` is a synthesized `String?`.
+ * JSONDecoder throws `Expected to decode String but found an array instead`
+ * and aborts the entire `[RemoteSermonData]` pull (TAB-93).
+ */
+function shipped101DecodeLibrary(sermons) {
+  for (const sermon of sermons) {
+    const segments = sermon.transcript && sermon.transcript.segments;
+    if (segments !== undefined && segments !== null && typeof segments !== 'string') {
+      throw new Error('Expected to decode String but found an array instead');
+    }
+  }
+  return sermons;
+}
+
+test('jsonb array segments appear on the wire as a JSON string, never as an array', () => {
+  // TAB-40: 1.0.2 must receive timings. TAB-93: a JSON array on this key
+  // is what dropped the entire get-sermons payload on shipped 1.0.1.
   const sermon = transformSermon({
     ...baseSermon,
     notes: [],
@@ -29,7 +46,7 @@ test('jsonb array segments never appear on the wire', () => {
       id: 't-1',
       local_id: '33333333-3333-3333-3333-333333333333',
       text: 'In the beginning',
-      segments: [{ text: 'In', start: 0, end: 0.2 }],
+      segments: timedWords,
       status: 'complete'
     }],
     summaries: []
@@ -37,11 +54,13 @@ test('jsonb array segments never appear on the wire', () => {
 
   assert.equal(sermon.transcript.id, 't-1');
   assert.equal(sermon.transcript.text, 'In the beginning');
-  assert.equal('segments' in sermon.transcript, false);
+  assert.equal(typeof sermon.transcript.segments, 'string');
+  assert.equal(Array.isArray(sermon.transcript.segments), false);
+  assert.deepEqual(JSON.parse(sermon.transcript.segments), timedWords);
 });
 
-test('null and string segments are omitted too', () => {
-  for (const segments of [null, '[]', undefined]) {
+test('null and missing segments stay omitted; an existing string is passed through', () => {
+  for (const segments of [null, undefined]) {
     const sermon = transformSermon({
       ...baseSermon,
       transcripts: [{
@@ -54,6 +73,18 @@ test('null and string segments are omitted too', () => {
     });
     assert.equal('segments' in sermon.transcript, false, `segments=${segments}`);
   }
+
+  const alreadyString = transformSermon({
+    ...baseSermon,
+    transcripts: [{
+      id: 't-1',
+      local_id: '33333333-3333-3333-3333-333333333333',
+      text: 'hello',
+      segments: '[]',
+      status: 'complete'
+    }]
+  });
+  assert.equal(alreadyString.transcript.segments, '[]');
 });
 
 test('a sermon with no transcript still round-trips the rest of the row', () => {
@@ -100,7 +131,7 @@ test('one timed transcript cannot drop a sibling sermon', () => {
         id: 't-old',
         local_id: '33333333-3333-3333-3333-333333333333',
         text: 'In the beginning',
-        segments: [{ text: 'Hello', start: 0, end: 0.4 }],
+        segments: [{ text: 'Hello', start: 0, end: 400 }],
         status: 'complete'
       }]
     }
@@ -108,5 +139,40 @@ test('one timed transcript cannot drop a sibling sermon', () => {
 
   assert.deepEqual(sermons.map((s) => s.title), ['August local', 'Older cloud sermon']);
   assert.equal('segments' in sermons[0].transcript, false);
-  assert.equal('segments' in sermons[1].transcript, false);
+  assert.equal(typeof sermons[1].transcript.segments, 'string');
+  assert.equal(Array.isArray(sermons[1].transcript.segments), false);
+});
+
+test('shipped 1.0.1 String? decoder still imports a library that includes a timed transcript', () => {
+  const sermons = transformSermons([
+    {
+      ...baseSermon,
+      id: 's-local',
+      title: 'August local',
+      transcripts: [{
+        id: 't-local',
+        local_id: '33333333-3333-3333-3333-333333333333',
+        text: 'hello',
+        segments: null,
+        status: 'complete'
+      }]
+    },
+    {
+      ...baseSermon,
+      id: 's-old',
+      title: 'Older cloud sermon',
+      transcripts: [{
+        id: 't-old',
+        local_id: '33333333-3333-3333-3333-333333333333',
+        text: 'In the beginning',
+        segments: [{ text: 'Hello', start: 0, end: 400 }],
+        status: 'complete'
+      }]
+    }
+  ]);
+
+  const decoded = shipped101DecodeLibrary(sermons);
+  assert.equal(decoded.length, 2);
+  assert.equal(typeof decoded[1].transcript.segments, 'string');
+  assert.deepEqual(JSON.parse(decoded[1].transcript.segments), [{ text: 'Hello', start: 0, end: 400 }]);
 });
