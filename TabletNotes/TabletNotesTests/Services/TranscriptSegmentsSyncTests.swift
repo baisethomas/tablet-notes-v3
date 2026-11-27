@@ -107,6 +107,7 @@ struct TranscriptSegmentsSyncTests {
         )
     }
 
+    @MainActor
     private func createPayload(from data: SermonSyncData) -> [String: Any] {
         SermonSyncRemoteGateway.createSermonPayload(
             data: data,
