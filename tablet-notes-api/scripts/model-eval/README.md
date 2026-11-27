@@ -146,7 +146,12 @@ disagree. The report is written to
 
 ### Prompts
 
-`lib/prompt.js` reads the prompts and parameters out of `summarize.js` and
-`chat.js` at run time and throws if their shape changes, so the eval cannot
-drift from production. Candidates are listed in `config.json`; per-model request
+`lib/prompt.js` takes the summarize system prompt from
+`utils/summarizePrompt.js`, the module `summarize.js` calls, and reads the
+other prompts and the parameters out of `summarize.js` and `chat.js` at run
+time. It throws if their shape changes, so the eval cannot drift from
+production. One difference is deliberate: production asks the model once more
+when a summary lacks a required heading (TAB-120), and the eval sends the first
+request only, so a candidate's format results here are without that second
+attempt. Candidates are listed in `config.json`; per-model request
 overrides (for example a reasoning setting) go in the `{ label, model, params, chatParams }` candidate form.

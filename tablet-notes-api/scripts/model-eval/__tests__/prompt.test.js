@@ -43,7 +43,14 @@ test('the prompts and parameters are read from the production functions', () => 
   const s = loadSummarize();
   assert.deepEqual(s.params, { max_tokens: 2000, temperature: 0.7 });
   assert.equal(s.timeoutMs, 55000);
-  assert.equal(typeof s.prodModel, 'string');
+  assert.equal(s.prodModel, 'gpt-4o-mini');
+  // The system message is the one production builds, including the TAB-120
+  // rule that the Scripture References heading is always present.
+  const { buildSummarizeSystemPrompt } = require('../../../netlify/functions/utils/summarizePrompt');
+  const { MANDATORY_SCRIPTURE_REFERENCES_INSTRUCTION } = require('../../../netlify/functions/utils/summaryFormat');
+  const [system] = s.messages({ text: 'In the beginning. '.repeat(50), serviceType: 'Bible Study', tier: 'basic' });
+  assert.equal(system.content, buildSummarizeSystemPrompt({ userTier: 'basic', serviceType: 'Bible Study' }));
+  assert.ok(system.content.includes(MANDATORY_SCRIPTURE_REFERENCES_INSTRUCTION));
   const c = loadChat();
   assert.equal(c.questions.params.max_tokens, 500);
   assert.equal(c.chat.params.max_tokens, 1000);

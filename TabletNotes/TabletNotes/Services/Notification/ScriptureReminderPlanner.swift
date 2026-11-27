@@ -341,8 +341,9 @@ enum SummarySectionKind: Hashable {
 }
 
 /// A summary split into sections by the headings the summarize prompt asks for.
-/// Headings arrive as "**Heading**", "## Heading", a bare line, or inline as
-/// "**Heading:** content", so all four forms are recognised.
+/// Headings arrive as "**Heading**", "## Heading", a bare line, inline as
+/// "**Heading:** content", or "**Heading** content" on the same line (the
+/// model sometimes inlines the first sentence; the server accepts this form).
 struct SummaryDocument {
     struct Section {
         let kind: SummarySectionKind
@@ -432,9 +433,9 @@ struct SummaryDocument {
                 }
                 return .subheading
             }
-            // "**Heading:** content" or "**Heading**: content"
-            if inner.hasSuffix(":") || restStartsWithColon,
-               let kind = SummarySectionKind.classify(inner) {
+            // "**Heading:** content", "**Heading**: content", or
+            // "**Heading** content" (no colon; aligned with summaryFormat.js).
+            if let kind = SummarySectionKind.classify(inner) {
                 return .section(kind, remainder: rest)
             }
             return nil

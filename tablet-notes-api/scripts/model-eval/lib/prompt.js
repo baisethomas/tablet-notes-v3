@@ -1,14 +1,17 @@
 'use strict';
 
 // The eval must send exactly what production sends. Rather than keep a second
-// copy of the prompts (which would drift), read them out of the live function
-// source. Every extraction asserts on a literal anchor and throws if the
-// function's shape changed, so a silent mismatch is impossible.
+// copy of the prompts (which would drift), take them from production: the
+// summarize system prompt from the module summarize.js itself calls, the rest
+// read out of the live function source. Every extraction asserts on a literal
+// anchor and throws if the function's shape changed, so a silent mismatch is
+// impossible.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { API_ROOT } = require('./keys');
 const { Validator, LIMITS } = require(path.join(API_ROOT, 'netlify/functions/utils/validator'));
+const { buildSummarizeSystemPrompt } = require(path.join(API_ROOT, 'netlify/functions/utils/summarizePrompt'));
 
 const FN = path.join(API_ROOT, 'netlify', 'functions');
 
@@ -31,11 +34,14 @@ function render(template, vars) {
 
 function loadSummarize() {
   const src = fs.readFileSync(path.join(FN, 'summarize.js'), 'utf8');
-  const tpl = mustMatch(src, /role:\s*"system",\s*content:\s*`(# Tiered Sermon Summary System Prompt[\s\S]*?)`\s*\},/, 'summarize system prompt')[1];
+  // Since TAB-120 the system prompt lives in utils/summarizePrompt.js; check
+  // summarize.js still builds its system message from it, with these inputs.
+  mustMatch(src, /role:\s*"system",\s*content:\s*buildSummarizeSystemPrompt\(\{ userTier, serviceType: actualServiceType \}\)/, 'summarize system prompt');
   mustMatch(src, /content:\s*`Please summarize this \$\{actualServiceType\} text: \$\{sanitizedText\}`/, 'summarize user message');
-  mustMatch(src, /max_tokens:\s*length === 'short' \? 1000 : length === 'long' \? 3000 : 2000/, 'summarize max_tokens');
-  mustMatch(src, /temperature:\s*tone === 'formal' \? 0\.3 : tone === 'academic' \? 0\.2 : 0\.7/, 'summarize temperature');
-  const prodModel = mustMatch(src, /model:\s*"([^"]+)"/, 'summarize model')[1];
+  mustMatch(src, /const maxTokens = length === 'short' \? 1000 : length === 'long' \? 3000 : 2000;/, 'summarize max_tokens');
+  mustMatch(src, /const temperature = tone === 'formal' \? 0\.3 : tone === 'academic' \? 0\.2 : 0\.7;/, 'summarize temperature');
+  mustMatch(src, /max_tokens: maxTokens,\s*temperature\b/, 'summarize request parameters');
+  const prodModel = mustMatch(src, /openai\.chat\.completions\.create\(\{\s*model:\s*['"]([^'"]+)['"]/, 'summarize model')[1];
 
   return {
     prodModel,
@@ -43,10 +49,13 @@ function loadSummarize() {
     // length=medium -> 2000 tokens, tone=conversational -> 0.7.
     params: { max_tokens: 2000, temperature: 0.7 },
     timeoutMs: 55000,
+    // The eval sends this first request only. Production (TAB-120) asks once
+    // more when the first reply lacks a required heading; a candidate here
+    // gets no second attempt, so the format gates are the stricter reading.
     messages({ text, serviceType, tier }) {
       const sanitizedText = Validator.sanitizeLLMText(text, { maxLength: LIMITS.SUMMARY_TEXT_LENGTH });
       return [
-        { role: 'system', content: render(tpl, { userTier: tier, actualServiceType: serviceType }) },
+        { role: 'system', content: buildSummarizeSystemPrompt({ userTier: tier, serviceType }) },
         { role: 'user', content: `Please summarize this ${serviceType} text: ${sanitizedText}` },
       ];
     },
