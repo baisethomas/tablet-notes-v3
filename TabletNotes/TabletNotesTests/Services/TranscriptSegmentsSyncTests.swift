@@ -151,9 +151,27 @@ struct TranscriptSegmentsSyncTests {
         let segments = try #require(transcript["segments"] as? [[String: Any]])
         #expect(segments.count == 1)
         #expect(segments[0]["text"] as? String == "In the beginning")
-        #expect(segments[0]["startTime"] as? Double == 1.5)
-        #expect(segments[0]["endTime"] as? Double == 3.25)
+        #expect(doubleValue(segments[0]["startTime"]) == 1.5)
+        #expect(doubleValue(segments[0]["endTime"]) == 3.25)
         #expect(segments[0]["id"] as? String == clientSegmentId.uuidString)
+    }
+
+    @MainActor
+    @Test func updatePayloadSerializesTranscriptSegmentsInsteadOfNull() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = makeSermonWithTimedTranscript(modelContext: modelContext, remoteId: "remote-1")
+        try modelContext.save()
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+
+        let syncData = repository.syncData(for: sermon)
+        let payload = SermonSyncRemoteGateway.updateSermonPayload(remoteId: "remote-1", data: syncData)
+        let transcript = try #require(payload["transcript"] as? [String: Any])
+        #expect(!(transcript["segments"] is NSNull))
+        let segments = try #require(transcript["segments"] as? [[String: Any]])
+        #expect(segments.count == 1)
+        #expect(doubleValue(segments[0]["startTime"]) == 1.5)
+        #expect(doubleValue(segments[0]["endTime"]) == 3.25)
     }
 
     // MARK: - Pull
@@ -312,6 +330,10 @@ struct TranscriptSegmentsSyncTests {
     private struct ClientSegmentDTO: Decodable {
         let startTime: TimeInterval
         let endTime: TimeInterval
+    }
+
+    private func doubleValue(_ value: Any?) -> Double? {
+        (value as? NSNumber)?.doubleValue ?? value as? Double
     }
 
     private func sermonJSON(id: String, title: String, segmentsJSON: String) -> String {

@@ -102,6 +102,13 @@ struct NoteSyncPayload {
 struct TranscriptSyncPayload {
     let id: UUID
     let text: String
+    let segments: [TranscriptSegmentSyncPayload]
+
+    init(id: UUID, text: String, segments: [TranscriptSegmentSyncPayload] = []) {
+        self.id = id
+        self.text = text
+        self.segments = segments
+    }
 }
 
 struct SummarySyncPayload {
@@ -161,10 +168,13 @@ struct RemoteTranscriptData: Codable {
     let id: String
     let localId: UUID
     let text: String
-    /// Unused on pull (`transcriptSnapshot` always imports `segments: []`).
-    /// Kept so a leftover string value still round-trips; jsonb arrays/objects
-    /// decode as `nil` instead of failing the whole library (TAB-93).
+    /// Raw wire value. get-sermons stringifies JSONB so shipped 1.0.1's
+    /// synthesized `String?` succeeds (TAB-93). A leftover JSON array is
+    /// still tolerated (`nil` here) so one timed transcript cannot drop
+    /// the library.
     let segments: String?
+    /// Parsed timings for 1.0.2 pull. Not on the wire (`CodingKeys` omit it).
+    let timedSegments: [TranscriptSegmentSyncPayload]
     let status: String
 
     init(id: String, localId: UUID, text: String, segments: String? = nil, status: String) {
@@ -172,6 +182,7 @@ struct RemoteTranscriptData: Codable {
         self.localId = localId
         self.text = text
         self.segments = segments
+        self.timedSegments = TranscriptSegmentCodec.parse(segments)
         self.status = status
     }
 
@@ -183,14 +194,52 @@ struct RemoteTranscriptData: Codable {
         status = try container.decode(String.self, forKey: .status)
         // Prod `transcripts.segments` is jsonb. A synthesized `String?` throws
         // `Expected to decode String but found an array instead` and aborts
-        // the entire `[RemoteSermonData]` pull. Import ignores this field
-        // (TAB-40); tolerate any JSON value so one timed transcript cannot
-        // drop the library.
+        // the entire `[RemoteSermonData]` pull. 1.0.2 parses a JSON string
+        // (the get-sermons contract) and also accepts a leftover array
+        // without failing the library (TAB-93).
         if let value = try? container.decode(String.self, forKey: .segments) {
             segments = value
+            timedSegments = TranscriptSegmentCodec.parse(value)
+        } else if let items = try? container.decode([RawRemoteTranscriptSegment].self, forKey: .segments) {
+            segments = nil
+            timedSegments = TranscriptSegmentCodec.parse(jsonObject: items.map(\.jsonObject))
         } else {
             segments = nil
+            timedSegments = []
         }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(localId, forKey: .localId)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(segments, forKey: .segments)
+        try container.encode(status, forKey: .status)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, localId, text, segments, status
+    }
+}
+
+private struct RawRemoteTranscriptSegment: Decodable {
+    let id: UUID?
+    let text: String?
+    let startTime: TimeInterval?
+    let endTime: TimeInterval?
+    let start: TimeInterval?
+    let end: TimeInterval?
+
+    var jsonObject: [String: Any] {
+        var object: [String: Any] = [:]
+        if let id { object["id"] = id.uuidString }
+        if let text { object["text"] = text }
+        if let startTime { object["startTime"] = startTime }
+        if let endTime { object["endTime"] = endTime }
+        if let start { object["start"] = start }
+        if let end { object["end"] = end }
+        return object
     }
 }
 

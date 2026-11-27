@@ -95,12 +95,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         }
 
         if let transcript = data.transcript {
-            payload["transcript"] = [
-                "id": transcript.id.uuidString,
-                "text": transcript.text,
-                "segments": NSNull(),
-                "status": "complete"
-            ]
+            payload["transcript"] = transcriptWireObject(transcript)
         }
 
         if let summary = data.summary {
@@ -114,6 +109,63 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         }
 
         return payload
+    }
+
+    /// Builds the update-sermon request body. Extracted so tests can assert
+    /// transcript segments serialize onto the existing JSONB field (TAB-40).
+    static func updateSermonPayload(remoteId: String, data: SermonSyncData) -> [String: Any] {
+        var payload: [String: Any] = [
+            "remoteId": remoteId,
+            "updatedAt": updatedAtFormatter.string(from: data.updatedAt)
+        ]
+
+        if data.scopes.metadata {
+            payload["title"] = data.title
+            payload["date"] = ISO8601DateFormatter().string(from: data.date)
+            payload["serviceType"] = data.serviceType
+            payload["speaker"] = data.speaker as Any
+            payload["audioFileName"] = data.audioFileURL.lastPathComponent
+            payload["transcriptionStatus"] = data.transcriptionStatus
+            payload["summaryStatus"] = data.summaryStatus
+            payload["isArchived"] = data.isArchived
+        }
+
+        if let notes = data.notes {
+            payload["notes"] = notes.map { note in
+                [
+                    "id": note.id.uuidString,
+                    "text": note.text,
+                    // The backend notes.timestamp column is an integer;
+                    // fractional seconds fail the whole note insert (TAB-56).
+                    "timestamp": Int(note.timestamp.rounded())
+                ]
+            }
+        }
+
+        if let transcript = data.transcript {
+            payload["transcript"] = transcriptWireObject(transcript)
+        }
+
+        if let summary = data.summary {
+            payload["summary"] = [
+                "id": summary.id.uuidString,
+                "title": summary.title,
+                "text": summary.text,
+                "type": summary.type,
+                "status": summary.status
+            ]
+        }
+
+        return payload
+    }
+
+    static func transcriptWireObject(_ transcript: TranscriptSyncPayload) -> [String: Any] {
+        [
+            "id": transcript.id.uuidString,
+            "text": transcript.text,
+            "segments": TranscriptSegmentCodec.wireObjects(from: transcript.segments),
+            "status": "complete"
+        ]
     }
 
     func createRemoteSermon(data: SermonSyncData) async throws -> RemoteSermonCreateResult {
@@ -250,53 +302,7 @@ final class SermonSyncRemoteGateway: SermonSyncRemoteGatewayProtocol {
         print("[SyncService] Updating remote sermon: \(data.title) (remoteId: \(remoteId))")
 
         let token = try await getAuthToken()
-
-        var payload: [String: Any] = [
-            "remoteId": remoteId,
-            "updatedAt": Self.updatedAtFormatter.string(from: data.updatedAt)
-        ]
-
-        if data.scopes.metadata {
-            payload["title"] = data.title
-            payload["date"] = ISO8601DateFormatter().string(from: data.date)
-            payload["serviceType"] = data.serviceType
-            payload["speaker"] = data.speaker as Any
-            payload["audioFileName"] = data.audioFileURL.lastPathComponent
-            payload["transcriptionStatus"] = data.transcriptionStatus
-            payload["summaryStatus"] = data.summaryStatus
-            payload["isArchived"] = data.isArchived
-        }
-
-        if let notes = data.notes {
-            payload["notes"] = notes.map { note in
-                [
-                    "id": note.id.uuidString,
-                    "text": note.text,
-                    // The backend notes.timestamp column is an integer;
-                    // fractional seconds fail the whole note insert (TAB-56).
-                    "timestamp": Int(note.timestamp.rounded())
-                ]
-            }
-        }
-
-        if let transcript = data.transcript {
-            payload["transcript"] = [
-                "id": transcript.id.uuidString,
-                "text": transcript.text,
-                "segments": NSNull(),
-                "status": "complete"
-            ]
-        }
-
-        if let summary = data.summary {
-            payload["summary"] = [
-                "id": summary.id.uuidString,
-                "title": summary.title,
-                "text": summary.text,
-                "type": summary.type,
-                "status": summary.status
-            ]
-        }
+        let payload = Self.updateSermonPayload(remoteId: remoteId, data: data)
 
         let url = URL(string: "\(apiBaseURL)/.netlify/functions/update-sermon")!
         var request = URLRequest(url: url)
