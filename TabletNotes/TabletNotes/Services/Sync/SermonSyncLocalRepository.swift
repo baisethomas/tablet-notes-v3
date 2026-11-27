@@ -300,17 +300,28 @@ final class SermonSyncLocalRepository: SermonSyncLocalRepositoryProtocol {
             // text-only transcript must pick up timings for tap-to-seek.
             // Delete first: TranscriptSegment.id is unique, and a client-format
             // pull reuses those ids.
-            let oldSegments = Array(existingTranscript.segments)
-            existingTranscript.segments.removeAll()
-            for segment in oldSegments {
-                modelContext.delete(segment)
+            // Keep local timings when the remote row has none (1.0.1 uploads
+            // stored NSNull). Wiping would destroy the only copy; mark dirty
+            // so the next push heals the cloud.
+            let incomingHasTimings = !snapshot.segments.isEmpty
+            let localHasTimings = !existingTranscript.segments.isEmpty
+            if incomingHasTimings || !localHasTimings {
+                let oldSegments = Array(existingTranscript.segments)
+                existingTranscript.segments.removeAll()
+                for segment in oldSegments {
+                    modelContext.delete(segment)
+                }
+                existingTranscript.segments = makeTranscriptSegments(from: snapshot.segments)
+                existingTranscript.needsSync = false
+            } else {
+                print("[SyncService] ⚠️ Preserving \(existingTranscript.segments.count) local transcript timings; remote supplied none")
+                existingTranscript.needsSync = true
+                sermon.markPendingSync(transcript: true)
             }
 
             existingTranscript.text = snapshot.text
-            existingTranscript.segments = makeTranscriptSegments(from: snapshot.segments)
             existingTranscript.remoteId = snapshot.remoteId ?? existingTranscript.remoteId
             existingTranscript.updatedAt = snapshot.updatedAt
-            existingTranscript.needsSync = false
             TranscriptSnapshotStore.save(
                 transcriptId: existingTranscript.id,
                 text: snapshot.text,

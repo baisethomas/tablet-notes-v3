@@ -107,6 +107,7 @@ struct TranscriptSegmentsSyncTests {
         )
     }
 
+    @MainActor
     private func createPayload(from data: SermonSyncData) -> [String: Any] {
         SermonSyncRemoteGateway.createSermonPayload(
             data: data,
@@ -240,6 +241,31 @@ struct TranscriptSegmentsSyncTests {
         #expect(segments[0].text == "In the beginning")
         #expect(segments[0].startTime == 1.5)
         #expect(segments[0].endTime == 3.25)
+    }
+
+    @MainActor
+    @Test func pullDoesNotWipeLocalTimingsWhenRemoteHasNone() throws {
+        let modelContext = try makeModelContext()
+        let repository = SermonSyncLocalRepository(modelContext: modelContext)
+        let sermon = makeSermonWithTimedTranscript(modelContext: modelContext, remoteId: "remote-1")
+        sermon.transcript?.needsSync = false
+        sermon.clearPendingSync(transcript: true)
+        sermon.syncStatus = "synced"
+        try modelContext.save()
+        defer { TranscriptSnapshotStore.remove(for: sermon.id) }
+
+        repository.updateLocalSermon(
+            sermon,
+            with: makeRemoteSermon(localId: sermon.id, segmentsJSON: nil)
+        )
+
+        let segments = try #require(sermon.transcript).segments.sorted { $0.startTime < $1.startTime }
+        #expect(segments.count == 1)
+        #expect(segments[0].text == "In the beginning")
+        #expect(segments[0].startTime == 1.5)
+        #expect(segments[0].endTime == 3.25)
+        #expect(sermon.transcriptNeedsSync)
+        #expect(sermon.transcript?.needsSync == true)
     }
 
     @MainActor
